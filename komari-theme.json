@@ -1,0 +1,42 @@
+{
+  "name": "LeoNetLab Observatory",
+  "short": "LeoNetLab",
+  "description": "A restrained global network observatory for Komari Monitor, based on Komari Emerald.",
+  "version": "1.0.1",
+  "author": "LeoNetLab · based on Komari Emerald by Tokinx",
+  "url": "https://github.com/fangleo5592-prog/komari-theme-leonetlab",
+  "preview": "preview.png",
+  "configuration": {
+    "type": "managed",
+    "name": { "zh-CN": "LeoNetLab 观测站设置", "en": "LeoNetLab Observatory Settings" },
+    "data": [
+      { "name": { "zh-CN": "数据连接", "en": "Data connection" }, "type": "title" },
+      { "key": "dataUpdateInterval", "name": { "zh-CN": "刷新间隔（秒）", "en": "Refresh interval (seconds)" }, "type": "number", "default": 3, "help": { "zh-CN": "建议设置为 2–10 秒。过短会增加服务器和浏览器负担。", "en": "2–10 seconds is recommended." } },
+      { "key": "rpcTransportMode", "name": { "zh-CN": "实时连接模式", "en": "Realtime transport" }, "type": "select", "default": "websocket", "options": "websocket,http", "help": { "zh-CN": "默认使用 WebSocket；受限网络可切换为 HTTP 轮询。", "en": "Use HTTP polling when WebSocket is unavailable." } },
+      { "key": "defaultViewMode", "name": { "zh-CN": "默认节点视图", "en": "Default node view" }, "type": "select", "default": "card", "options": "card,list" },
+      { "name": { "zh-CN": "首页显示", "en": "Home display" }, "type": "title" },
+      { "key": "earthViewMode", "name": { "zh-CN": "全球节点视图", "en": "Global node view" }, "type": "select", "default": "earth", "options": "earth,earth-stop,maps,cards,hide", "help": { "zh-CN": "可选择动态地球、静态地球、平面地图、仅摘要卡片或隐藏。", "en": "Choose globe, static globe, map, cards, or hidden." } },
+      { "key": "visitorInfoCardEnabled", "name": { "zh-CN": "显示访问信息", "en": "Show visitor information" }, "type": "switch", "default": true },
+      { "key": "hideAdminEntryWhenLoggedOut", "name": { "zh-CN": "未登录时隐藏管理入口", "en": "Hide admin entry when signed out" }, "type": "switch", "default": false },
+      { "key": "disablePageAnimation", "name": { "zh-CN": "使用简化动效", "en": "Use reduced motion" }, "type": "switch", "default": false, "help": { "zh-CN": "关闭页面切换与列表入场动效；系统的“减少动态效果”设置仍会优先执行。", "en": "Disable page and list transitions." } },
+      { "name": { "zh-CN": "公告", "en": "Notice" }, "type": "title" },
+      { "key": "alertEnabled", "name": { "zh-CN": "显示公告", "en": "Show notice" }, "type": "switch", "default": false },
+      { "key": "alertTitle", "name": { "zh-CN": "公告标题", "en": "Notice title" }, "type": "string", "default": "" },
+      { "key": "alertContent", "name": { "zh-CN": "公告正文", "en": "Notice content" }, "type": "richtext", "default": "", "help": { "zh-CN": "支持 Markdown。不要填写密钥或私密链接。", "en": "Markdown is supported. Do not enter secrets or private links." } },
+      { "name": { "zh-CN": "自定义背景", "en": "Custom background" }, "type": "title" },
+      { "key": "backgroundEnabled", "name": { "zh-CN": "启用自定义背景", "en": "Enable custom background" }, "type": "switch", "default": false },
+      { "key": "backgroundType", "name": { "zh-CN": "背景类型", "en": "Background type" }, "type": "select", "default": "image", "options": "image,video" },
+      { "key": "lightBackgroundUrl", "name": { "zh-CN": "浅色背景地址", "en": "Light background URL" }, "type": "string", "default": "" },
+      { "key": "darkBackgroundUrl", "name": { "zh-CN": "深色背景地址", "en": "Dark background URL" }, "type": "string", "default": "" },
+      { "key": "backgroundBlur", "name": { "zh-CN": "背景模糊（像素）", "en": "Background blur (px)" }, "type": "number", "default": 0 },
+      { "key": "backgroundOverlay", "name": { "zh-CN": "遮罩强度（-100 至 100）", "en": "Overlay (-100 to 100)" }, "type": "number", "default": 0 },
+      { "name": { "zh-CN": "备案信息", "en": "Filing information" }, "type": "title" },
+      { "key": "icpEnabled", "name": { "zh-CN": "显示 ICP 备案", "en": "Show ICP filing" }, "type": "switch", "default": false },
+      { "key": "icpNumber", "name": { "zh-CN": "ICP 备案号", "en": "ICP number" }, "type": "string", "default": "" },
+      { "key": "icpUrl", "name": { "zh-CN": "ICP 查询地址", "en": "ICP lookup URL" }, "type": "string", "default": "https://beian.miit.gov.cn/" },
+      { "key": "policeEnabled", "name": { "zh-CN": "显示公安备案", "en": "Show police filing" }, "type": "switch", "default": false },
+      { "key": "policeNumber", "name": { "zh-CN": "公安备案号", "en": "Police filing number" }, "type": "string", "default": "" },
+      { "key": "policeUrl", "name": { "zh-CN": "公安备案查询地址", "en": "Police filing URL" }, "type": "string", "default": "" }
+    ]
+  }
+}

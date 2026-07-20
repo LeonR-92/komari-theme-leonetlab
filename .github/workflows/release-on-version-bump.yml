@@ -1,0 +1,144 @@
+name: Validate And Release
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+concurrency:
+  group: validate-and-release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      # validate checks the compiled Komari HTML markers, so seed dist on a clean runner.
+      - name: Seed production output
+        run: npm run build
+
+      - name: Lint
+        run: |
+          npm run lint
+          git diff --exit-code
+
+      - name: Type check
+        run: npm run type-check
+
+      - name: Validate manifest and version compatibility
+        run: npm run validate
+
+      - name: Smoke test Komari 1.2.5 response rendering
+        env:
+          CHROME_PATH: /usr/bin/google-chrome
+        run: npm run smoke:1.2.5
+
+      - name: Build release package
+        run: npm run build
+
+      - name: Audit production dependencies
+        run: npm audit --audit-level=high
+
+      - name: Detect version release
+        if: github.event_name == 'push'
+        id: version
+        env:
+          BEFORE_SHA: ${{ github.event.before }}
+        run: |
+          node <<'NODE' >> "$GITHUB_OUTPUT"
+          const { execFileSync } = require('node:child_process')
+          const { existsSync, readFileSync } = require('node:fs')
+
+          const zeroSha = '0000000000000000000000000000000000000000'
+          const beforeSha = process.env.BEFORE_SHA
+          const packageJson = JSON.parse(readFileSync('package.json', 'utf8'))
+          const themeJson = JSON.parse(readFileSync('komari-theme.json', 'utf8'))
+
+          if (packageJson.version !== themeJson.version) {
+            throw new Error(`Version mismatch: package.json=${packageJson.version}, komari-theme.json=${themeJson.version}`)
+          }
+
+          const currentVersion = packageJson.version
+          let versionChanged = true
+
+          if (beforeSha && beforeSha !== zeroSha) {
+            try {
+              const previous = JSON.parse(execFileSync('git', ['show', `${beforeSha}:package.json`], { encoding: 'utf8' }))
+              versionChanged = previous.version !== currentVersion
+            }
+            catch {
+              versionChanged = true
+            }
+          }
+
+          const asset = `komari-theme-leonetlab-build-v${currentVersion}.zip`
+          if (!existsSync(asset))
+            throw new Error(`Release asset is missing: ${asset}`)
+
+          console.log(`current_version=${currentVersion}`)
+          console.log(`version_changed=${versionChanged}`)
+          console.log(`release_tag=v${currentVersion}`)
+          console.log(`asset=${asset}`)
+          NODE
+
+      - name: Check release tag state
+        if: github.event_name == 'push' && steps.version.outputs.version_changed == 'true'
+        id: tag
+        env:
+          RELEASE_TAG: ${{ steps.version.outputs.release_tag }}
+          CURRENT_SHA: ${{ github.sha }}
+        run: |
+          git fetch --force --tags
+          if git rev-parse "refs/tags/${RELEASE_TAG}" >/dev/null 2>&1; then
+            tag_sha="$(git rev-list -n 1 "${RELEASE_TAG}")"
+            if [ "${tag_sha}" != "${CURRENT_SHA}" ]; then
+              echo "Tag ${RELEASE_TAG} already exists on ${tag_sha}, not on ${CURRENT_SHA}." >&2
+              exit 1
+            fi
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Create and push release tag
+        if: github.event_name == 'push' && steps.version.outputs.version_changed == 'true' && steps.tag.outputs.exists == 'false'
+        env:
+          RELEASE_TAG: ${{ steps.version.outputs.release_tag }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -a "${RELEASE_TAG}" -m "Release ${RELEASE_TAG}"
+          git push origin "${RELEASE_TAG}"
+
+      - name: Create GitHub release
+        if: github.event_name == 'push' && steps.version.outputs.version_changed == 'true'
+        uses: softprops/action-gh-release@v3
+        with:
+          tag_name: ${{ steps.version.outputs.release_tag }}
+          name: ${{ steps.version.outputs.release_tag }}
+          target_commitish: ${{ github.sha }}
+          generate_release_notes: true
+          fail_on_unmatched_files: true
+          files: ${{ steps.version.outputs.asset }}
