@@ -309,7 +309,8 @@ function openPingDialog() {
               <!-- 延迟 -->
               <div
                 role="button" tabindex="0"
-                class="group/panel relative col-span-3 flex h-6 cursor-pointer flex-col gap-2 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                data-node-ping-panel="latency"
+                class="group/panel relative col-span-3 flex h-8 cursor-pointer flex-col gap-1 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                 :title="latencyPanelTooltip" :aria-label="`${props.node.name} 延迟`" @click.stop="openPingDialog"
                 @keydown.enter.stop.prevent="openPingDialog" @keydown.space.stop.prevent="openPingDialog"
               >
@@ -319,15 +320,16 @@ function openPingDialog() {
                   <span class="font-medium text-foreground/85">{{ latencyDisplay }}</span>
                 </div>
                 <div
-                  class="grid h-full items-end gap-[1px] opacity-80"
+                  class="grid h-[7px] shrink-0 items-stretch gap-[1px] opacity-90 group-hover/panel:opacity-100"
                   :style="{ gridTemplateColumns: `repeat(${latencyRenderBars.length}, minmax(0, 1fr))` }"
                 >
                   <DataTooltip
                     v-for="bar in latencyRenderBars" :key="bar.key" placement="top" :content="bar.tooltip"
-                    class="h-full w-full"
+                    class="block h-full min-w-0 w-full"
                   >
                     <span
-                      class="block h-full w-full rounded-[1px] transition-transform duration-150 group-hover/data-tooltip:scale-y-200"
+                      data-node-ping-bar
+                      class="block h-full min-w-[2px] w-full origin-bottom rounded-[1px] transition-transform duration-150 group-hover/data-tooltip:scale-y-150"
                       :class="bar.className"
                     />
                   </DataTooltip>
@@ -336,7 +338,8 @@ function openPingDialog() {
               <!-- 丢包 -->
               <div
                 role="button" tabindex="0"
-                class="group/panel relative col-span-3 flex h-6 cursor-pointer flex-col gap-2 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                data-node-ping-panel="loss"
+                class="group/panel relative col-span-3 flex h-8 cursor-pointer flex-col gap-1 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                 :title="lossPanelTooltip" :aria-label="`${props.node.name} 丢包`" @click.stop="openPingDialog"
                 @keydown.enter.stop.prevent="openPingDialog" @keydown.space.stop.prevent="openPingDialog"
               >
@@ -346,15 +349,16 @@ function openPingDialog() {
                   <span class="font-medium text-foreground/85">{{ lossDisplay }}</span>
                 </div>
                 <div
-                  class="grid h-full items-end gap-[1px] opacity-80 group-hover/panel:opacity-100"
+                  class="grid h-[7px] shrink-0 items-stretch gap-[1px] opacity-90 group-hover/panel:opacity-100"
                   :style="{ gridTemplateColumns: `repeat(${lossRenderBars.length}, minmax(0, 1fr))` }"
                 >
                   <DataTooltip
                     v-for="bar in lossRenderBars" :key="bar.key" placement="top" :content="bar.tooltip"
-                    class="h-full w-full"
+                    class="block h-full min-w-0 w-full"
                   >
                     <span
-                      class="block h-full w-full rounded-[1px] transition-transform duration-150 group-hover/data-tooltip:scale-y-200"
+                      data-node-ping-bar
+                      class="block h-full min-w-[2px] w-full origin-bottom rounded-[1px] transition-transform duration-150 group-hover/data-tooltip:scale-y-150"
                       :class="bar.className"
                     />
                   </DataTooltip>

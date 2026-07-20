@@ -295,7 +295,9 @@ function buildPingHistory(records: PingRecord[]): NodePingHistoryPoint[] {
 
   const firstTime = sortedRecords[0]?.timestamp ?? 0
   const lastTime = sortedRecords.at(-1)?.timestamp ?? firstTime
-  const bucketCount = Math.min(NODE_PING_BAR_COUNT, sortedRecords.length)
+  // Emerald's card language is a stable ten-cell quality rail. Keep ten
+  // buckets even for sparse intervals so the visual scale never collapses.
+  const bucketCount = NODE_PING_BAR_COUNT
   const bucketSize = Math.max(1, (lastTime - firstTime) / bucketCount)
 
   return Array.from({ length: bucketCount }, (_, index) => {

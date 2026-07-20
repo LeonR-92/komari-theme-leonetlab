@@ -12,7 +12,9 @@ import Provider from './components/Provider.vue'
 const appStore = useAppStore()
 
 const isReady = ref(false)
-const INTRO_SESSION_KEY = 'leonetlab:intro:1.1.3'
+// Bump this key only when a release intentionally needs to present the intro
+// again. The value still keeps the animation to once per browser session.
+const INTRO_SESSION_KEY = 'leonetlab:intro:1.1.8'
 const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches
 function shouldPlayIntro(): boolean {
   if (reducedMotion)

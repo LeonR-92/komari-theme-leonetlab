@@ -406,7 +406,9 @@ const pingDialogOpenExpression = `new Promise((resolve) => {
       button.click();
       const dialogDeadline = Date.now() + 5000;
       const dialogTimer = setInterval(() => {
-        if (document.querySelector('.lnl-ping-workspace')) {
+        const chart = document.querySelector('.lnl-ping-chart .echarts');
+        const chartRect = chart?.getBoundingClientRect();
+        if (document.querySelector('.lnl-ping-workspace') && chartRect?.width > 100 && chartRect?.height > 200) {
           clearInterval(dialogTimer);
           resolve('opened');
         }
@@ -450,6 +452,44 @@ const financeOverflowAuditExpression = `new Promise((resolve) => {
   }, 100);
 })`
 
+const pingBarGeometryAuditExpression = `new Promise((resolve) => {
+  const deadline = Date.now() + 12000;
+  const timer = setInterval(() => {
+    const card = document.querySelector('.node-card');
+    const latencyPanel = card?.querySelector('[data-node-ping-panel="latency"]');
+    const lossPanel = card?.querySelector('[data-node-ping-panel="loss"]');
+    const panels = [latencyPanel, lossPanel];
+    const ready = panels.every((panel) => panel?.querySelectorAll('[data-node-ping-bar]').length === 10);
+    if (ready) {
+      clearInterval(timer);
+      resolve(panels.map((panel) => {
+        const panelRect = panel.getBoundingClientRect();
+        const cardRect = panel.closest('.node-card')?.getBoundingClientRect();
+        const bars = [...panel.querySelectorAll('[data-node-ping-bar]')].map((bar) => {
+          const rect = bar.getBoundingClientRect();
+          return {
+            width: rect.width,
+            height: rect.height,
+            top: rect.top,
+            bottom: rect.bottom,
+            background: getComputedStyle(bar).backgroundColor,
+          };
+        });
+        return {
+          panelHeight: panelRect.height,
+          cardTop: cardRect?.top ?? null,
+          cardBottom: cardRect?.bottom ?? null,
+          bars,
+        };
+      }));
+    }
+    else if (Date.now() >= deadline) {
+      clearInterval(timer);
+      resolve([]);
+    }
+  }, 100);
+})`
+
 async function capturePingDialogScreenshot(name, width, height) {
   const result = await runInteractivePage(name, width, height, pingDialogOpenExpression, name)
   assert.equal(result, 'opened')
@@ -462,6 +502,19 @@ async function auditMobileFinanceOverflow(width) {
   assert.equal(result?.viewportWidth, width)
   assert.ok(result?.documentWidth <= result?.viewportWidth, `Mobile document overflowed: ${JSON.stringify(result)}`)
   assert.ok(result?.left >= 0 && result?.right <= result?.viewportWidth + 0.5, `Finance panel escaped viewport: ${JSON.stringify(result)}`)
+}
+
+async function auditPingBarGeometry() {
+  const result = await runInteractivePage('node-ping-bar-geometry', 1440, 900, pingBarGeometryAuditExpression)
+  assert.equal(result?.length, 2, `Expected latency and loss panels: ${JSON.stringify(result)}`)
+  for (const panel of result) {
+    assert.ok(panel.panelHeight >= 30, `Ping panel collapsed: ${JSON.stringify(panel)}`)
+    assert.equal(panel.bars.length, 10)
+    assert.ok(panel.bars.every(bar => bar.width >= 2 && bar.height >= 6), `Ping bars have no visible geometry: ${JSON.stringify(panel)}`)
+    assert.ok(panel.bars.every(bar => bar.background !== 'rgba(0, 0, 0, 0)' && bar.background !== 'transparent'), `Ping bars are transparent: ${JSON.stringify(panel)}`)
+    assert.ok(panel.cardTop !== null && panel.cardBottom !== null)
+    assert.ok(panel.bars.every(bar => bar.top >= panel.cardTop - 0.5 && bar.bottom <= panel.cardBottom + 0.5), `Ping bars escaped the visible card: ${JSON.stringify(panel)}`)
+  }
 }
 
 try {
@@ -479,6 +532,7 @@ try {
     mkdirSync(process.env.SMOKE_SCREENSHOT_DIR, { recursive: true })
   await auditMobileFinanceOverflow(320)
   await auditMobileFinanceOverflow(390)
+  await auditPingBarGeometry()
 
   const detailHtml = await dumpDom('detail', `/instance/${nodeUuid}`, 8000)
   assert.match(detailHtml, /资源与系统记录/)
@@ -494,6 +548,7 @@ try {
     await captureScreenshot('desktop-earth-late', 1920, 1080, '/', 12000)
     await captureScreenshot('desktop-dark', 1920, 1080, '/', 6000, ['--force-dark-mode'])
     await capturePingDialogScreenshot('desktop-ping-dialog', 1440, 900)
+    await capturePingDialogScreenshot('mobile-ping-dialog', 390, 844)
     await captureScreenshot('desktop-detail', 1600, 1000, `/instance/${nodeUuid}`, 6000)
     await captureScreenshot('mobile-intro', 390, 844, '/', 900)
     await captureScreenshot('mobile-home', 390, 844, '/', 6000)

@@ -268,7 +268,7 @@ function getNodeItemTransitionStyle(index: number): Record<string, string> {
     <Dialog v-model:open="pingDialogOpen">
       <DialogContent
         v-if="selectedPingNode"
-        class="lnl-ping-dialog w-[calc(100vw-2rem)] max-w-[1400px] gap-0 overflow-hidden rounded-none border-emerald-600/20 p-0 shadow-[0_0_3rem] shadow-emerald-950/20"
+        class="lnl-ping-dialog w-[calc(100vw-1rem)] max-w-[1240px] gap-0 overflow-hidden rounded-none border-emerald-600/20 p-0 shadow-[0_0_3rem] shadow-emerald-950/20 sm:w-[calc(100vw-2rem)]"
         :class="pickSurfaceClass('bg-background', 'bg-background/94')"
       >
         <DialogHeader class="lnl-ping-dialog-head flex flex-row items-center pr-12">

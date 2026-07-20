@@ -832,7 +832,7 @@ onUnmounted(() => {
                   <span>LOSS {{ task.loss.toFixed(2) }}%</span>
                   <span v-if="task.p99_p50_ratio !== undefined">JIT {{ task.p99_p50_ratio.toFixed(2) }}</span>
                 </div>
-                <DataTooltip placement="right" content-class="!rounded-none p-3 w-60 backdrop-blur">
+                <DataTooltip placement="top" content-class="!rounded-none p-3 w-60 backdrop-blur">
                   <Button variant="ghost" size="icon-xs" class="lnl-ping-probe-info" @click.stop>
                     <Icon icon="carbon:information" :width="14" :height="14" />
                   </Button>
@@ -898,17 +898,37 @@ onUnmounted(() => {
 
 <style scoped>
 .lnl-ping-panel {
+  position: relative;
+  overflow: hidden;
   border: 1px solid color-mix(in srgb, var(--lnl-line) 92%, var(--foreground) 8%);
-  background: color-mix(in srgb, var(--background) 97%, var(--lnl-surface));
+  background:
+    linear-gradient(135deg, color-mix(in srgb, var(--lnl-green) 3%, transparent), transparent 42%),
+    color-mix(in srgb, var(--background) 97%, var(--lnl-surface));
+}
+.lnl-ping-panel::before {
+  position: absolute;
+  z-index: 0;
+  top: 0;
+  right: 0;
+  width: 84px;
+  height: 1px;
+  background: var(--lnl-green);
+  content: '';
+  opacity: 0.75;
+}
+.lnl-ping-panel > * {
+  position: relative;
+  z-index: 1;
 }
 .lnl-ping-toolbar {
   display: flex;
-  min-height: 54px;
-  align-items: end;
+  min-height: 60px;
+  align-items: center;
   justify-content: space-between;
-  gap: 18px;
-  padding: 8px 10px;
+  gap: 24px;
+  padding: 9px 12px 8px;
   border-bottom: 1px solid var(--lnl-line);
+  background: color-mix(in srgb, var(--lnl-surface) 38%, transparent);
 }
 .lnl-ping-window {
   min-width: 0;
@@ -922,67 +942,85 @@ onUnmounted(() => {
   letter-spacing: 0.14em;
 }
 .lnl-ping-window-tabs {
-  margin-top: 3px;
+  margin-top: 2px;
 }
 .lnl-ping-selection {
   display: flex;
   align-items: center;
   gap: 7px;
+  flex: none;
 }
 .lnl-ping-selection > span {
   margin-right: 4px;
   color: var(--muted-foreground);
 }
 .lnl-ping-content {
-  min-height: 360px;
+  min-height: 390px;
 }
 .lnl-ping-workspace {
-  display: grid;
-  grid-template-columns: minmax(220px, 260px) minmax(0, 1fr);
-  min-height: min(56dvh, 520px);
+  display: flex;
+  min-height: 0;
+  flex-direction: column;
 }
 .lnl-ping-probes {
+  display: grid;
+  grid-template-columns: 150px minmax(0, 1fr);
   min-width: 0;
-  border-right: 1px solid var(--lnl-line);
+  border-bottom: 1px solid var(--lnl-line);
   background: color-mix(in srgb, var(--lnl-surface) 68%, transparent);
 }
 .lnl-ping-probes-head {
   display: flex;
-  min-height: 46px;
-  align-items: center;
-  justify-content: space-between;
-  padding: 0 12px;
-  border-bottom: 1px solid var(--lnl-line);
-  font-size: 12px;
+  min-height: 88px;
+  align-items: flex-start;
+  justify-content: center;
+  flex-direction: column;
+  gap: 6px;
+  padding: 12px 14px;
+  border-right: 1px solid var(--lnl-line);
+  font-family: var(--font-display);
+  font-size: 13px;
   font-weight: 650;
+}
+.lnl-ping-probes-head::before {
+  color: var(--lnl-green);
+  font: 8px/1.2 var(--font-mono);
+  letter-spacing: 0.14em;
+  content: 'PROBE MATRIX';
 }
 .lnl-ping-probes-head small {
   color: var(--lnl-green);
-  font: 8px var(--font-mono);
+  font: 8px/1.3 var(--font-mono);
   letter-spacing: 0.1em;
 }
 .lnl-ping-probe-list {
-  max-height: min(49dvh, 458px);
-  overflow: auto;
+  display: flex;
+  min-width: 0;
+  overflow-x: auto;
+  overscroll-behavior-inline: contain;
 }
 .lnl-ping-probe {
   position: relative;
   display: grid;
   grid-template-columns: 4px minmax(0, 1fr) auto auto;
   grid-template-rows: auto auto;
+  width: clamp(240px, 31vw, 330px);
+  min-width: 240px;
   gap: 3px 9px;
-  min-height: 78px;
+  min-height: 88px;
   align-items: center;
-  padding: 10px 9px;
-  border-bottom: 1px solid color-mix(in srgb, var(--lnl-line) 72%, transparent);
+  padding: 12px;
+  border-right: 1px solid color-mix(in srgb, var(--lnl-line) 82%, transparent);
   cursor: pointer;
   transition:
     background-color 180ms ease,
-    opacity 180ms ease;
+    opacity 180ms ease,
+    box-shadow 180ms ease;
 }
 .lnl-ping-probe:hover,
 .lnl-ping-probe:focus-visible {
   background: color-mix(in srgb, var(--lnl-green) 6%, transparent);
+  box-shadow: inset 0 -2px color-mix(in srgb, var(--lnl-green) 54%, transparent);
   outline: none;
 }
 .lnl-ping-probe.is-disabled {
@@ -991,7 +1029,8 @@ onUnmounted(() => {
 .lnl-ping-probe > i {
   grid-row: 1 / 3;
   width: 4px;
-  height: 34px;
+  height: 40px;
+  box-shadow: 0 0 12px currentColor;
 }
 .lnl-ping-probe-copy {
   min-width: 0;
@@ -1004,7 +1043,7 @@ onUnmounted(() => {
   white-space: nowrap;
 }
 .lnl-ping-probe-copy strong {
-  font-size: 12px;
+  font-size: 13px;
 }
 .lnl-ping-probe-copy small,
 .lnl-ping-probe-value small,
@@ -1021,7 +1060,7 @@ onUnmounted(() => {
   font-family: var(--font-mono);
 }
 .lnl-ping-probe-value strong {
-  font-size: 17px;
+  font-size: 19px;
 }
 .lnl-ping-probe-meta {
   grid-column: 2 / 4;
@@ -1035,22 +1074,24 @@ onUnmounted(() => {
 .lnl-ping-plot {
   min-width: 0;
   display: flex;
+  min-height: 0;
   flex-direction: column;
 }
 .lnl-ping-plot-head {
   display: flex;
-  min-height: 46px;
+  min-height: 54px;
   align-items: center;
   justify-content: space-between;
   gap: 16px;
-  padding: 7px 12px;
+  padding: 8px 14px;
   border-bottom: 1px solid var(--lnl-line);
+  background: linear-gradient(90deg, color-mix(in srgb, var(--lnl-green) 4%, transparent), transparent 38%);
 }
 .lnl-ping-plot-head strong {
   display: block;
   margin-top: 2px;
   font-family: var(--font-display);
-  font-size: 14px;
+  font-size: 15px;
 }
 .lnl-ping-plot-actions {
   display: flex;
@@ -1058,40 +1099,66 @@ onUnmounted(() => {
   gap: 2px;
 }
 .lnl-ping-chart {
-  min-height: 310px;
-  flex: 1;
-  padding: 4px 8px 8px;
+  min-height: 330px;
+  height: clamp(330px, 42dvh, 420px);
+  flex: none;
+  padding: 6px 10px 10px;
+}
+.lnl-ping-chart :deep(.echarts) {
+  width: 100%;
+  height: 100%;
 }
 @media (max-width: 820px) {
-  .lnl-ping-toolbar,
-  .lnl-ping-plot-head {
+  .lnl-ping-toolbar {
     align-items: stretch;
     flex-direction: column;
+    gap: 6px;
+    padding-inline: 8px;
   }
   .lnl-ping-selection,
   .lnl-ping-plot-actions {
     justify-content: flex-start;
   }
-  .lnl-ping-workspace {
-    display: block;
+  .lnl-ping-selection {
+    overflow-x: auto;
   }
   .lnl-ping-probes {
+    display: block;
+  }
+  .lnl-ping-probes-head {
+    min-height: 42px;
+    align-items: center;
+    justify-content: space-between;
+    flex-direction: row;
+    padding: 7px 10px;
     border-right: 0;
     border-bottom: 1px solid var(--lnl-line);
   }
+  .lnl-ping-probes-head::before {
+    display: none;
+  }
   .lnl-ping-probe-list {
-    display: grid;
-    grid-auto-columns: minmax(210px, 72vw);
-    grid-auto-flow: column;
-    max-height: none;
-    overflow-x: auto;
+    display: flex;
   }
   .lnl-ping-probe {
-    border-right: 1px solid var(--lnl-line);
-    border-bottom: 0;
+    width: min(260px, 78vw);
+    min-width: min(260px, 78vw);
+  }
+  .lnl-ping-plot-head {
+    min-height: 72px;
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 5px;
+    padding: 8px 10px;
+  }
+  .lnl-ping-plot-actions {
+    width: 100%;
+    overflow-x: auto;
   }
   .lnl-ping-chart {
-    height: 310px;
+    min-height: 300px;
+    height: 300px;
+    padding-inline: 2px;
   }
 }
 </style>
