@@ -2,6 +2,8 @@
 
 与 LeoNetLab 个人站视觉统一的 Komari Monitor 监控主题。主题保留 Komari Emerald 的数据、图表、节点详情、WebSocket/HTTP 回退与响应式地球实现，重新设计了站点外壳、颜色、排版、节点卡片、首访动画、纯点阵数字海洋和移动端布局。
 
+1.1.2 起提供 PWA Manifest、192/512 图标、动态浏览器主题色与保守的离线链路页。Service Worker 只缓存主题静态资源，不缓存 Komari API、后台页面或实时节点响应；PWA 安装需要通过 HTTPS（本地开发可使用 localhost）访问。
+
 ## 兼容范围
 
 - 已按 Komari `1.2.5-fix1` 的公开主题与 RPC 结构开发，并兼容该版本 `common:getNodes` 返回的节点数组。
@@ -20,7 +22,7 @@ bun run build
 构建完成后会生成：
 
 - `dist/`
-- `komari-theme-leonetlab-build-v1.1.0.zip`
+- `komari-theme-leonetlab-build-v1.1.2.zip`
 
 兼容性与构建检查：
 

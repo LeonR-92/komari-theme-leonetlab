@@ -20,6 +20,7 @@ interface VisitorClientData {
 }
 
 interface VisitorInfoRow {
+  label: string
   value: string
   icon: string
   expandOnly?: boolean
@@ -50,13 +51,13 @@ const countryCode = ref('')
 const visitTime = ref(formatVisitTime(new Date()))
 const flagVisible = ref(true)
 const expand = ref(false)
-const presentationState = ref<'waiting' | 'scanning' | 'verified' | 'compact'>(
+const presentationState = ref<'waiting' | 'entering' | 'scanning' | 'verified' | 'collapsing' | 'compact'>(
   props.presentOnReady ? 'waiting' : 'compact',
 )
 const presentationTimers: number[] = []
 const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches
 let presentationStarted = false
-const presentationActive = computed(() => presentationState.value === 'scanning' || presentationState.value === 'verified')
+const presentationActive = computed(() => ['entering', 'scanning', 'verified', 'collapsing'].includes(presentationState.value))
 const isExpanded = computed(() => expand.value || presentationActive.value)
 
 const subtitle = computed(() => loading.value ? '检测中' : location.value || '网络访客')
@@ -65,28 +66,34 @@ const displayIp = computed(() => isExpanded.value ? ip.value : maskIpForCollapse
 
 const visitorRows = computed<VisitorInfoRow[]>(() => [
   {
+    label: '来源',
     value: subtitle.value,
     icon: 'tabler:world-pin',
   },
   {
+    label: '设备',
     value: device.value,
     icon: 'tabler:device-desktop',
     expandOnly: true,
   },
   {
+    label: '地址',
     value: displayIp.value,
     icon: 'tabler:brand-socket-io',
   },
   {
+    label: '浏览器',
     value: browser.value,
     icon: 'tabler:browser',
   },
   {
+    label: '网络',
     value: isp.value,
     icon: 'tabler:building-skyscraper',
     expandOnly: true,
   },
   {
+    label: '访问时间',
     value: visitTime.value,
     icon: 'tabler:clock-hour-4',
     expandOnly: true,
@@ -99,14 +106,20 @@ function startPresentation() {
     return
 
   presentationStarted = true
-  presentationState.value = 'scanning'
+  presentationState.value = 'entering'
+  presentationTimers.push(window.setTimeout(() => {
+    presentationState.value = 'scanning'
+  }, 680))
   presentationTimers.push(window.setTimeout(() => {
     presentationState.value = 'verified'
-  }, 1750))
+  }, 2380))
+  presentationTimers.push(window.setTimeout(() => {
+    presentationState.value = 'collapsing'
+  }, 3580))
   presentationTimers.push(window.setTimeout(() => {
     presentationState.value = 'compact'
     expand.value = false
-  }, 3650))
+  }, 4380))
 }
 
 watch([() => props.introComplete, loading], startPresentation, { immediate: true })
@@ -443,7 +456,7 @@ onUnmounted(() => presentationTimers.forEach(timer => window.clearTimeout(timer)
     >
       <span v-if="presentationActive" class="lnl-visitor-scan-head">
         <span><i /> 身份信息扫描</span>
-        <b>{{ presentationState === 'verified' ? '验证完成' : '解析中' }}</b>
+        <b>{{ presentationState === 'verified' ? '验证完成' : presentationState === 'collapsing' ? '凭证已收束' : presentationState === 'entering' ? '建立会话' : '解析中' }}</b>
       </span>
       <TransitionGroup
         tag="div"
@@ -453,7 +466,7 @@ onUnmounted(() => presentationTimers.forEach(timer => window.clearTimeout(timer)
       >
         <div
           v-for="(item, index) in visibleRows" :key="item.icon"
-          class="flex min-w-0 items-center gap-1 rounded-full transition-transform duration-300 ease-[cubic-bezier(0.22,1,0.36,1)]"
+          class="lnl-visitor-row flex min-w-0 items-center gap-2 transition-transform duration-300 ease-[cubic-bezier(0.22,1,0.36,1)]"
           :style="getItemTransitionStyle(index)"
         >
           <img
@@ -471,9 +484,10 @@ onUnmounted(() => presentationTimers.forEach(timer => window.clearTimeout(timer)
             :class="[isExpanded || !index ? 'block opacity-100 translate-y-0' : 'hidden md:block md:opacity-100', !isExpanded && index ? 'md:translate-y-0' : '']"
           >
             <div v-if="loading" class="h-2 w-15 animate-pulse rounded-full bg-muted/70" />
-            <p v-else class="max-w-30 truncate text-xs font-medium text-muted-foreground sm:max-w-50">
-              {{ item.value }}
-            </p>
+            <template v-else>
+              <small>{{ item.label }}</small>
+              <p>{{ item.value }}</p>
+            </template>
           </div>
         </div>
       </TransitionGroup>
@@ -496,25 +510,29 @@ onUnmounted(() => presentationTimers.forEach(timer => window.clearTimeout(timer)
   max-width: min(680px, calc(100vw - 28px));
   justify-content: flex-start;
   transition:
-    opacity 0.42s ease,
-    transform 0.62s cubic-bezier(0.16, 1, 0.3, 1);
+    opacity 0.56s ease,
+    transform 0.76s cubic-bezier(0.16, 1, 0.3, 1),
+    filter 0.76s cubic-bezier(0.16, 1, 0.3, 1);
 }
 
 .lnl-visitor.is-waiting {
   opacity: 0;
   transform: translate3d(calc(-100% - 28px), 0, 0);
+  filter: blur(6px);
 }
 
 .lnl-visitor-trigger {
   position: relative;
-  display: flex;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  width: min(460px, calc(100vw - 28px));
   max-width: 100%;
   align-items: center;
   gap: 14px;
   padding: 9px 11px 9px 13px;
   border: 1px solid var(--lnl-line);
   border-radius: 0;
-  background: color-mix(in srgb, var(--background) 90%, transparent);
+  background: color-mix(in srgb, var(--background) 96%, transparent);
   box-shadow: 0 12px 38px rgb(0 0 0 / 18%);
   backdrop-filter: blur(16px) saturate(120%);
   color: inherit;
@@ -523,16 +541,18 @@ onUnmounted(() => presentationTimers.forEach(timer => window.clearTimeout(timer)
   transition:
     border-color 240ms ease,
     background-color 240ms ease,
+    width 760ms cubic-bezier(0.16, 1, 0.3, 1),
+    padding 620ms cubic-bezier(0.16, 1, 0.3, 1),
+    box-shadow 620ms ease,
     transform 320ms cubic-bezier(0.22, 1, 0.36, 1);
 }
 
 .lnl-visitor.is-presenting .lnl-visitor-trigger {
-  width: min(540px, calc(100vw - 28px));
-  display: grid;
+  width: min(580px, calc(100vw - 28px));
   grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
   gap: 13px 14px;
-  padding: 13px 14px;
+  padding: 16px 17px;
   border-color: color-mix(in srgb, var(--lnl-green) 58%, var(--lnl-line));
   box-shadow:
     0 18px 56px rgb(0 0 0 / 24%),
@@ -540,8 +560,18 @@ onUnmounted(() => presentationTimers.forEach(timer => window.clearTimeout(timer)
 }
 
 .lnl-visitor.is-presenting .lnl-visitor-rows {
-  grid-column: 1 / -1;
   width: 100%;
+}
+
+.lnl-visitor.is-collapsing .lnl-visitor-trigger {
+  width: min(460px, calc(100vw - 28px));
+  padding: 10px 12px;
+}
+
+.lnl-visitor.is-collapsing .lnl-visitor-rows,
+.lnl-visitor.is-collapsing .lnl-visitor-scan-head {
+  opacity: 0;
+  transform: translate3d(-14px, 0, 0);
 }
 
 .lnl-visitor-scan-head {
@@ -552,8 +582,44 @@ onUnmounted(() => presentationTimers.forEach(timer => window.clearTimeout(timer)
   padding-bottom: 9px;
   border-bottom: 1px solid color-mix(in srgb, var(--lnl-line) 72%, transparent);
   color: var(--lnl-green);
-  font: 9px/1.2 var(--font-mono);
+  font: 11px/1.3 var(--font-mono);
   letter-spacing: 0.12em;
+}
+
+.lnl-visitor-rows,
+.lnl-visitor-scan-head {
+  transition:
+    opacity 420ms ease,
+    transform 620ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.lnl-visitor-row small {
+  display: none;
+  margin-bottom: 2px;
+  color: var(--lnl-green);
+  font: 9px/1.1 var(--font-mono);
+  letter-spacing: 0.09em;
+}
+
+.lnl-visitor-row p {
+  max-width: 190px;
+  overflow: hidden;
+  color: color-mix(in srgb, var(--foreground) 84%, var(--muted-foreground));
+  font-size: 12px;
+  font-weight: 550;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.lnl-visitor.is-presenting .lnl-visitor-row small {
+  display: block;
+}
+
+.lnl-visitor.is-presenting .lnl-visitor-row p {
+  max-width: 215px;
+  color: var(--foreground);
+  font-size: 13px;
 }
 
 .lnl-visitor-scan-head span {

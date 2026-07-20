@@ -1,6 +1,6 @@
 import type { PublicSettings } from '@/utils/api'
 import type { ByteDecimalsConfig } from '@/utils/helper'
-import { usePreferredDark, useStorageAsync } from '@vueuse/core'
+import { useStorageAsync } from '@vueuse/core'
 import { defineStore } from 'pinia'
 import { computed, ref, watch } from 'vue'
 
@@ -23,6 +23,16 @@ function isValidThemeMode(value: unknown): value is ThemeMode {
   return value === 'system' || value === 'light' || value === 'dark'
 }
 
+function getBeijingHour(timestamp = Date.now()): number {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'Asia/Shanghai',
+    hour: '2-digit',
+    hourCycle: 'h23',
+  }).formatToParts(timestamp)
+  const hour = Number(parts.find(part => part.type === 'hour')?.value)
+  return Number.isFinite(hour) ? hour : 12
+}
+
 function isValidEarthViewMode(value: unknown): value is EarthViewMode {
   return value === 'earth' || value === 'earth-stop' || value === 'maps' || value === 'cards' || value === 'hide'
 }
@@ -31,9 +41,15 @@ const useAppStore = defineStore('app', () => {
   const loading = ref<boolean>(true)
 
   // 使用 VueUse 的 useStorageAsync 实现自动持久化
+  const hadStoredThemeMode = localStorage.getItem('appearance') !== null
   const themeMode = useStorageAsync<ThemeMode>('appearance', 'system', localStorage)
   const lang = useStorageAsync<Lang>('language', 'zh-CN', localStorage)
   const publicSettings = ref<PublicSettings>()
+  const themeDefaultApplied = ref(hadStoredThemeMode)
+  const beijingClock = ref(Date.now())
+  window.setInterval(() => {
+    beijingClock.value = Date.now()
+  }, 60_000)
   const nodeSelectedGroup = useStorageAsync<string>('nodeSelectedGroup', 'all', localStorage)
   const isLoggedIn = ref<boolean>(false)
   const connectionError = ref<boolean>(false)
@@ -257,8 +273,19 @@ const useAppStore = defineStore('app', () => {
     }
   }, { immediate: true })
 
-  // 使用 VueUse 的 usePreferredDark 检测系统主题偏好
-  const prefersDark = usePreferredDark()
+  const defaultThemeMode = computed<ThemeMode>(() => {
+    const mode = publicSettings.value?.theme_settings?.defaultThemeMode
+    if (mode === 'light' || mode === 'dark')
+      return mode
+    return 'system'
+  })
+
+  watch(publicSettings, (settings) => {
+    if (settings && !themeDefaultApplied.value) {
+      themeMode.value = defaultThemeMode.value
+      themeDefaultApplied.value = true
+    }
+  }, { immediate: true })
 
   watch(themeMode, (mode) => {
     if (!isValidThemeMode(mode)) {
@@ -266,13 +293,16 @@ const useAppStore = defineStore('app', () => {
     }
   }, { immediate: true })
 
-  // 计算当前是否为暗色模式
-  const isDark = computed(() => {
-    if (themeMode.value === 'system') {
-      return prefersDark.value
+  function resolveThemeMode(mode: ThemeMode): 'light' | 'dark' {
+    if (mode === 'system') {
+      const hour = getBeijingHour(beijingClock.value)
+      return hour >= 7 && hour < 19 ? 'light' : 'dark'
     }
-    return themeMode.value === 'dark'
-  })
+    return mode
+  }
+
+  // “自动”按北京时间 07:00–18:59 使用浅色，其余时段使用深色。
+  const isDark = computed(() => resolveThemeMode(themeMode.value) === 'dark')
 
   const resolvedThemeMode = computed<'light' | 'dark'>(() => isDark.value ? 'dark' : 'light')
 
@@ -311,6 +341,7 @@ const useAppStore = defineStore('app', () => {
   return {
     loading,
     themeMode,
+    defaultThemeMode,
     isDark,
     resolvedThemeMode,
     lang,
@@ -344,6 +375,7 @@ const useAppStore = defineStore('app', () => {
     connectionError,
     homeScrollPosition,
     updateThemeMode,
+    resolveThemeMode,
     updateLoginState,
   }
 })

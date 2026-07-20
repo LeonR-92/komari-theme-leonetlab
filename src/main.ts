@@ -20,3 +20,14 @@ app.use(pinia)
 app.use(router)
 
 app.mount('#app')
+
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('/sw.js', {
+      scope: '/',
+      updateViaCache: 'none',
+    }).catch(() => {
+      // PWA support is progressive; monitoring remains usable if registration is blocked.
+    })
+  }, { once: true })
+}

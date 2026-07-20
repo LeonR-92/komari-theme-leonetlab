@@ -16,6 +16,8 @@ watch(
       root.classList.add('dark')
     else root.classList.remove('dark')
     root.style.colorScheme = dark ? 'dark' : 'light'
+    document.querySelector<HTMLMetaElement>('meta[name="theme-color"]')
+      ?.setAttribute('content', dark ? '#04100d' : '#edf7f1')
   },
   { immediate: true },
 )

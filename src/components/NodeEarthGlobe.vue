@@ -447,7 +447,7 @@ const offlineServers = computed(() => totalServers.value - onlineServers.value)
 </script>
 
 <template>
-  <div ref="containerRef" class="relative aspect-square w-full max-w-md mx-auto -translate-y-6 md:-translate-y-12">
+  <div ref="containerRef" class="relative aspect-square w-full max-w-[520px] lg:max-w-[580px] xl:max-w-[640px] mx-auto -translate-y-7 md:-translate-y-18 xl:-translate-y-22">
     <canvas
       ref="canvasRef"
       class="earth-globe-canvas absolute inset-0 w-full h-full select-none touch-none cursor-grab active:cursor-grabbing"

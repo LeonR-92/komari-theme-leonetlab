@@ -9,14 +9,14 @@ import { useAppStore } from '@/stores/app'
 const router = useRouter()
 const appStore = useAppStore()
 const isScrolled = inject<ReturnType<typeof ref<boolean>>>('isScrolled', ref(false))
-const themeTransition = ref<'light' | 'dark' | null>(null)
+const themeTransition = ref<{ target: 'light' | 'dark', phase: 'covering' | 'revealing' } | null>(null)
 const leavingForAdmin = ref(false)
 const transitionTimers: number[] = []
 const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches
 
 const actionButtons = computed(() => {
   const buttons = [{
-    title: appStore.themeMode === 'system' ? '跟随系统' : appStore.themeMode === 'light' ? '浅色模式' : '深色模式',
+    title: appStore.themeMode === 'system' ? '自动（北京时间）' : appStore.themeMode === 'light' ? '浅色模式' : '深色模式',
     icon: appStore.themeMode === 'system' ? 'icon-park-outline:dark-mode' : appStore.themeMode === 'light' ? 'icon-park-outline:sun-one' : 'icon-park-outline:moon',
     action: 'toggleTheme',
   }]
@@ -34,20 +34,29 @@ function toggleTheme() {
     : appStore.themeMode === 'light'
       ? 'dark'
       : 'system'
-  const nextDark = nextMode === 'system'
-    ? window.matchMedia('(prefers-color-scheme: dark)').matches
-    : nextMode === 'dark'
+  const nextResolvedMode = appStore.resolveThemeMode(nextMode)
 
-  if (reducedMotion) {
-    appStore.updateThemeMode()
+  if (nextResolvedMode === appStore.resolvedThemeMode) {
+    appStore.updateThemeMode(nextMode)
     return
   }
 
-  themeTransition.value = nextDark ? 'dark' : 'light'
-  transitionTimers.push(window.setTimeout(() => appStore.updateThemeMode(), 150))
+  if (reducedMotion) {
+    appStore.updateThemeMode(nextMode)
+    return
+  }
+
+  themeTransition.value = { target: nextResolvedMode, phase: 'covering' }
+  transitionTimers.push(window.setTimeout(() => {
+    appStore.updateThemeMode(nextMode)
+    requestAnimationFrame(() => {
+      if (themeTransition.value)
+        themeTransition.value.phase = 'revealing'
+    })
+  }, 390))
   transitionTimers.push(window.setTimeout(() => {
     themeTransition.value = null
-  }, 720))
+  }, 820))
 }
 
 function jumpToSetting() {
@@ -60,7 +69,7 @@ function jumpToSetting() {
   leavingForAdmin.value = true
   transitionTimers.push(window.setTimeout(() => {
     location.href = '/admin'
-  }, 620))
+  }, 860))
 }
 
 function handleButtonClick(action: string) {
@@ -101,7 +110,7 @@ const sitename = computed(() => appStore.publicSettings?.sitename || 'Komari Mon
     <div
       v-if="themeTransition"
       class="lnl-theme-wipe"
-      :class="`to-${themeTransition}`"
+      :class="[`to-${themeTransition.target}`, `is-${themeTransition.phase}`]"
       aria-hidden="true"
     />
     <div v-if="leavingForAdmin" class="lnl-route-cover" role="status" aria-live="polite">
@@ -128,7 +137,14 @@ const sitename = computed(() => appStore.publicSettings?.sitename || 'Komari Mon
   inset: 0;
   pointer-events: none;
   clip-path: circle(0 at calc(100% - 48px) 36px);
-  animation: lnl-theme-wipe 0.72s cubic-bezier(0.65, 0, 0.35, 1) both;
+  will-change: clip-path, opacity;
+}
+.lnl-theme-wipe.is-covering {
+  animation: lnl-theme-cover 0.4s cubic-bezier(0.65, 0, 0.35, 1) both;
+}
+.lnl-theme-wipe.is-revealing {
+  clip-path: circle(150vmax at calc(100% - 48px) 36px);
+  animation: lnl-theme-reveal 0.42s cubic-bezier(0.22, 1, 0.36, 1) both;
 }
 .lnl-theme-wipe.to-dark {
   background: #06100d;
@@ -145,7 +161,19 @@ const sitename = computed(() => appStore.publicSettings?.sitename || 'Komari Mon
   overflow: hidden;
   background: #030b09;
   color: #e5eee9;
-  animation: lnl-route-cover-in 0.62s cubic-bezier(0.22, 1, 0.36, 1) both;
+  animation: lnl-route-cover-in 0.86s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+.lnl-route-cover::before {
+  content: '';
+  position: absolute;
+  z-index: 6;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  height: 2px;
+  background: linear-gradient(90deg, transparent, #74e6b2, #75c9d4, transparent);
+  box-shadow: 0 -12px 42px rgba(116, 230, 178, 0.24);
+  animation: lnl-route-leading-edge 0.86s cubic-bezier(0.16, 1, 0.3, 1) both;
 }
 .lnl-route-grid {
   position: absolute;
@@ -235,15 +263,18 @@ const sitename = computed(() => appStore.publicSettings?.sitename || 'Komari Mon
   height: 100%;
   background: linear-gradient(90deg, #74e6b2, #75c9d4);
   transform-origin: left;
-  animation: lnl-route-track 0.62s cubic-bezier(0.2, 0.72, 0.2, 1) both;
+  animation: lnl-route-track 0.76s 0.1s cubic-bezier(0.2, 0.72, 0.2, 1) both;
 }
-@keyframes lnl-theme-wipe {
-  52% {
+@keyframes lnl-theme-cover {
+  to {
     clip-path: circle(150vmax at calc(100% - 48px) 36px);
+  }
+}
+@keyframes lnl-theme-reveal {
+  from {
     opacity: 1;
   }
-  100% {
-    clip-path: circle(150vmax at calc(100% - 48px) 36px);
+  to {
     opacity: 0;
   }
 }
@@ -251,10 +282,25 @@ const sitename = computed(() => appStore.publicSettings?.sitename || 'Komari Mon
   from {
     opacity: 0;
     clip-path: inset(100% 0 0 0);
+    transform: translateY(22px);
   }
   to {
     opacity: 1;
     clip-path: inset(0);
+    transform: none;
+  }
+}
+@keyframes lnl-route-leading-edge {
+  from {
+    transform: translateY(100vh);
+    opacity: 0;
+  }
+  18% {
+    opacity: 1;
+  }
+  to {
+    transform: none;
+    opacity: 0;
   }
 }
 @keyframes lnl-route-orbit {

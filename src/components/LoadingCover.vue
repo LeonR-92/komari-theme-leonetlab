@@ -135,17 +135,34 @@ onUnmounted(() => timers.forEach(timer => window.clearTimeout(timer)))
 }
 .lnl-intro-ocean {
   position: absolute;
-  right: -16%;
-  bottom: -38%;
-  left: -16%;
-  height: 72%;
-  opacity: 0.36;
-  background-image: radial-gradient(circle, rgba(116, 230, 178, 0.82) 0 1px, transparent 1.2px);
-  background-size: 27px 21px;
-  transform: perspective(680px) rotateX(66deg);
+  z-index: 1;
+  right: -18%;
+  bottom: -40%;
+  left: -18%;
+  height: 92%;
+  opacity: 0;
+  background-image:
+    radial-gradient(circle, rgba(116, 230, 178, 0.86) 0 1px, transparent 1.25px),
+    radial-gradient(circle, rgba(117, 201, 212, 0.32) 0 0.7px, transparent 1px);
+  background-position:
+    0 0,
+    12px 9px;
+  background-size: 24px 18px;
+  transform: perspective(540px) rotateX(63deg) translate3d(0, 13%, 0) scale(1.06);
   transform-origin: 50% 0;
-  mask-image: linear-gradient(transparent, #000 18%, transparent 92%);
-  animation: lnl-intro-ocean 3.2s ease-in-out both;
+  mask-image: linear-gradient(transparent 2%, #000 22%, #000 72%, transparent 96%);
+  animation: lnl-intro-ocean 3.2s cubic-bezier(0.18, 0.68, 0.22, 1) both;
+}
+.lnl-intro-ocean::after {
+  content: '';
+  position: absolute;
+  inset: 18% 8% 20%;
+  border: 1px solid rgba(117, 201, 212, 0.13);
+  border-width: 1px 0 0;
+  border-radius: 50%;
+  box-shadow: 0 -18px 44px rgba(116, 230, 178, 0.045);
+  transform: rotate(-5deg);
+  animation: lnl-intro-current 2.8s ease-in-out both;
 }
 .lnl-intro-top,
 .lnl-intro-bottom {
@@ -524,14 +541,33 @@ onUnmounted(() => timers.forEach(timer => window.clearTimeout(timer)))
 @keyframes lnl-intro-ocean {
   from {
     opacity: 0;
-    transform: perspective(680px) rotateX(66deg) translate3d(0, 4%, 0);
+    background-position:
+      0 0,
+      12px 9px;
+    transform: perspective(540px) rotateX(63deg) translate3d(0, 13%, 0) scale(1.06);
   }
-  35% {
-    opacity: 0.36;
+  24% {
+    opacity: 0.5;
   }
   to {
-    opacity: 0.24;
-    transform: perspective(680px) rotateX(66deg) translate3d(1.5%, -2%, 0);
+    opacity: 0.22;
+    background-position:
+      12px -54px,
+      24px -45px;
+    transform: perspective(540px) rotateX(63deg) translate3d(0, -8%, 0) scale(0.96);
+  }
+}
+@keyframes lnl-intro-current {
+  from {
+    opacity: 0;
+    transform: translate3d(-8%, 18%, 0) rotate(-7deg) scaleX(0.72);
+  }
+  36% {
+    opacity: 0.7;
+  }
+  to {
+    opacity: 0.12;
+    transform: translate3d(7%, -14%, 0) rotate(-3deg) scaleX(1.08);
   }
 }
 @media (max-width: 680px) {

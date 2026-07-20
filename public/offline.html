@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="theme-color" content="#04100d" />
+    <title>LeoNetLab Observatory · Offline</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        min-height: 100vh;
+        margin: 0;
+        display: grid;
+        place-items: center;
+        padding: 28px;
+        background: #030b09;
+        color: #dce9e2;
+      }
+      main {
+        width: min(520px, 100%);
+        padding: 28px;
+        border: 1px solid #173b30;
+        background: #06110e;
+        box-shadow: 0 24px 80px #0008;
+      }
+      img {
+        width: 54px;
+        height: 54px;
+        border-radius: 14px;
+      }
+      small {
+        display: block;
+        margin-top: 24px;
+        color: #74e6b2;
+        letter-spacing: 0.14em;
+      }
+      h1 {
+        margin: 10px 0;
+        font:
+          400 clamp(28px, 8vw, 48px)/1.05 Georgia,
+          serif;
+      }
+      p {
+        color: #91a79e;
+        line-height: 1.7;
+      }
+      button {
+        margin-top: 18px;
+        padding: 10px 14px;
+        border: 1px solid #35755f;
+        background: transparent;
+        color: #bcebd5;
+        font: inherit;
+        cursor: pointer;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <img src="/images/logo/leonetlab.png" alt="" />
+      <small>EDGE LINK / OFFLINE</small>
+      <h1>观测链路暂时中断</h1>
+      <p>当前无法连接 Komari。恢复网络后重新加载即可继续接收实时遥测；离线页面不会展示旧的节点状态。</p>
+      <button type="button" onclick="location.reload()">重新连接</button>
+    </main>
+  </body>
+</html>
