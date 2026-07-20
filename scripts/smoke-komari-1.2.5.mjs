@@ -3,7 +3,7 @@ import { spawn } from 'node:child_process'
 import { existsSync, readFileSync, rmSync } from 'node:fs'
 import { createServer } from 'node:http'
 import { tmpdir } from 'node:os'
-import { extname, resolve } from 'node:path'
+import { extname, resolve, sep } from 'node:path'
 import process from 'node:process'
 
 const root = resolve(import.meta.dirname, '..')
@@ -147,7 +147,7 @@ const server = createServer((request, response) => {
 
   const requested = url.pathname === '/' ? 'index.html' : url.pathname.replace(leadingSlashesPattern, '')
   const file = resolve(dist, requested)
-  if (!file.startsWith(`${dist}\\`) || !existsSync(file)) {
+  if (!file.startsWith(`${dist}${sep}`) || !existsSync(file)) {
     response.writeHead(404)
     response.end('Not found')
     return

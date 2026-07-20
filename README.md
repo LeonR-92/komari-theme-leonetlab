@@ -48,7 +48,7 @@ https://github.com/fangleo5592-prog/komari-theme-leonetlab
 
 ## 发布
 
-推送到 `main` 时，GitHub Actions 会运行 lint、类型检查、双版本兼容验证、Komari 1.2.5 浏览器冒烟测试、生产构建和高危依赖审计。只有 `package.json` 版本发生变化时，工作流才会创建对应的 `vX.Y.Z` 标签和 GitHub Release，并上传唯一的 Komari 安装 ZIP。
+推送到 `main` 时，GitHub Actions 会运行 lint、类型检查、双版本兼容验证、Komari 1.2.5 浏览器冒烟测试、生产构建和高危依赖审计。当 `package.json` 版本发生变化，或当前版本尚无对应标签时，工作流会创建 `vX.Y.Z` 标签和 GitHub Release，并上传唯一的 Komari 安装 ZIP。
 
 请勿把 Token、密码、私密地址或其他秘密写进主题设置；Komari 的 `theme_settings` 属于公开数据。
 
