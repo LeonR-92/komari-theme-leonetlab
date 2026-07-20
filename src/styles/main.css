@@ -183,6 +183,34 @@ textarea {
   z-index: 1;
   width: 100%;
 }
+
+.lnl-reveal-header,
+.lnl-intro-reveal .lnl-dashboard-head,
+.lnl-intro-reveal .lnl-summary,
+.lnl-intro-reveal .node-info {
+  animation: lnl-section-rise 0.72s cubic-bezier(0.16, 1, 0.3, 1) both;
+  will-change: opacity, transform;
+}
+.lnl-intro-reveal .lnl-dashboard-head {
+  animation-delay: 80ms;
+}
+.lnl-intro-reveal .lnl-summary {
+  animation-delay: 190ms;
+}
+.lnl-intro-reveal .node-info {
+  animation-delay: 360ms;
+}
+
+@keyframes lnl-section-rise {
+  from {
+    opacity: 0;
+    transform: translate3d(0, 22px, 0);
+  }
+  to {
+    opacity: 1;
+    transform: translate3d(0, 0, 0);
+  }
+}
 .lnl-header {
   position: sticky;
   z-index: 40;
@@ -728,6 +756,12 @@ textarea {
     transition: none;
   }
   .lnl-header-state i {
+    animation: none;
+  }
+  .lnl-reveal-header,
+  .lnl-intro-reveal .lnl-dashboard-head,
+  .lnl-intro-reveal .lnl-summary,
+  .lnl-intro-reveal .node-info {
     animation: none;
   }
   .lnl-page-enter-active,

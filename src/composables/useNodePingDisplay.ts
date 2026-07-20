@@ -2,11 +2,10 @@ import type { MaybeRefOrGetter } from 'vue'
 import { computed, toValue } from 'vue'
 import { NODE_PING_BAR_COUNT, useNodePingStats } from '@/composables/useNodePingStats'
 import { formatDateTime } from '@/utils/helper'
-import { getLatencyToneClass, getLossToneClass } from '@/utils/pingMetrics'
 
 export type NodePingMetric = 'latency' | 'loss'
 
-// Card summaries use the latest hour so all nodes share one bounded request.
+// getRecords 在新版主控中返回的是近期可用样本，不保证覆盖完整 1 小时。
 const RECENT_PING_RECORDS_QUERY_HOURS = 1
 
 export interface NodePingBar {
@@ -21,6 +20,32 @@ interface UseNodePingDisplayOptions {
   emptyDisplayText?: string
   loadingPanelTooltipText?: Partial<Record<NodePingMetric, string>>
   emptyPanelTooltipText?: Partial<Record<NodePingMetric, string>>
+}
+
+// Keep these thresholds in sync with Emerald's card implementation. They stay
+// local so the visual output is not altered by dialog/chart color decisions.
+function getLatencyToneClass(latency: number): string {
+  if (latency <= 60)
+    return 'bg-emerald-600/90'
+  if (latency <= 100)
+    return 'bg-green-400/80'
+  if (latency <= 160)
+    return 'bg-lime-400/80'
+  if (latency <= 200)
+    return 'bg-yellow-400/80'
+  return 'bg-rose-500/80'
+}
+
+function getLossToneClass(loss: number): string {
+  if (loss <= 1)
+    return 'bg-emerald-600/90'
+  if (loss <= 3)
+    return 'bg-green-400/90'
+  if (loss <= 6)
+    return 'bg-lime-400/90'
+  if (loss <= 9)
+    return 'bg-yellow-400/90'
+  return 'bg-rose-500/80'
 }
 
 export function useNodePingDisplay(

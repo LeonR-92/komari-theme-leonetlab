@@ -30,9 +30,12 @@ const showLaunch = ref(introWillPlay)
 const introComplete = ref(!introWillPlay)
 const appShellMounted = ref(!introWillPlay)
 const ambientAnimationReady = ref(!introWillPlay)
+const introRevealActive = ref(false)
 const launchStartedAt = performance.now()
 const launchMinimumMs = introWillPlay ? 3100 : 0
 let introFinalizeTimer: ReturnType<typeof window.setTimeout> | null = null
+let introRevealTimer: ReturnType<typeof window.setTimeout> | null = null
+let ambientStartTimer: ReturnType<typeof window.setTimeout> | null = null
 const wait = (duration: number) => new Promise(resolve => window.setTimeout(resolve, duration))
 const pageTransitionProps = computed(() => appStore.disablePageAnimation
   ? { css: false as const }
@@ -48,7 +51,15 @@ const pageTransitionProps = computed(() => appStore.disablePageAnimation
 
 onMounted(async () => {
   try {
-    await initApp()
+    const preloadHomeVisuals = introWillPlay
+      ? Promise.allSettled([
+          import('@/views/HomeView.vue'),
+          import('@/components/NodeCard.vue'),
+          import('@/components/NodeGeneralCards.vue'),
+          import('@/components/NodeEarthGlobe.vue'),
+        ])
+      : Promise.resolve()
+    await Promise.all([initApp(), preloadHomeVisuals])
     await nextTick()
     isReady.value = true
   }
@@ -83,15 +94,25 @@ function handleIntroAfterLeave() {
     introFinalizeTimer = null
   }
   introComplete.value = true
+  introRevealActive.value = true
   appShellMounted.value = true
-  window.requestAnimationFrame(() => {
-    ambientAnimationReady.value = true
-  })
+  introRevealTimer = window.setTimeout(() => {
+    introRevealActive.value = false
+  }, 1500)
+  ambientStartTimer = window.setTimeout(() => {
+    window.requestAnimationFrame(() => {
+      ambientAnimationReady.value = true
+    })
+  }, 420)
 }
 
 onUnmounted(() => {
   if (introFinalizeTimer !== null)
     window.clearTimeout(introFinalizeTimer)
+  if (introRevealTimer !== null)
+    window.clearTimeout(introRevealTimer)
+  if (ambientStartTimer !== null)
+    window.clearTimeout(ambientStartTimer)
   destroyInitManager()
 })
 </script>
@@ -102,9 +123,9 @@ onUnmounted(() => {
     <Transition name="lnl-intro-exit" @after-leave="handleIntroAfterLeave">
       <LoadingCover v-if="showLaunch" @skip="finishIntro" />
     </Transition>
-    <Header v-if="appShellMounted" />
+    <Header v-if="appShellMounted" :class="{ 'lnl-reveal-header': introRevealActive }" />
     <main v-if="appShellMounted && !appStore.loading" class="flex-1">
-      <div class="lnl-shell max-w-[1680px] mx-auto">
+      <div class="lnl-shell max-w-[1680px] mx-auto" :class="{ 'lnl-intro-reveal': introRevealActive }">
         <RouterView v-slot="{ Component }">
           <Transition v-bind="pageTransitionProps">
             <KeepAlive :include="['HomeView']">

@@ -12,7 +12,7 @@ assert.deepEqual(normalizeUuidCollection([nodeA, nodeB]), {
   'node-b': nodeB,
 })
 
-// Komari 1.2.7: common:getNodes returns a UUID-keyed object.
+// Komari 1.2.5-fix2 and 1.2.7: common:getNodes returns a UUID-keyed object.
 assert.deepEqual(normalizeUuidCollection({ 'node-a': nodeA, 'node-b': nodeB }), {
   'node-a': nodeA,
   'node-b': nodeB,
@@ -44,4 +44,4 @@ assert.equal(getLossToneClass(0), 'bg-emerald-600/90')
 assert.equal(getLatencyToneClass(201), 'bg-rose-500/80')
 assert.equal(getLossToneClass(10), 'bg-rose-500/80')
 
-console.log('Komari 1.2.5/1.2.7 node, record, and Ping metric compatibility passed.')
+console.log('Komari 1.2.5-fix1/1.2.5-fix2/1.2.7 node, record, and Ping metric compatibility passed.')

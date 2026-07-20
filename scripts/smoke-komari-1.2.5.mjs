@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
+import { Buffer } from 'node:buffer'
 import { spawn } from 'node:child_process'
-import { existsSync, mkdirSync, readFileSync, rmSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { createServer } from 'node:http'
 import { tmpdir } from 'node:os'
 import { extname, resolve, sep } from 'node:path'
@@ -116,6 +117,7 @@ const pingTasks = [{
 }]
 const rpcCalls = []
 const leadingSlashesPattern = /^\/+/
+const lineBreakPattern = /\r?\n/
 
 const mime = {
   '.css': 'text/css; charset=utf-8',
@@ -298,6 +300,115 @@ async function captureScreenshot(name, width, height, path, virtualTimeBudget, e
   })
 }
 
+async function capturePingDialogScreenshot(name, width, height) {
+  const screenshotProfile = `${profile}-${name}`
+  const screenshotDir = process.env.SMOKE_SCREENSHOT_DIR
+  assert.ok(screenshotDir)
+
+  const child = spawn(browser, [
+    '--headless=new',
+    '--disable-gpu',
+    '--disable-features=SkiaGraphite',
+    '--no-sandbox',
+    '--hide-scrollbars',
+    '--no-first-run',
+    '--no-default-browser-check',
+    '--remote-debugging-port=0',
+    `--user-data-dir=${screenshotProfile}`,
+    `--window-size=${width},${height}`,
+    `http://127.0.0.1:${address.port}/`,
+  ], { windowsHide: true })
+
+  let socket
+  try {
+    const activePortFile = resolve(screenshotProfile, 'DevToolsActivePort')
+    const deadline = Date.now() + 10_000
+    while (!existsSync(activePortFile) && Date.now() < deadline)
+      await new Promise(resolveWait => setTimeout(resolveWait, 50))
+    assert.ok(existsSync(activePortFile), 'Chrome DevTools port was not created')
+
+    const [port] = readFileSync(activePortFile, 'utf8').trim().split(lineBreakPattern)
+    const targets = await fetch(`http://127.0.0.1:${port}/json/list`).then(response => response.json())
+    const target = targets.find(item => item.type === 'page')
+    assert.ok(target?.webSocketDebuggerUrl, 'Chrome page target was not available')
+
+    socket = new WebSocket(target.webSocketDebuggerUrl)
+    await new Promise((resolveOpen, rejectOpen) => {
+      socket.addEventListener('open', resolveOpen, { once: true })
+      socket.addEventListener('error', rejectOpen, { once: true })
+    })
+
+    let commandId = 0
+    const pending = new Map()
+    socket.addEventListener('message', (event) => {
+      const message = JSON.parse(String(event.data))
+      const entry = pending.get(message.id)
+      if (!entry)
+        return
+      pending.delete(message.id)
+      if (message.error)
+        entry.reject(new Error(message.error.message))
+      else
+        entry.resolve(message.result)
+    })
+
+    const command = (method, params = {}) => new Promise((resolveCommand, rejectCommand) => {
+      const id = ++commandId
+      pending.set(id, { resolve: resolveCommand, reject: rejectCommand })
+      socket.send(JSON.stringify({ id, method, params }))
+    })
+
+    await command('Page.enable')
+    const opened = await command('Runtime.evaluate', {
+      awaitPromise: true,
+      returnByValue: true,
+      expression: `new Promise((resolve) => {
+        const deadline = Date.now() + 12000;
+        const timer = setInterval(() => {
+          const button = [...document.querySelectorAll('[role="button"]')]
+            .find((element) => element.getAttribute('aria-label')?.includes('Tokyo Fixture 延迟'));
+          if (button) {
+            clearInterval(timer);
+            button.click();
+            const dialogDeadline = Date.now() + 5000;
+            const dialogTimer = setInterval(() => {
+              if (document.querySelector('.lnl-ping-workspace')) {
+                clearInterval(dialogTimer);
+                resolve('opened');
+              }
+              else if (Date.now() >= dialogDeadline) {
+                clearInterval(dialogTimer);
+                resolve('dialog-timeout');
+              }
+            }, 80);
+          }
+          else if (Date.now() >= deadline) {
+            clearInterval(timer);
+            resolve('button-timeout');
+          }
+        }, 100);
+      })`,
+    })
+    assert.equal(opened.result?.value, 'opened')
+    await new Promise(resolveWait => setTimeout(resolveWait, 900))
+
+    const screenshot = await command('Page.captureScreenshot', { format: 'png', fromSurface: true })
+    writeFileSync(resolve(screenshotDir, `${name}.png`), Buffer.from(screenshot.data, 'base64'))
+  }
+  finally {
+    socket?.close()
+    if (child.exitCode === null) {
+      const closed = new Promise(resolveClose => child.once('close', resolveClose))
+      child.kill()
+      await Promise.race([
+        closed,
+        new Promise(resolveWait => setTimeout(resolveWait, 3000)),
+      ])
+    }
+    rmSync(screenshotProfile, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
+  }
+}
+
 try {
   const html = await dumpDom('home', '/')
 
@@ -305,7 +416,10 @@ try {
   assert.match(html, /Frankfurt Fixture/)
   assert.match(html, /55 ms/)
   assert.match(html, /4\.2%/)
+  assert.match(html, /bg-emerald-600\/90/)
+  assert.match(html, /bg-rose-500\/80/)
   assert.doesNotMatch(html, /暂无节点/)
+  assert.ok(rpcCalls.some(call => call.method === 'common:getRecords' && call.params?.type === 'ping' && call.params?.hours === 1 && !call.params?.uuid))
 
   const detailHtml = await dumpDom('detail', `/instance/${nodeUuid}`, 8000)
   assert.match(detailHtml, /资源与系统记录/)
@@ -321,6 +435,7 @@ try {
     await captureScreenshot('desktop-home', 1920, 1080, '/', 6000)
     await captureScreenshot('desktop-earth-late', 1920, 1080, '/', 12000)
     await captureScreenshot('desktop-dark', 1920, 1080, '/', 6000, ['--force-dark-mode'])
+    await capturePingDialogScreenshot('desktop-ping-dialog', 1440, 900)
     await captureScreenshot('desktop-detail', 1600, 1000, `/instance/${nodeUuid}`, 6000)
     await captureScreenshot('mobile-intro', 390, 844, '/', 900)
     await captureScreenshot('mobile-home', 390, 844, '/', 6000)

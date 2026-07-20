@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { Icon } from '@iconify/vue'
 import dayjs from 'dayjs'
-import { computed, ref, shallowRef, watch } from 'vue'
+import { computed, onMounted, onUnmounted, ref, shallowRef, watch } from 'vue'
 import VChart from 'vue-echarts'
 import { Button } from '@/components/ui/button'
 import { DataTooltip } from '@/components/ui/data-tooltip'
@@ -182,6 +182,8 @@ const loading = ref(false)
 const error = ref<string | null>(null)
 let fetchRequestId = 0
 let metricRpcSupported: boolean | null = null
+let refreshTimer: ReturnType<typeof window.setInterval> | null = null
+const PING_DIALOG_REFRESH_INTERVAL_MS = 30_000
 
 // 任务选择
 const selectedTaskIds = ref<number[]>([])
@@ -210,7 +212,7 @@ function isMethodNotFoundError(err: unknown): boolean {
 
 function canFallbackToLegacyRecords(err: unknown): boolean {
   return isMethodNotFoundError(err)
-    || (err instanceof RpcError && [-32602, -32603].includes(err.code))
+    || (err instanceof RpcError && err.code === -32602)
 }
 
 function getMetricTaskId(series: MetricSeries, point: MetricPoint): number | null {
@@ -699,6 +701,15 @@ const pingChartOption = computed(() => {
     yAxis: {
       type: 'value',
       name: '延迟 (ms)',
+      scale: true,
+      min: (range: { min: number, max: number }) => {
+        const padding = Math.max(8, (range.max - range.min) * 0.18)
+        return Math.max(0, Math.floor((range.min - padding) / 10) * 10)
+      },
+      max: (range: { min: number, max: number }) => {
+        const padding = Math.max(8, (range.max - range.min) * 0.18)
+        return Math.ceil((range.max + padding) / 10) * 10
+      },
       nameTextStyle: { color: chartThemeColors.value.textSecondary },
       axisLabel: { fontSize: 11, color: chartThemeColors.value.textSecondary, formatter: '{value}' },
       axisLine: { show: false },
@@ -727,43 +738,63 @@ watch(() => props.uuid, () => {
   selectedTaskIds.value = []
   fetchRecords()
 })
+
+function refreshWhenVisible() {
+  if (document.visibilityState === 'visible')
+    void fetchRecords()
+}
+
+onMounted(() => {
+  refreshTimer = window.setInterval(refreshWhenVisible, PING_DIALOG_REFRESH_INTERVAL_MS)
+  document.addEventListener('visibilitychange', refreshWhenVisible)
+})
+
+onUnmounted(() => {
+  fetchRequestId += 1
+  if (refreshTimer !== null)
+    window.clearInterval(refreshTimer)
+  document.removeEventListener('visibilitychange', refreshWhenVisible)
+})
 </script>
 
 <template>
-  <div class="flex flex-col gap-4">
-    <!-- 时间选择器 -->
-    <Tabs v-model="selectedView" class="w-full items-center">
-      <div class="min-w-0 flex-1 overflow-x-auto pointer-events-auto">
-        <TabsList :class="pickSurfaceClass('w-max h-8 bg-background/60 rounded-md', 'w-max h-8 bg-background/50 backdrop-blur-xl rounded-md')">
-          <TabsTrigger
-            v-for="view in availableViews" :key="view.label" :value="view.label"
-            class="h-6.5 flex-none shrink-0 text-xs border-none data-[state=active]:text-emerald-600 shadow-none rounded-sm"
-          >
-            {{ view.label }}
-          </TabsTrigger>
-        </TabsList>
+  <div class="lnl-ping-panel">
+    <div class="lnl-ping-toolbar">
+      <div class="lnl-ping-window">
+        <span>OBSERVATION WINDOW</span>
+        <Tabs v-model="selectedView" class="w-full items-center">
+          <div class="min-w-0 flex-1 overflow-x-auto pointer-events-auto">
+            <TabsList class="lnl-ping-window-tabs w-max h-8 rounded-none bg-transparent">
+              <TabsTrigger
+                v-for="view in availableViews" :key="view.label" :value="view.label"
+                class="h-7 flex-none shrink-0 rounded-none border-none px-3 text-xs shadow-none data-[state=active]:bg-emerald-500/10 data-[state=active]:text-emerald-600"
+              >
+                {{ view.label }}
+              </TabsTrigger>
+            </TabsList>
+          </div>
+        </Tabs>
       </div>
-      <div class="md:flex-1" />
-      <div class="flex gap-2 items-center">
+      <div class="lnl-ping-selection">
+        <span>PROBES {{ selectedTaskIds.length }} / {{ tasks.length }}</span>
         <Button
-          variant="ghost" size="xs" class="h-7 rounded-sm border-none bg-background/60 hover:bg-background"
-          :class="[selectedTaskIds.length === tasks.length && 'bg-background !text-emerald-600']"
+          variant="ghost" size="xs" class="h-7 rounded-none border border-emerald-600/15"
+          :class="[selectedTaskIds.length === tasks.length && '!text-emerald-600']"
           @click="showAllTasks"
         >
           全选
         </Button>
         <Button
-          variant="ghost" size="xs" class="h-7 rounded-sm border-none bg-background/60 hover:bg-background"
-          :class="[!selectedTaskIds.length && 'bg-background !text-emerald-600']"
+          variant="ghost" size="xs" class="h-7 rounded-none border border-emerald-600/15"
+          :class="[!selectedTaskIds.length && '!text-emerald-600']"
           @click="hideAllTasks"
         >
-          全不选
+          清空
         </Button>
       </div>
-    </Tabs>
+    </div>
 
-    <!-- 内容区域 -->
-    <Spinner :show="loading" content-class="flex flex-col gap-4">
+    <Spinner :show="loading" content-class="lnl-ping-content">
       <div v-if="error" class="text-red-500 py-8 text-center">
         {{ error }}
       </div>
@@ -772,134 +803,295 @@ watch(() => props.uuid, () => {
       </div>
 
       <template v-else>
-        <!-- 最新值统计卡片（可点击切换选中状态） -->
-        <div
-          v-if="latestValues.length > 0" class="gap-3 grid"
-          style="grid-template-columns: repeat(auto-fit, minmax(180px, 1fr))"
-        >
-          <div
-            v-for="task in latestValues" :key="task.id"
-            class="flex cursor-pointer select-none items-center gap-3 rounded-md p-2 transition-all bg-background/60 hover:bg-background hover:shadow-[0_0_0_1px] hover:shadow-emerald-600/10"
-            :class="[
-              !selectedTaskIds.includes(task.id) && 'opacity-30',
-            ]"
-            :onmouseover="(e: MouseEvent) => ((e.currentTarget as HTMLElement).style.borderColor = task.color)"
-            :onmouseout="(e: MouseEvent) => ((e.currentTarget as HTMLElement).style.borderColor = '')"
-            @click="toggleTask(task.id)"
-          >
-            <div class="flex-1 min-w-0">
-              <div class="flex gap-2 items-center">
-                <div class="rounded h-4 w-1" :style="{ backgroundColor: task.color }" />
-                <span class="text-sm font-semibold truncate">{{ task.name }}</span>
-                <div class="flex-1" />
-                <DataTooltip placement="left" content-class="!rounded p-3 w-60 backdrop-blur">
-                  <Button variant="ghost" size="icon-xs" class="text-slate-500" @click.stop>
+        <div class="lnl-ping-workspace">
+          <aside v-if="latestValues.length > 0" class="lnl-ping-probes" aria-label="探测线路">
+            <div class="lnl-ping-probes-head">
+              <span>探测线路</span>
+              <small>{{ selectedTaskIds.length }} ACTIVE</small>
+            </div>
+            <div class="lnl-ping-probe-list">
+              <div
+                v-for="task in latestValues" :key="task.id"
+                role="button" tabindex="0"
+                class="lnl-ping-probe"
+                :class="{ 'is-disabled': !selectedTaskIds.includes(task.id) }"
+                @click="toggleTask(task.id)"
+                @keydown.enter.prevent="toggleTask(task.id)"
+                @keydown.space.prevent="toggleTask(task.id)"
+              >
+                <i :style="{ backgroundColor: task.color }" />
+                <div class="lnl-ping-probe-copy">
+                  <strong>{{ task.name }}</strong>
+                  <small>{{ task.type?.toUpperCase() || 'PING' }} · {{ task.interval || 60 }}s</small>
+                </div>
+                <div class="lnl-ping-probe-value">
+                  <strong>{{ task.latestValue !== null ? Math.round(task.latestValue) : task.avg !== undefined ? Math.round(task.avg) : '-' }}</strong>
+                  <small>ms</small>
+                </div>
+                <div class="lnl-ping-probe-meta">
+                  <span>LOSS {{ task.loss.toFixed(2) }}%</span>
+                  <span v-if="task.p99_p50_ratio !== undefined">JIT {{ task.p99_p50_ratio.toFixed(2) }}</span>
+                </div>
+                <DataTooltip placement="right" content-class="!rounded-none p-3 w-60 backdrop-blur">
+                  <Button variant="ghost" size="icon-xs" class="lnl-ping-probe-info" @click.stop>
                     <Icon icon="carbon:information" :width="14" :height="14" />
                   </Button>
                   <template #content>
-                    <div class="text-xs gap-x-4 gap-y-1.5 grid grid-cols-4">
+                    <div class="grid grid-cols-2 gap-x-4 gap-y-1.5 text-xs">
                       <template v-if="task.min !== undefined">
-                        <span class="text-muted-foreground">最小</span>
-                        <span class="font-medium">{{ Math.round(task.min) }} ms</span>
+                        <span class="text-muted-foreground">最小</span><span>{{ Math.round(task.min) }} ms</span>
                       </template>
                       <template v-if="task.max !== undefined">
-                        <span class="text-muted-foreground">最大</span>
-                        <span class="font-medium">{{ Math.round(task.max) }} ms</span>
+                        <span class="text-muted-foreground">最大</span><span>{{ Math.round(task.max) }} ms</span>
                       </template>
                       <template v-if="task.avg !== undefined">
-                        <span class="text-muted-foreground">平均</span>
-                        <span class="font-medium">{{ Math.round(task.avg) }} ms</span>
-                      </template>
-                      <template v-if="task.latest !== undefined">
-                        <span class="text-muted-foreground">最新</span>
-                        <span class="font-medium">{{ Math.round(task.latest) }} ms</span>
+                        <span class="text-muted-foreground">平均</span><span>{{ Math.round(task.avg) }} ms</span>
                       </template>
                       <template v-if="task.p50 !== undefined">
-                        <span class="text-muted-foreground">P50</span>
-                        <span class="font-medium">{{ Math.round(task.p50) }} ms</span>
+                        <span class="text-muted-foreground">P50</span><span>{{ Math.round(task.p50) }} ms</span>
                       </template>
                       <template v-if="task.p99 !== undefined">
-                        <span class="text-muted-foreground">P99</span>
-                        <span class="font-medium">{{ Math.round(task.p99) }} ms</span>
-                      </template>
-                      <template v-if="task.p99_p50_ratio !== undefined">
-                        <span class="text-muted-foreground">波动率</span>
-                        <span class="font-medium">{{ task.p99_p50_ratio.toFixed(2) }}</span>
-                      </template>
-                      <template v-if="task.interval !== undefined">
-                        <span class="text-muted-foreground">间隔</span>
-                        <span class="font-medium">{{ task.interval }}s</span>
-                      </template>
-                      <template v-if="task.type">
-                        <span class="text-muted-foreground">类型</span>
-                        <span class="font-medium">{{ task.type.toUpperCase() }}</span>
+                        <span class="text-muted-foreground">P99</span><span>{{ Math.round(task.p99) }} ms</span>
                       </template>
                       <template v-if="task.total !== undefined">
-                        <span class="text-muted-foreground">总数</span>
-                        <span class="font-medium">{{ task.total }}</span>
+                        <span class="text-muted-foreground">样本</span><span>{{ task.total }}</span>
                       </template>
                     </div>
                   </template>
                 </DataTooltip>
               </div>
-              <div class="text-xs mt-1 flex gap-1.5 items-center text-muted-foreground">
-                <span class="font-medium" title="平均延迟">
-                  {{ task.avg !== undefined ? `${Math.round(task.avg)}ms` : '-' }}
-                </span>
-                <span class="opacity-60">·</span>
-                <span title="丢包率">{{ task.loss.toFixed(2) }}%</span>
-                <template v-if="task.p99_p50_ratio !== undefined">
-                  <span class="opacity-60">·</span>
-                  <span title="波动率">{{ task.p99_p50_ratio.toFixed(2) }}</span>
-                </template>
+            </div>
+          </aside>
+
+          <section class="lnl-ping-plot" aria-label="延迟时间线">
+            <div class="lnl-ping-plot-head">
+              <div>
+                <span>LATENCY TIMELINE</span>
+                <strong>网络质量时间线</strong>
+              </div>
+              <div class="lnl-ping-plot-actions">
+                <Button variant="ghost" size="xs" class="h-7 rounded-none" :class="[showDelay && '!text-emerald-600']" @click="showDelay = !showDelay">
+                  延迟
+                </Button>
+                <Button variant="ghost" size="xs" class="h-7 rounded-none" :class="[showLoss && '!text-emerald-600']" @click="showLoss = !showLoss">
+                  丢包
+                </Button>
+                <Button variant="ghost" size="xs" class="h-7 rounded-none" :class="[cutPeak && '!text-emerald-600']" @click="cutPeak = !cutPeak">
+                  平滑
+                </Button>
+                <DataTooltip content="使用 EWMA 算法平滑数据并过滤突变值" placement="top" :content-class="pickSurfaceClass('whitespace-nowrap text-[11px]', 'whitespace-nowrap text-[11px] backdrop-blur-xl')">
+                  <Button variant="ghost" size="icon-xs" class="text-slate-500">
+                    <Icon icon="carbon:information" :width="14" :height="14" />
+                  </Button>
+                </DataTooltip>
               </div>
             </div>
-          </div>
-        </div>
-
-        <div class="flex flex-wrap gap-2 items-center py-2">
-          <!-- 延迟可视化开关 -->
-          <Button
-            variant="ghost" size="xs" class="h-7 rounded-sm border-none bg-background/60 hover:bg-background"
-            :class="[showDelay && 'bg-background !text-emerald-600']" @click="showDelay = !showDelay"
-          >
-            延迟
-          </Button>
-          <!-- 丢包可视化开关 -->
-          <Button
-            variant="ghost" size="xs" class="h-7 rounded-sm border-none bg-background/60 hover:bg-background"
-            :class="[showLoss && 'bg-background !text-emerald-600']" @click="showLoss = !showLoss"
-          >
-            丢包
-          </Button>
-          <!-- 平滑峰值开关 -->
-          <div class="flex gap-2 items-center">
-            <Button
-              variant="ghost" size="xs" class="h-7 rounded-sm border-none bg-background/60 hover:bg-background"
-              :class="[cutPeak && 'bg-background !text-emerald-600']" @click="cutPeak = !cutPeak"
-            >
-              平滑峰值
-            </Button>
-            <DataTooltip
-              content="使用 EWMA 算法平滑数据并过滤突变值"
-              placement="top"
-              :content-class="pickSurfaceClass('whitespace-nowrap text-[11px]', 'whitespace-nowrap text-[11px] backdrop-blur-xl')"
-            >
-              <Button variant="ghost" size="icon-xs" class="text-slate-500">
-                <Icon icon="carbon:information" :width="14" :height="14" />
-              </Button>
-            </DataTooltip>
-          </div>
-        </div>
-
-        <!-- 图表 -->
-        <div
-          class="h-[clamp(270px,43vh,390px)] rounded-md p-3 transition-all"
-          :class="pickSurfaceClass('bg-background/60 hover:bg-background', 'bg-background/50 hover:bg-background backdrop-blur-xl')"
-        >
-          <VChart :option="pingChartOption" autoresize />
+            <div class="lnl-ping-chart">
+              <VChart :option="pingChartOption" autoresize />
+            </div>
+          </section>
         </div>
       </template>
     </Spinner>
   </div>
 </template>
+
+<style scoped>
+.lnl-ping-panel {
+  border: 1px solid color-mix(in srgb, var(--lnl-line) 92%, var(--foreground) 8%);
+  background: color-mix(in srgb, var(--background) 97%, var(--lnl-surface));
+}
+.lnl-ping-toolbar {
+  display: flex;
+  min-height: 54px;
+  align-items: end;
+  justify-content: space-between;
+  gap: 18px;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--lnl-line);
+}
+.lnl-ping-window {
+  min-width: 0;
+}
+.lnl-ping-window > span,
+.lnl-ping-selection > span,
+.lnl-ping-plot-head span {
+  display: block;
+  color: var(--lnl-green);
+  font: 8px/1.4 var(--font-mono);
+  letter-spacing: 0.14em;
+}
+.lnl-ping-window-tabs {
+  margin-top: 3px;
+}
+.lnl-ping-selection {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+.lnl-ping-selection > span {
+  margin-right: 4px;
+  color: var(--muted-foreground);
+}
+.lnl-ping-content {
+  min-height: 360px;
+}
+.lnl-ping-workspace {
+  display: grid;
+  grid-template-columns: minmax(220px, 260px) minmax(0, 1fr);
+  min-height: min(56dvh, 520px);
+}
+.lnl-ping-probes {
+  min-width: 0;
+  border-right: 1px solid var(--lnl-line);
+  background: color-mix(in srgb, var(--lnl-surface) 68%, transparent);
+}
+.lnl-ping-probes-head {
+  display: flex;
+  min-height: 46px;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 12px;
+  border-bottom: 1px solid var(--lnl-line);
+  font-size: 12px;
+  font-weight: 650;
+}
+.lnl-ping-probes-head small {
+  color: var(--lnl-green);
+  font: 8px var(--font-mono);
+  letter-spacing: 0.1em;
+}
+.lnl-ping-probe-list {
+  max-height: min(49dvh, 458px);
+  overflow: auto;
+}
+.lnl-ping-probe {
+  position: relative;
+  display: grid;
+  grid-template-columns: 4px minmax(0, 1fr) auto auto;
+  grid-template-rows: auto auto;
+  gap: 3px 9px;
+  min-height: 78px;
+  align-items: center;
+  padding: 10px 9px;
+  border-bottom: 1px solid color-mix(in srgb, var(--lnl-line) 72%, transparent);
+  cursor: pointer;
+  transition:
+    background-color 180ms ease,
+    opacity 180ms ease;
+}
+.lnl-ping-probe:hover,
+.lnl-ping-probe:focus-visible {
+  background: color-mix(in srgb, var(--lnl-green) 6%, transparent);
+  outline: none;
+}
+.lnl-ping-probe.is-disabled {
+  opacity: 0.34;
+}
+.lnl-ping-probe > i {
+  grid-row: 1 / 3;
+  width: 4px;
+  height: 34px;
+}
+.lnl-ping-probe-copy {
+  min-width: 0;
+}
+.lnl-ping-probe-copy strong,
+.lnl-ping-probe-copy small {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.lnl-ping-probe-copy strong {
+  font-size: 12px;
+}
+.lnl-ping-probe-copy small,
+.lnl-ping-probe-value small,
+.lnl-ping-probe-meta {
+  color: var(--muted-foreground);
+  font: 8px/1.4 var(--font-mono);
+  letter-spacing: 0.05em;
+}
+.lnl-ping-probe-value {
+  display: flex;
+  align-items: baseline;
+  gap: 3px;
+  color: var(--foreground);
+  font-family: var(--font-mono);
+}
+.lnl-ping-probe-value strong {
+  font-size: 17px;
+}
+.lnl-ping-probe-meta {
+  grid-column: 2 / 4;
+  display: flex;
+  gap: 10px;
+}
+.lnl-ping-probe-info {
+  grid-row: 1 / 3;
+  color: var(--muted-foreground);
+}
+.lnl-ping-plot {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+.lnl-ping-plot-head {
+  display: flex;
+  min-height: 46px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 7px 12px;
+  border-bottom: 1px solid var(--lnl-line);
+}
+.lnl-ping-plot-head strong {
+  display: block;
+  margin-top: 2px;
+  font-family: var(--font-display);
+  font-size: 14px;
+}
+.lnl-ping-plot-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+.lnl-ping-chart {
+  min-height: 310px;
+  flex: 1;
+  padding: 4px 8px 8px;
+}
+@media (max-width: 820px) {
+  .lnl-ping-toolbar,
+  .lnl-ping-plot-head {
+    align-items: stretch;
+    flex-direction: column;
+  }
+  .lnl-ping-selection,
+  .lnl-ping-plot-actions {
+    justify-content: flex-start;
+  }
+  .lnl-ping-workspace {
+    display: block;
+  }
+  .lnl-ping-probes {
+    border-right: 0;
+    border-bottom: 1px solid var(--lnl-line);
+  }
+  .lnl-ping-probe-list {
+    display: grid;
+    grid-auto-columns: minmax(210px, 72vw);
+    grid-auto-flow: column;
+    max-height: none;
+    overflow-x: auto;
+  }
+  .lnl-ping-probe {
+    border-right: 1px solid var(--lnl-line);
+    border-bottom: 0;
+  }
+  .lnl-ping-chart {
+    height: 310px;
+  }
+}
+</style>

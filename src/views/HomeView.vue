@@ -24,7 +24,7 @@ const NodeGeneralCards = defineAsyncComponent(() => import('@/components/NodeGen
 const NodeList = defineAsyncComponent(() => import('@/components/NodeList.vue'))
 const PingChart = defineAsyncComponent(() => import('@/components/PingChart.vue'))
 
-const nodeItemStaggerMs = 35
+const nodeItemStaggerMs = 55
 const nodeItemStaggerLimit = 12
 
 const appStore = useAppStore()
@@ -268,42 +268,19 @@ function getNodeItemTransitionStyle(index: number): Record<string, string> {
     <Dialog v-model:open="pingDialogOpen">
       <DialogContent
         v-if="selectedPingNode"
-        class="max-w-6xl gap-0 overflow-hidden border-emerald-600/10 p-0 shadow-[0_0_2rem] shadow-emerald-800/10 transition-all"
-        :class="pickSurfaceClass('bg-background', 'bg-background/60')"
+        class="lnl-ping-dialog w-[calc(100vw-2rem)] max-w-[1400px] gap-0 overflow-hidden rounded-none border-emerald-600/20 p-0 shadow-[0_0_3rem] shadow-emerald-950/20"
+        :class="pickSurfaceClass('bg-background', 'bg-background/94')"
       >
-        <DialogHeader class="flex h-12 flex-row items-center px-4">
-          <DialogTitle class="truncate text-[15px] font-semibold sm:text-base">
-            {{ selectedPingNode.name }} 延迟 / 丢包
-          </DialogTitle>
-          <div class="absolute inset-0 mx-0 max-w-none overflow-hidden bg-slate-50 dark:bg-slate-900/50 -z-9 zoom-90">
-            <div class="absolute top-0 left-1/2 -ml-152 h-100 w-325 dark:mask-[linear-gradient(white,transparent)]">
-              <div
-                class="absolute inset-0 bg-linear-to-r from-emerald-500 to-lime-300 mask-[radial-gradient(farthest-side_at_top,white,transparent)] opacity-40 dark:from-emerald-500/30 dark:to-lime-300/30 dark:opacity-100"
-              >
-                <svg
-                  aria-hidden="true"
-                  class="absolute inset-x-0 inset-y-[-50%] h-[200%] w-full skew-y-[-18deg] fill-black/40 stroke-black/50 mix-blend-overlay dark:fill-white/2.5 dark:stroke-white/5"
-                >
-                  <defs>
-                    <pattern id="_S_1_" width="72" height="56" patternUnits="userSpaceOnUse" x="-12" y="4">
-                      <path d="M.5 56V.5H72" fill="none" />
-                    </pattern>
-                  </defs>
-                  <rect width="100%" height="100%" stroke-width="0" fill="url(#_S_1_)" /><svg
-                    x="-12" y="4"
-                    class="overflow-visible"
-                  >
-                    <rect stroke-width="0" width="73" height="57" x="288" y="168" />
-                    <rect stroke-width="0" width="73" height="57" x="144" y="56" />
-                    <rect stroke-width="0" width="73" height="57" x="504" y="168" />
-                    <rect stroke-width="0" width="73" height="57" x="720" y="336" />
-                  </svg>
-                </svg>
-              </div>
-            </div>
+        <DialogHeader class="lnl-ping-dialog-head flex flex-row items-center pr-12">
+          <span class="lnl-ping-dialog-index" aria-hidden="true">PING</span>
+          <div class="min-w-0">
+            <span class="lnl-ping-dialog-kicker">NETWORK QUALITY / ACTIVE PROBES</span>
+            <DialogTitle class="truncate text-base font-semibold sm:text-lg">
+              {{ selectedPingNode.name }} 延迟与丢包
+            </DialogTitle>
           </div>
         </DialogHeader>
-        <div class="max-h-[calc(92dvh-3rem)] overflow-y-auto p-3 pt-0 sm:p-4 sm:pt-0">
+        <div class="max-h-[calc(92dvh-64px)] overflow-y-auto p-2 sm:p-3">
           <PingChart :uuid="selectedPingNode.uuid" />
         </div>
       </DialogContent>
@@ -312,12 +289,39 @@ function getNodeItemTransitionStyle(index: number): Record<string, string> {
 </template>
 
 <style scoped>
+.lnl-ping-dialog-head {
+  min-height: 58px;
+  gap: 12px;
+  padding: 8px 16px;
+  border-bottom: 1px solid var(--lnl-line);
+  background:
+    linear-gradient(90deg, color-mix(in srgb, var(--lnl-green) 7%, transparent), transparent 48%),
+    color-mix(in srgb, var(--background) 96%, var(--lnl-surface));
+}
+.lnl-ping-dialog-index {
+  display: grid;
+  width: 38px;
+  height: 38px;
+  flex: 0 0 38px;
+  place-items: center;
+  border: 1px solid color-mix(in srgb, var(--lnl-green) 52%, var(--lnl-line));
+  color: var(--lnl-green);
+  font: 9px var(--font-mono);
+  letter-spacing: 0.08em;
+}
+.lnl-ping-dialog-kicker {
+  display: block;
+  margin-bottom: 3px;
+  color: var(--lnl-green);
+  font: 8px/1.3 var(--font-mono);
+  letter-spacing: 0.13em;
+}
+
 .node-card-switch-enter-active,
 .node-card-switch-leave-active {
   transition:
-    opacity 180ms ease,
-    transform 220ms cubic-bezier(0.22, 1, 0.36, 1),
-    filter 180ms ease;
+    opacity 360ms ease,
+    transform 520ms cubic-bezier(0.16, 1, 0.3, 1);
 }
 
 .node-card-switch-enter-active {
@@ -330,14 +334,12 @@ function getNodeItemTransitionStyle(index: number): Record<string, string> {
 
 .node-card-switch-enter-from {
   opacity: 0;
-  transform: translateY(10px) scale(0.985);
-  filter: blur(3px);
+  transform: translate3d(0, 18px, 0);
 }
 
 .node-card-switch-leave-to {
   opacity: 0;
-  transform: translateY(-6px) scale(0.99);
-  filter: blur(2px);
+  transform: translate3d(0, -6px, 0);
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -352,7 +354,6 @@ function getNodeItemTransitionStyle(index: number): Record<string, string> {
   .node-card-switch-leave-to {
     opacity: 1;
     transform: none;
-    filter: none;
   }
 }
 </style>
