@@ -256,18 +256,18 @@ const trafficProgressStyle = computed(() => ({
     </div>
 
     <template v-else>
-      <div class="lnl-detail-hero px-4 flex gap-4 items-center">
+      <div class="lnl-detail-hero px-4 flex gap-3 items-center">
         <Button variant="ghost" size="icon-sm" class="bg-background/50 hover:bg-background" @click="router.push('/')">
           <Icon icon="tabler:arrow-left" :width="16" :height="16" />
         </Button>
-        <div class="text-lg font-bold flex gap-2 items-center">
+        <div class="lnl-detail-title flex min-w-0 gap-2 items-center">
           <img
             :src="`/images/flags/${getRegionCode(data.region)}.svg`" :alt="getRegionDisplayName(data.region)"
             class="size-6"
           >
-          <span>{{ data.name }}</span>
+          <span class="truncate">{{ data.name }}</span>
         </div>
-        <Badge :variant="data.online ? 'default' : 'destructive'" class="text-xs !rounded">
+        <Badge :variant="data.online ? 'default' : 'destructive'" class="lnl-detail-status shrink-0 !rounded-sm">
           {{ data.online ? '在线' : '离线' }}
         </Badge>
       </div>

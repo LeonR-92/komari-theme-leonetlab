@@ -3,6 +3,7 @@ import type { NodeStatusPing } from '@/utils/rpc'
 import { computed, toValue } from 'vue'
 import { NODE_PING_BAR_COUNT, useNodePingStats } from '@/composables/useNodePingStats'
 import { formatDateTime } from '@/utils/helper'
+import { getLatencyToneClass, getLossToneClass } from '@/utils/pingMetrics'
 
 export type NodePingMetric = 'latency' | 'loss'
 
@@ -22,30 +23,6 @@ interface UseNodePingDisplayOptions {
   emptyDisplayText?: string
   loadingPanelTooltipText?: Partial<Record<NodePingMetric, string>>
   emptyPanelTooltipText?: Partial<Record<NodePingMetric, string>>
-}
-
-function getLatencyToneClass(latency: number): string {
-  if (latency <= 60)
-    return 'bg-emerald-500'
-  if (latency <= 100)
-    return 'bg-green-400'
-  if (latency <= 160)
-    return 'bg-lime-400'
-  if (latency <= 200)
-    return 'bg-yellow-400'
-  return 'bg-rose-500'
-}
-
-function getLossToneClass(loss: number): string {
-  if (loss <= 1)
-    return 'bg-emerald-500'
-  if (loss <= 3)
-    return 'bg-green-400'
-  if (loss <= 6)
-    return 'bg-lime-400'
-  if (loss <= 9)
-    return 'bg-yellow-400'
-  return 'bg-rose-500'
 }
 
 export function useNodePingDisplay(
@@ -158,20 +135,20 @@ export function useNodePingDisplay(
       : buildEmptyPingBars('loss'))
 
   const latencyDisplay = computed(() => {
-    if (pingStats.hasData.value)
-      return `${Math.round(pingStats.avgLatency.value)} ms`
     if (latestLatencyAverage.value !== null)
       return `${Math.round(latestLatencyAverage.value)} ms`
+    if (pingStats.hasData.value)
+      return `${Math.round(pingStats.avgLatency.value)} ms`
     if (pingStats.loading.value)
       return options.loadingDisplayText ?? '加载中'
     return options.emptyDisplayText ?? '-'
   })
 
   const lossDisplay = computed(() => {
-    if (pingStats.hasData.value)
-      return `${pingStats.avgLoss.value.toFixed(1)}%`
     if (latestLossAverage.value !== null)
       return `${latestLossAverage.value.toFixed(1)}%`
+    if (pingStats.hasData.value)
+      return `${pingStats.avgLoss.value.toFixed(1)}%`
     if (pingStats.loading.value)
       return options.loadingDisplayText ?? '加载中'
     return options.emptyDisplayText ?? '-'
@@ -183,8 +160,10 @@ export function useNodePingDisplay(
         return options.loadingPanelTooltipText?.latency ?? ''
       return options.emptyPanelTooltipText?.latency ?? ''
     }
-    const value = pingStats.hasData.value ? pingStats.avgLatency.value : latestLatencyAverage.value ?? 0
-    return `平均延迟 ${Math.round(value)} ms`
+    if (latestLatencyAverage.value !== null)
+      return `当前延迟 ${Math.round(latestLatencyAverage.value)} ms；色块为近 1 小时趋势`
+
+    return `近 1 小时平均延迟 ${Math.round(pingStats.avgLatency.value)} ms`
   })
 
   const lossPanelTooltip = computed(() => {
@@ -197,8 +176,10 @@ export function useNodePingDisplay(
     const volatility = pingStats.hasData.value && pingStats.avgVolatility.value > 0
       ? `，平均波动 ${pingStats.avgVolatility.value.toFixed(2)}`
       : ''
-    const value = pingStats.hasData.value ? pingStats.avgLoss.value : latestLossAverage.value ?? 0
-    return `平均丢包 ${value.toFixed(1)}%${volatility}`
+    if (latestLossAverage.value !== null)
+      return `近 1 小时平均丢包 ${latestLossAverage.value.toFixed(1)}%；色块为分段趋势${volatility}`
+
+    return `近 1 小时平均丢包 ${pingStats.avgLoss.value.toFixed(1)}%${volatility}`
   })
 
   return {

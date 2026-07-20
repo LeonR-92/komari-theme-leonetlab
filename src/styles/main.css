@@ -469,17 +469,24 @@ textarea {
 }
 
 .lnl-detail {
-  padding-top: clamp(20px, 3.2vw, 44px);
+  padding-top: clamp(14px, 2vw, 28px);
 }
 .lnl-detail-hero {
-  min-height: 54px;
-  padding-bottom: 18px;
+  min-height: 46px;
+  padding-bottom: 12px;
   border-bottom: 1px solid var(--lnl-line);
 }
-.lnl-detail-hero > div {
+.lnl-detail-title {
   font-family: var(--font-sans);
-  font-size: clamp(19px, 1.45vw, 24px);
+  font-size: clamp(18px, 1.25vw, 21px);
   font-weight: 650;
+}
+.lnl-detail-status {
+  min-width: 0 !important;
+  height: 22px !important;
+  padding: 0 8px !important;
+  font: 600 12px/22px var(--font-sans) !important;
+  letter-spacing: 0.02em;
 }
 .lnl-detail-metric,
 .lnl-detail-panel {

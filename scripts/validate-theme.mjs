@@ -67,8 +67,9 @@ assert.match(dataOcean, /quadraticCurveTo/)
 assert.match(dataOcean, /prefers-reduced-motion/)
 assert.match(dataOcean, /saveData/)
 assert.doesNotMatch(dataOcean, /NODE:|TELEMETRY|DATA STREAM/)
-const escapedVersion = packageJson.version.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-assert.match(app, new RegExp(`leonetlab:intro:${escapedVersion}`))
+// The intro session key changes only when the intro itself is intentionally
+// redesigned; ordinary patch releases must not replay it for every visitor.
+assert.match(app, /leonetlab:intro:\d+\.\d+\.\d+/)
 assert.match(header, /自动（北京时间）/)
 assert.match(header, /resolveThemeMode/)
 assert.match(header, /lnl-theme-wipe/)

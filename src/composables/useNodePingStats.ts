@@ -1,6 +1,7 @@
 import type { MaybeRefOrGetter } from 'vue'
 import { useThrottleFn } from '@vueuse/core'
 import { computed, onScopeDispose, ref, shallowRef, toValue, watch } from 'vue'
+import { summarizePingSamples } from '@/utils/pingMetrics'
 import { getSharedRpc } from '@/utils/rpc'
 
 export interface NodePingHistoryPoint {
@@ -301,14 +302,7 @@ function buildPingHistory(records: PingRecord[]): NodePingHistoryPoint[] {
     const bucketRecords = sortedRecords.filter(
       record => record.timestamp >= startTime && record.timestamp < endTime,
     )
-    const validLatencyRecords = bucketRecords.filter(record => record.value >= 0)
-    const lostCount = bucketRecords.length - validLatencyRecords.length
-    const latency = validLatencyRecords.length
-      ? average(validLatencyRecords.map(record => record.value))
-      : null
-    const loss = bucketRecords.length
-      ? lostCount / bucketRecords.length * 100
-      : null
+    const { latency, loss } = summarizePingSamples(bucketRecords.map(record => record.value))
 
     return {
       time: new Date(startTime).toISOString(),

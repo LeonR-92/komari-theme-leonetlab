@@ -271,8 +271,8 @@ function getNodeItemTransitionStyle(index: number): Record<string, string> {
         class="max-w-6xl gap-0 overflow-hidden border-emerald-600/10 p-0 shadow-[0_0_2rem] shadow-emerald-800/10 transition-all"
         :class="pickSurfaceClass('bg-background', 'bg-background/60')"
       >
-        <DialogHeader class="flex h-13 flex-row items-center px-4">
-          <DialogTitle class="truncate">
+        <DialogHeader class="flex h-12 flex-row items-center px-4">
+          <DialogTitle class="truncate text-[15px] font-semibold sm:text-base">
             {{ selectedPingNode.name }} 延迟 / 丢包
           </DialogTitle>
           <div class="absolute inset-0 mx-0 max-w-none overflow-hidden bg-slate-50 dark:bg-slate-900/50 -z-9 zoom-90">
@@ -303,7 +303,7 @@ function getNodeItemTransitionStyle(index: number): Record<string, string> {
             </div>
           </div>
         </DialogHeader>
-        <div class="max-h-[calc(90vh-4rem)] overflow-y-auto p-4 pt-0">
+        <div class="max-h-[calc(92dvh-3rem)] overflow-y-auto p-3 pt-0 sm:p-4 sm:pt-0">
           <PingChart :uuid="selectedPingNode.uuid" />
         </div>
       </DialogContent>

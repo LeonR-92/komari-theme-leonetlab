@@ -70,7 +70,19 @@ function status(uuid, cpu) {
     connections_udp: 3,
     online: true,
     uptime: 86400,
-    ping: {},
+    ping: uuid === nodeUuid
+      ? {
+          1: {
+            name: 'Tokyo route probe',
+            latest: 67,
+            avg: 54,
+            tail: 62,
+            loss: 4.17,
+            min: 42,
+            max: 67,
+          },
+        }
+      : {},
   }
 }
 const statuses = {
@@ -291,6 +303,8 @@ try {
 
   assert.match(html, /Tokyo Fixture/)
   assert.match(html, /Frankfurt Fixture/)
+  assert.match(html, /67 ms/)
+  assert.match(html, /4\.2%/)
   assert.doesNotMatch(html, /暂无节点/)
 
   const detailHtml = await dumpDom('detail', `/instance/${nodeUuid}`, 8000)

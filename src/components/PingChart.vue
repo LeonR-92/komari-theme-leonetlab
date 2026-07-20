@@ -894,7 +894,7 @@ watch(() => props.uuid, () => {
 
         <!-- 图表 -->
         <div
-          class="h-80 rounded-md p-4 transition-all"
+          class="h-[clamp(270px,43vh,390px)] rounded-md p-3 transition-all"
           :class="pickSurfaceClass('bg-background/60 hover:bg-background', 'bg-background/50 hover:bg-background backdrop-blur-xl')"
         >
           <VChart :option="pingChartOption" autoresize />
