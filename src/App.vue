@@ -12,7 +12,7 @@ import Provider from './components/Provider.vue'
 const appStore = useAppStore()
 
 const isReady = ref(false)
-const INTRO_SESSION_KEY = 'leonetlab:intro:1.1.2'
+const INTRO_SESSION_KEY = 'leonetlab:intro:1.1.3'
 const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches
 function shouldPlayIntro(): boolean {
   if (reducedMotion)

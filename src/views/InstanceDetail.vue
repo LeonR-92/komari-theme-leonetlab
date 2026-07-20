@@ -411,8 +411,30 @@ const trafficProgressStyle = computed(() => ({
         </CardX>
       </div>
 
-      <LoadChart :uuid="data.uuid" class="lnl-detail-chart px-4" />
-      <PingChart :uuid="data.uuid" class="lnl-detail-chart px-4" />
+      <section class="lnl-detail-chart-section mx-4" aria-labelledby="resource-history-title">
+        <header class="lnl-detail-chart-heading">
+          <span class="lnl-detail-chart-index">01</span>
+          <div>
+            <h2 id="resource-history-title">
+              资源与系统记录
+            </h2>
+            <p>CPU、内存、磁盘、网络与进程历史</p>
+          </div>
+        </header>
+        <LoadChart :uuid="data.uuid" class="lnl-detail-chart" />
+      </section>
+      <section class="lnl-detail-chart-section mx-4" aria-labelledby="network-history-title">
+        <header class="lnl-detail-chart-heading">
+          <span class="lnl-detail-chart-index">02</span>
+          <div>
+            <h2 id="network-history-title">
+              网络质量记录
+            </h2>
+            <p>探测延迟、抖动与丢包趋势</p>
+          </div>
+        </header>
+        <PingChart :uuid="data.uuid" class="lnl-detail-chart" />
+      </section>
     </template>
   </div>
 </template>

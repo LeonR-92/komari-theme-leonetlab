@@ -1,16 +1,20 @@
 <script setup lang="ts">
+import type { NodeStatusPing } from '@/utils/rpc'
 import { DataTooltip } from '@/components/ui/data-tooltip'
 import { useNodePingDisplay } from '@/composables/useNodePingDisplay'
 
 const props = defineProps<{
   uuid: string
   online: boolean
+  latestPing?: Record<string, NodeStatusPing>
 }>()
 
 const {
   latencyRenderBars,
   lossRenderBars,
-} = useNodePingDisplay(() => props.uuid)
+} = useNodePingDisplay(() => props.uuid, {
+  latestPing: () => props.latestPing,
+})
 </script>
 
 <template>

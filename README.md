@@ -22,7 +22,7 @@ bun run build
 构建完成后会生成：
 
 - `dist/`
-- `komari-theme-leonetlab-build-v1.1.2.zip`
+- `komari-theme-leonetlab-build-v1.1.3.zip`
 
 兼容性与构建检查：
 
@@ -31,7 +31,14 @@ npm run validate
 npm run smoke:1.2.5
 ```
 
-`smoke:1.2.5` 会启动本地模拟接口并用无界面 Chrome/Edge 验证 1.2.5 数组节点响应能够实际渲染为节点卡片。
+`smoke:1.2.5` 会启动本地模拟接口并用无界面 Chrome/Edge 验证 1.2.5 数组节点响应、历史记录 RPC 回退、详情分区和 Ping 数据能够实际渲染。
+
+## 1.1.3 更新摘要
+
+- 修正资源历史页误用旧 REST 路径的问题，统一通过 Komari `common:getRecords` 获取 4 小时、1 天、7 天和 30 天数据，并兼容 UUID 分组与平铺记录。
+- 首访动画跟随当前明暗模式；首页地球回归 Emerald 原版点阵观感并按容器、视口自适应，取消与节点卡片重叠的负位移。
+- 强化节点卡片的延迟与丢包红绿状态块，历史数据不可用时可回退到最新 Ping 汇总。
+- 详情页增加资源、系统、网络和图表区的明确边界；本地冒烟测试加入真实负载与 Ping 样本及 1.2.5 RPC 回退验证。
 
 ## 安装
 

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { Icon } from '@iconify/vue'
 import dayjs from 'dayjs'
-import { computed, onMounted, ref, shallowRef, watch } from 'vue'
+import { computed, ref, shallowRef, watch } from 'vue'
 import VChart from 'vue-echarts'
 import { Button } from '@/components/ui/button'
 import { DataTooltip } from '@/components/ui/data-tooltip'
@@ -208,6 +208,11 @@ function isMethodNotFoundError(err: unknown): boolean {
   return err instanceof RpcError && err.code === -32601
 }
 
+function canFallbackToLegacyRecords(err: unknown): boolean {
+  return isMethodNotFoundError(err)
+    || (err instanceof RpcError && [-32602, -32603].includes(err.code))
+}
+
 function getMetricTaskId(series: MetricSeries, point: MetricPoint): number | null {
   const taskId = Number(
     point.tags?.task_id
@@ -282,6 +287,7 @@ async function fetchLegacyRecords(uuid: string, hours: number): Promise<PingChar
     type: 'ping',
     uuid,
     hours,
+    maxCount: 4000,
   })
 
   return {
@@ -312,7 +318,7 @@ async function fetchRecords() {
         metricRpcSupported = true
       }
       catch (err) {
-        if (!isMethodNotFoundError(err))
+        if (!canFallbackToLegacyRecords(err))
           throw err
 
         metricRpcSupported = false
@@ -713,20 +719,12 @@ const pingChartOption = computed(() => {
 watch(selectedView, () => {
   selectedTaskIds.value = []
   fetchRecords()
-})
+}, { immediate: true })
 
 watch(() => props.uuid, () => {
   remoteData.value = []
   tasks.value = []
   selectedTaskIds.value = []
-  fetchRecords()
-})
-
-onMounted(() => {
-  const firstView = availableViews.value[0]
-  if (firstView && !selectedView.value) {
-    selectedView.value = firstView.label
-  }
   fetchRecords()
 })
 </script>

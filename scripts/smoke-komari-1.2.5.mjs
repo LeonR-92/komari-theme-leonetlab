@@ -77,6 +77,32 @@ const statuses = {
   [nodeUuid]: status(nodeUuid, 18),
   [secondNodeUuid]: status(secondNodeUuid, 24),
 }
+const historyRecords = Array.from({ length: 24 }, (_, index) => ({
+  ...status(nodeUuid, 12 + index * 0.35),
+  time: new Date(Date.parse('2026-07-20T08:00:00Z') - (23 - index) * 10 * 60_000).toISOString(),
+  ram: 2_000_000_000 + index * 4_000_000,
+  net_in: 2048 + index * 32,
+  net_out: 1024 + index * 24,
+}))
+const pingRecords = Array.from({ length: 24 }, (_, index) => ({
+  client: nodeUuid,
+  task_id: 1,
+  time: new Date(Date.parse('2026-07-20T08:00:00Z') - (23 - index) * 5 * 60_000).toISOString(),
+  value: index === 8 ? -1 : 42 + (index % 6) * 5,
+}))
+const pingTasks = [{
+  id: 1,
+  name: 'Tokyo route probe',
+  interval: 300,
+  loss: 4.17,
+  min: 42,
+  max: 67,
+  avg: 54,
+  latest: 67,
+  total: pingRecords.length,
+  type: 'icmp',
+}]
+const rpcCalls = []
 const leadingSlashesPattern = /^\/+/
 
 const mime = {
@@ -131,15 +157,20 @@ const server = createServer((request, response) => {
     request.on('data', chunk => body += chunk)
     request.on('end', () => {
       const rpcRequest = JSON.parse(body)
+      rpcCalls.push({ method: rpcRequest.method, params: rpcRequest.params })
       const results = {
         'rpc.ping': 'pong',
         // This array is the exact collection shape used by Komari 1.2.5-fix1.
         'common:getNodes': clients,
         'common:getNodesLatestStatus': statuses,
-        'common:getNodeRecentStatus': { count: 0, records: [] },
-        'common:getRecords': { count: 0, records: [], tasks: [] },
+        'common:getNodeRecentStatus': { count: historyRecords.length, records: historyRecords },
       }
-      const result = results[rpcRequest.method]
+      let result = results[rpcRequest.method]
+      if (rpcRequest.method === 'common:getRecords') {
+        result = rpcRequest.params?.type === 'ping'
+          ? { count: pingRecords.length, records: pingRecords, tasks: pingTasks }
+          : { count: historyRecords.length, records: { [nodeUuid]: historyRecords }, from: historyRecords[0].time, to: historyRecords.at(-1).time }
+      }
       if (result === undefined) {
         json(response, {
           jsonrpc: '2.0',
@@ -185,6 +216,42 @@ const address = server.address()
 assert.ok(address && typeof address === 'object')
 const profile = resolve(tmpdir(), `leonetlab-komari-smoke-${process.pid}`)
 
+async function dumpDom(name, path, virtualTimeBudget = 6000) {
+  const dumpProfile = `${profile}-${name}`
+  try {
+    return await new Promise((resolveRun, rejectRun) => {
+      const child = spawn(browser, [
+        '--headless=new',
+        '--disable-gpu',
+        '--disable-features=SkiaGraphite',
+        '--no-sandbox',
+        '--no-first-run',
+        '--no-default-browser-check',
+        `--user-data-dir=${dumpProfile}`,
+        `--virtual-time-budget=${virtualTimeBudget}`,
+        '--dump-dom',
+        `http://127.0.0.1:${address.port}${path}`,
+      ], { windowsHide: true })
+      let stdout = ''
+      let stderr = ''
+      child.stdout.setEncoding('utf8')
+      child.stderr.setEncoding('utf8')
+      child.stdout.on('data', chunk => stdout += chunk)
+      child.stderr.on('data', chunk => stderr += chunk)
+      child.once('error', rejectRun)
+      child.once('close', (code) => {
+        if (code === 0)
+          resolveRun(stdout)
+        else
+          rejectRun(new Error(`Headless browser exited with ${code}: ${stderr.slice(-800)}`))
+      })
+    })
+  }
+  finally {
+    rmSync(dumpProfile, { recursive: true, force: true })
+  }
+}
+
 async function captureScreenshot(name, width, height, path, virtualTimeBudget, extraBrowserArgs = []) {
   const screenshotProfile = `${profile}-${name}`
   const screenshotDir = process.env.SMOKE_SCREENSHOT_DIR
@@ -220,38 +287,20 @@ async function captureScreenshot(name, width, height, path, virtualTimeBudget, e
 }
 
 try {
-  const html = await new Promise((resolveRun, rejectRun) => {
-    const child = spawn(browser, [
-      '--headless=new',
-      '--disable-gpu',
-      '--disable-features=SkiaGraphite',
-      '--no-sandbox',
-      '--no-first-run',
-      '--no-default-browser-check',
-      `--user-data-dir=${profile}`,
-      '--virtual-time-budget=6000',
-      '--dump-dom',
-      `http://127.0.0.1:${address.port}/`,
-    ], { windowsHide: true })
-    let stdout = ''
-    let stderr = ''
-    child.stdout.setEncoding('utf8')
-    child.stderr.setEncoding('utf8')
-    child.stdout.on('data', chunk => stdout += chunk)
-    child.stderr.on('data', chunk => stderr += chunk)
-    child.once('error', rejectRun)
-    child.once('close', (code) => {
-      if (code === 0)
-        resolveRun(stdout)
-      else
-        rejectRun(new Error(`Headless browser exited with ${code}: ${stderr.slice(-800)}`))
-    })
-  })
+  const html = await dumpDom('home', '/')
 
   assert.match(html, /Tokyo Fixture/)
   assert.match(html, /Frankfurt Fixture/)
   assert.doesNotMatch(html, /暂无节点/)
-  console.log('Komari 1.2.5 rendered-node integration smoke test passed.')
+
+  const detailHtml = await dumpDom('detail', `/instance/${nodeUuid}`, 8000)
+  assert.match(detailHtml, /资源与系统记录/)
+  assert.match(detailHtml, /网络质量记录/)
+  assert.match(detailHtml, /Tokyo route probe/)
+  assert.ok(rpcCalls.some(call => call.method === 'common:getRecords' && call.params?.type === 'ping' && call.params?.uuid === nodeUuid))
+  assert.ok(rpcCalls.some(call => call.method === 'public:queryMetrics'))
+
+  console.log('Komari 1.2.5 rendered-node and history-fallback integration smoke test passed.')
 
   if (process.env.SMOKE_SCREENSHOT_DIR) {
     mkdirSync(process.env.SMOKE_SCREENSHOT_DIR, { recursive: true })

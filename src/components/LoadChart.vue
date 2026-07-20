@@ -15,6 +15,7 @@ import { useAppStore } from '@/stores/app'
 import { useNodesStore } from '@/stores/nodes'
 import { formatBytes, formatBytesSplit } from '@/utils/helper'
 import { fillMissingTimePoints } from '@/utils/recordHelper'
+import { normalizeRecordCollection } from '@/utils/recordResponse'
 import { getSharedRpc } from '@/utils/rpc'
 import '@/utils/echarts' // 共享 ECharts 配置
 
@@ -160,6 +161,10 @@ const nodeInfo = computed(() => nodesStore.nodesByUuid.get(props.uuid))
 // RPC 客户端
 const rpc = getSharedRpc()
 
+interface LoadRecordsResponse {
+  records?: StatusRecord[] | Record<string, StatusRecord[]>
+}
+
 // ==================== 数据获取 ====================
 
 function statusToRecordFormat(records: StatusRecord[]): RecordFormat[] {
@@ -225,15 +230,13 @@ async function fetchHistoryData() {
   error.value = null
 
   try {
-    const apiBase = import.meta.env.VITE_API_BASE
-    const response = await fetch(`${apiBase}/records/load?uuid=${props.uuid}&hours=${hours}`)
-
-    if (!response.ok) {
-      throw new Error(`HTTP error: ${response.status}`)
-    }
-
-    const resp = await response.json()
-    const records = resp.data?.records || []
+    const result = await rpc.getClient().call<LoadRecordsResponse>('common:getRecords', {
+      type: 'load',
+      uuid: props.uuid,
+      hours,
+      maxCount: 4000,
+    })
+    const records = normalizeRecordCollection(result?.records, props.uuid)
 
     // 按时间排序
     records.sort((a: StatusRecord, b: StatusRecord) =>

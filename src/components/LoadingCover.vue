@@ -1,7 +1,9 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from 'vue'
+import { useAppStore } from '@/stores/app'
 
 const emit = defineEmits<{ skip: [] }>()
+const appStore = useAppStore()
 const regions = [
   { code: 'HK', className: 'n1' },
   { code: 'JP', className: 'n2' },
@@ -50,7 +52,10 @@ onUnmounted(() => timers.forEach(timer => window.clearTimeout(timer)))
 </script>
 
 <template>
-  <div class="lnl-intro" :style="introStyle" role="status" aria-live="polite" aria-label="正在连接监控数据">
+  <div
+    class="lnl-intro" :class="appStore.isDark ? 'lnl-intro-dark' : 'lnl-intro-light'"
+    :style="introStyle" role="status" aria-live="polite" aria-label="正在连接监控数据"
+  >
     <div class="lnl-intro-grid" aria-hidden="true" />
     <div class="lnl-intro-ocean" aria-hidden="true" />
     <div class="lnl-intro-top" aria-hidden="true">
@@ -103,6 +108,13 @@ onUnmounted(() => timers.forEach(timer => window.clearTimeout(timer)))
 .lnl-intro {
   --lnl-intro-globe: clamp(210px, min(46vw, 48dvh), 480px);
   --lnl-intro-title: clamp(42px, min(7vw, 8.5dvh), 78px);
+  --intro-bg: #030b09;
+  --intro-ink: #e5eee9;
+  --intro-muted: #91a79e;
+  --intro-dim: #789087;
+  --intro-accent: #74e6b2;
+  --intro-cyan: #75c9d4;
+  --intro-surface: #071310;
   position: fixed;
   inset: 0;
   z-index: 100;
@@ -110,25 +122,34 @@ onUnmounted(() => timers.forEach(timer => window.clearTimeout(timer)))
   place-items: center;
   overflow: hidden;
   contain: layout paint style;
-  background: #030b09;
-  color: #e5eee9;
+  background: var(--intro-bg);
+  color: var(--intro-ink);
   isolation: isolate;
+}
+.lnl-intro-light {
+  --intro-bg: #edf6f1;
+  --intro-ink: #10251d;
+  --intro-muted: #506c61;
+  --intro-dim: #668077;
+  --intro-accent: #167a56;
+  --intro-cyan: #227f89;
+  --intro-surface: #f7fbf8;
 }
 .lnl-intro::before {
   content: '';
   position: absolute;
   inset: -20%;
   background:
-    radial-gradient(circle at 50% 43%, rgba(116, 230, 178, 0.14), transparent 26rem),
-    linear-gradient(112deg, transparent 25%, rgba(117, 201, 212, 0.065) 50%, transparent 72%);
+    radial-gradient(circle at 50% 43%, color-mix(in srgb, var(--intro-accent) 14%, transparent), transparent 26rem),
+    linear-gradient(112deg, transparent 25%, color-mix(in srgb, var(--intro-cyan) 7%, transparent) 50%, transparent 72%);
   animation: lnl-sweep 2.8s cubic-bezier(0.22, 1, 0.36, 1) both;
 }
 .lnl-intro-grid {
   position: absolute;
   inset: 0;
   background-image:
-    linear-gradient(rgba(116, 230, 178, 0.035) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(116, 230, 178, 0.035) 1px, transparent 1px);
+    linear-gradient(color-mix(in srgb, var(--intro-accent) 5%, transparent) 1px, transparent 1px),
+    linear-gradient(90deg, color-mix(in srgb, var(--intro-accent) 5%, transparent) 1px, transparent 1px);
   background-size: 42px 42px;
   mask-image: radial-gradient(circle at 50% 46%, #000, transparent 74%);
   animation: lnl-grid 1.15s ease both;
@@ -142,8 +163,8 @@ onUnmounted(() => timers.forEach(timer => window.clearTimeout(timer)))
   height: 92%;
   opacity: 0;
   background-image:
-    radial-gradient(circle, rgba(116, 230, 178, 0.86) 0 1px, transparent 1.25px),
-    radial-gradient(circle, rgba(117, 201, 212, 0.32) 0 0.7px, transparent 1px);
+    radial-gradient(circle, color-mix(in srgb, var(--intro-accent) 86%, transparent) 0 1px, transparent 1.25px),
+    radial-gradient(circle, color-mix(in srgb, var(--intro-cyan) 32%, transparent) 0 0.7px, transparent 1px);
   background-position:
     0 0,
     12px 9px;
@@ -157,10 +178,10 @@ onUnmounted(() => timers.forEach(timer => window.clearTimeout(timer)))
   content: '';
   position: absolute;
   inset: 18% 8% 20%;
-  border: 1px solid rgba(117, 201, 212, 0.13);
+  border: 1px solid color-mix(in srgb, var(--intro-cyan) 13%, transparent);
   border-width: 1px 0 0;
   border-radius: 50%;
-  box-shadow: 0 -18px 44px rgba(116, 230, 178, 0.045);
+  box-shadow: 0 -18px 44px color-mix(in srgb, var(--intro-accent) 5%, transparent);
   transform: rotate(-5deg);
   animation: lnl-intro-current 2.8s ease-in-out both;
 }
@@ -172,7 +193,7 @@ onUnmounted(() => timers.forEach(timer => window.clearTimeout(timer)))
   left: max(24px, env(safe-area-inset-left));
   display: flex;
   justify-content: space-between;
-  color: #789087;
+  color: var(--intro-dim);
   font:
     10px/1.4 ui-monospace,
     SFMono-Regular,
@@ -207,11 +228,11 @@ onUnmounted(() => timers.forEach(timer => window.clearTimeout(timer)))
   content: '';
   position: absolute;
   inset: 4%;
-  border: 1px solid rgba(116, 230, 178, 0.09);
+  border: 1px solid color-mix(in srgb, var(--intro-accent) 9%, transparent);
   border-radius: 50%;
   box-shadow:
-    0 0 55px rgba(116, 230, 178, 0.05),
-    inset 0 0 48px rgba(117, 201, 212, 0.04);
+    0 0 55px color-mix(in srgb, var(--intro-accent) 5%, transparent),
+    inset 0 0 48px color-mix(in srgb, var(--intro-cyan) 4%, transparent);
 }
 .lnl-intro-globe svg {
   position: absolute;
@@ -222,12 +243,12 @@ onUnmounted(() => timers.forEach(timer => window.clearTimeout(timer)))
 }
 .lnl-intro-globe :is(.sphere, .meridian, .latitude) {
   fill: none;
-  stroke: rgba(117, 201, 212, 0.22);
+  stroke: color-mix(in srgb, var(--intro-cyan) 22%, transparent);
   stroke-width: 1.2;
   vector-effect: non-scaling-stroke;
 }
 .lnl-intro-globe .sphere {
-  stroke: rgba(116, 230, 178, 0.34);
+  stroke: color-mix(in srgb, var(--intro-accent) 34%, transparent);
 }
 .lnl-intro-globe .meridian {
   stroke-dasharray: 4 6;
@@ -237,7 +258,7 @@ onUnmounted(() => timers.forEach(timer => window.clearTimeout(timer)))
 }
 .route {
   fill: none;
-  stroke: #74e6b2;
+  stroke: var(--intro-accent);
   stroke-width: 1.35;
   stroke-linecap: round;
   stroke-dasharray: 1;
@@ -276,7 +297,7 @@ onUnmounted(() => timers.forEach(timer => window.clearTimeout(timer)))
   display: flex;
   align-items: center;
   gap: 5px;
-  color: #9eb4ab;
+  color: var(--intro-muted);
   font:
     8px ui-monospace,
     SFMono-Regular,
@@ -291,8 +312,8 @@ onUnmounted(() => timers.forEach(timer => window.clearTimeout(timer)))
   width: 6px;
   height: 6px;
   border-radius: 50%;
-  background: #74e6b2;
-  box-shadow: 0 0 12px rgba(116, 230, 178, 0.55);
+  background: var(--intro-accent);
+  box-shadow: 0 0 12px color-mix(in srgb, var(--intro-accent) 55%, transparent);
 }
 .n1 {
   left: 50%;
@@ -348,7 +369,7 @@ onUnmounted(() => timers.forEach(timer => window.clearTimeout(timer)))
   justify-items: center;
   gap: 8px;
   transform: translate(-50%, -50%);
-  color: #9eb4ab;
+  color: var(--intro-muted);
   font:
     8px ui-monospace,
     SFMono-Regular,
@@ -364,12 +385,12 @@ onUnmounted(() => timers.forEach(timer => window.clearTimeout(timer)))
   overflow: hidden;
   aspect-ratio: 1;
   padding: 7px;
-  border: 1px solid rgba(116, 230, 178, 0.4);
+  border: 1px solid color-mix(in srgb, var(--intro-accent) 40%, transparent);
   border-radius: 19px;
-  background: #071310;
+  background: var(--intro-surface);
   box-shadow:
-    0 0 0 8px rgba(3, 11, 9, 0.76),
-    0 0 34px rgba(116, 230, 178, 0.1);
+    0 0 0 8px color-mix(in srgb, var(--intro-bg) 76%, transparent),
+    0 0 34px color-mix(in srgb, var(--intro-accent) 10%, transparent);
 }
 .lnl-intro-core img {
   display: block;
@@ -393,7 +414,7 @@ onUnmounted(() => timers.forEach(timer => window.clearTimeout(timer)))
   letter-spacing: 0.15em;
 }
 .lnl-intro-copy > span {
-  color: #74e6b2;
+  color: var(--intro-accent);
 }
 .lnl-intro-copy > strong {
   font:
@@ -404,7 +425,7 @@ onUnmounted(() => timers.forEach(timer => window.clearTimeout(timer)))
 }
 .lnl-intro-copy > p {
   margin: 8px 0 0;
-  color: #91a79e;
+  color: var(--intro-muted);
 }
 .lnl-intro-copy > * {
   opacity: 0;
@@ -427,13 +448,13 @@ onUnmounted(() => timers.forEach(timer => window.clearTimeout(timer)))
   bottom: max(42px, calc(env(safe-area-inset-bottom) + 26px));
   left: max(24px, 7vw);
   height: 1px;
-  background: rgba(154, 175, 166, 0.17);
+  background: color-mix(in srgb, var(--intro-muted) 17%, transparent);
 }
 .lnl-intro-progress i {
   display: block;
   width: 100%;
   height: 100%;
-  background: linear-gradient(90deg, #74e6b2, #75c9d4);
+  background: linear-gradient(90deg, var(--intro-accent), var(--intro-cyan));
   transform: scaleX(0);
   transform-origin: left;
   animation: lnl-track 3.1s cubic-bezier(0.2, 0.72, 0.2, 1) forwards;
@@ -444,10 +465,10 @@ onUnmounted(() => timers.forEach(timer => window.clearTimeout(timer)))
   right: max(24px, env(safe-area-inset-right));
   bottom: max(44px, calc(env(safe-area-inset-bottom) + 28px));
   padding: 7px 10px;
-  border: 1px solid rgba(116, 230, 178, 0.2);
+  border: 1px solid color-mix(in srgb, var(--intro-accent) 20%, transparent);
   border-radius: 0;
-  background: rgba(3, 11, 9, 0.58);
-  color: #91a79e;
+  background: color-mix(in srgb, var(--intro-bg) 72%, transparent);
+  color: var(--intro-muted);
   font:
     9px/1 ui-monospace,
     SFMono-Regular,
@@ -461,8 +482,8 @@ onUnmounted(() => timers.forEach(timer => window.clearTimeout(timer)))
 }
 .lnl-intro-skip:hover,
 .lnl-intro-skip:focus-visible {
-  border-color: rgba(116, 230, 178, 0.58);
-  color: #74e6b2;
+  border-color: color-mix(in srgb, var(--intro-accent) 58%, transparent);
+  color: var(--intro-accent);
 }
 .phase-enter-active,
 .phase-leave-active {

@@ -43,7 +43,9 @@ const {
   lossDisplay,
   latencyPanelTooltip,
   lossPanelTooltip,
-} = useNodePingDisplay(() => props.node.uuid)
+} = useNodePingDisplay(() => props.node.uuid, {
+  latestPing: () => props.node.ping,
+})
 
 function showTrafficProgress(node: NodeData): boolean {
   return node.traffic_limit > 0
@@ -159,7 +161,7 @@ function openPingDialog() {
     </template>
 
     <template #default>
-      <div class="flex flex-col gap-3">
+      <div class="flex flex-col gap-4">
         <div class="gap-x-3 gap-y-1 grid grid-cols-2">
           <!-- CPU -->
           <div class="flex flex-col gap-1">
@@ -305,11 +307,11 @@ function openPingDialog() {
                 </span>
               </DataTooltip>
             </div>
-            <div class="grid grid-cols-6 gap-x-3">
+            <div class="node-card-signal-grid grid grid-cols-6 gap-x-3 border-t border-emerald-600/12 pt-3">
               <!-- 延迟 -->
               <div
                 role="button" tabindex="0"
-                class="group/panel relative col-span-3 flex h-6 cursor-pointer flex-col gap-2 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                class="node-card-signal group/panel relative col-span-3 flex min-h-12 cursor-pointer flex-col gap-2 border border-emerald-600/12 bg-emerald-950/[0.025] p-2 text-left transition-colors hover:border-emerald-500/35 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring dark:bg-emerald-400/[0.025]"
                 :title="latencyPanelTooltip" :aria-label="`${props.node.name} 延迟`" @click.stop="openPingDialog"
                 @keydown.enter.stop.prevent="openPingDialog" @keydown.space.stop.prevent="openPingDialog"
               >
@@ -319,7 +321,7 @@ function openPingDialog() {
                   <span class="font-medium text-foreground/85">{{ latencyDisplay }}</span>
                 </div>
                 <div
-                  class="grid h-full items-end gap-[1px] opacity-80"
+                  class="grid h-3 items-end gap-[2px]"
                   :style="{ gridTemplateColumns: `repeat(${latencyRenderBars.length}, minmax(0, 1fr))` }"
                 >
                   <DataTooltip
@@ -327,7 +329,7 @@ function openPingDialog() {
                     class="h-full w-full"
                   >
                     <span
-                      class="block h-full w-full rounded-[1px] transition-transform duration-150 group-hover/data-tooltip:scale-y-200"
+                      class="block h-full w-full min-w-1 transition-transform duration-150 group-hover/data-tooltip:scale-y-125"
                       :class="bar.className"
                     />
                   </DataTooltip>
@@ -336,7 +338,7 @@ function openPingDialog() {
               <!-- 丢包 -->
               <div
                 role="button" tabindex="0"
-                class="group/panel relative col-span-3 flex h-6 cursor-pointer flex-col gap-2 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                class="node-card-signal group/panel relative col-span-3 flex min-h-12 cursor-pointer flex-col gap-2 border border-emerald-600/12 bg-emerald-950/[0.025] p-2 text-left transition-colors hover:border-emerald-500/35 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring dark:bg-emerald-400/[0.025]"
                 :title="lossPanelTooltip" :aria-label="`${props.node.name} 丢包`" @click.stop="openPingDialog"
                 @keydown.enter.stop.prevent="openPingDialog" @keydown.space.stop.prevent="openPingDialog"
               >
@@ -346,7 +348,7 @@ function openPingDialog() {
                   <span class="font-medium text-foreground/85">{{ lossDisplay }}</span>
                 </div>
                 <div
-                  class="grid h-full items-end gap-[1px] opacity-80 group-hover/panel:opacity-100"
+                  class="grid h-3 items-end gap-[2px]"
                   :style="{ gridTemplateColumns: `repeat(${lossRenderBars.length}, minmax(0, 1fr))` }"
                 >
                   <DataTooltip
@@ -354,7 +356,7 @@ function openPingDialog() {
                     class="h-full w-full"
                   >
                     <span
-                      class="block h-full w-full rounded-[1px] transition-transform duration-150 group-hover/data-tooltip:scale-y-200"
+                      class="block h-full w-full min-w-1 transition-transform duration-150 group-hover/data-tooltip:scale-y-125"
                       :class="bar.className"
                     />
                   </DataTooltip>
@@ -380,5 +382,10 @@ function openPingDialog() {
 .node-card {
   position: relative;
   overflow: hidden;
+  min-height: 354px;
+}
+
+.node-card-signal {
+  border-radius: 0;
 }
 </style>

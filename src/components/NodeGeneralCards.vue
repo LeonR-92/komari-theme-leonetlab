@@ -167,10 +167,10 @@ const showEarth = computed(() => appStore.earthViewMode === 'earth' || appStore.
 const showMaps = computed(() => appStore.earthViewMode === 'maps')
 const showVisualPanel = computed(() => showEarth.value || showMaps.value)
 const wrapperClass = computed(() => showVisualPanel.value
-  ? 'p-4 grid grid-cols-12 grid-rows-1 gap-2 h-auto md:h-72 xl:h-76'
+  ? 'p-4 grid grid-cols-12 gap-4 h-auto md:min-h-[420px] md:grid-rows-1 md:items-stretch'
   : 'p-4 grid grid-cols-1 gap-2 h-auto')
 const cardGridClass = computed(() => showVisualPanel.value
-  ? 'h-42 -mt-42 md:mt-0 col-span-12 row-start-3 z-9 md:h-auto md:col-span-6 md:row-start-1 grid grid-cols-12 grid-rows-2 gap-2'
+  ? 'h-auto mt-0 col-span-12 row-start-2 z-9 md:col-span-6 md:row-start-1 grid grid-cols-2 grid-rows-3 gap-2'
   : 'col-span-1 grid grid-cols-3 md:grid-cols-6 gap-2')
 
 onMounted(async () => {
@@ -184,8 +184,8 @@ onMounted(async () => {
 
 <template>
   <div class="lnl-summary" :class="wrapperClass">
-    <NodeEarthGlobe v-if="showEarth" :nodes="globeNodes" class="col-span-12 col-start-1 md:col-span-6 md:col-start-7" />
-    <NodeEarthMaps v-else-if="showMaps" :nodes="globeNodes" class="col-span-12 col-start-1 md:col-span-6 md:col-start-7" />
+    <NodeEarthGlobe v-if="showEarth" :nodes="globeNodes" class="col-span-12 col-start-1 row-start-1 md:col-span-6 md:col-start-7" />
+    <NodeEarthMaps v-else-if="showMaps" :nodes="globeNodes" class="col-span-12 col-start-1 row-start-1 md:col-span-6 md:col-start-7" />
 
     <div class="lnl-summary-metrics" :class="cardGridClass">
       <CardX
@@ -193,7 +193,7 @@ onMounted(async () => {
         class="group h-full border-none rounded-md transition-all"
         :class="[
           pickSurfaceClass('bg-background/60 hover:bg-background', 'bg-background/50 hover:bg-background backdrop-blur-xs'),
-          showVisualPanel ? 'col-span-4 row-span-1 col-start-1 row-start-1' : 'col-span-1 row-start-1 col-start-1 min-h-18 md:min-h-24 md:row-start-1 md:col-start-1',
+          showVisualPanel ? 'col-span-1 row-span-1 col-start-1 row-start-1' : 'col-span-1 row-start-1 col-start-1 min-h-18 md:min-h-24 md:row-start-1 md:col-start-1',
         ]"
         content-class="h-full !p-3"
       >
@@ -225,7 +225,7 @@ onMounted(async () => {
         class="group h-full border-none rounded-md transition-all"
         :class="[
           pickSurfaceClass('bg-background/60 hover:bg-background', 'bg-background/50 hover:bg-background backdrop-blur-xs'),
-          showVisualPanel ? 'col-span-4 row-span-1 col-start-1 row-start-2' : 'col-span-1 row-start-2 col-start-1 min-h-18 md:min-h-24 md:row-start-1 md:col-start-2',
+          showVisualPanel ? 'col-span-1 row-span-1 col-start-1 row-start-2' : 'col-span-1 row-start-2 col-start-1 min-h-18 md:min-h-24 md:row-start-1 md:col-start-2',
         ]"
         content-class="h-full !p-3"
       >
@@ -253,7 +253,7 @@ onMounted(async () => {
       </CardX>
       <div
         class="relative w-full h-full"
-        :class="showVisualPanel ? 'col-span-4 row-span-1 col-start-5 row-start-1' : 'col-span-1 row-start-1 col-start-2 min-h-18 md:min-h-24 md:row-start-1 md:col-start-3'"
+        :class="showVisualPanel ? 'col-span-1 row-span-1 col-start-2 row-start-1' : 'col-span-1 row-start-1 col-start-2 min-h-18 md:min-h-24 md:row-start-1 md:col-start-3'"
       >
         <CardX
           hoverable
@@ -357,7 +357,7 @@ onMounted(async () => {
         class="group h-full border-none rounded-md transition-all"
         :class="[
           pickSurfaceClass('bg-background/60 hover:bg-background', 'bg-background/50 hover:bg-background backdrop-blur-xs'),
-          showVisualPanel ? 'col-span-4 row-span-1 col-start-5 row-start-2' : 'col-span-1 row-start-2 col-start-2 min-h-18 md:min-h-24 md:row-start-1 md:col-start-4',
+          showVisualPanel ? 'col-span-1 row-span-1 col-start-2 row-start-2' : 'col-span-1 row-start-2 col-start-2 min-h-18 md:min-h-24 md:row-start-1 md:col-start-4',
         ]"
         content-class="h-full !p-3"
       >
@@ -396,7 +396,7 @@ onMounted(async () => {
         class="group h-full border-none rounded-md transition-all"
         :class="[
           pickSurfaceClass('bg-background/60 hover:bg-background', 'bg-background/50 hover:bg-background backdrop-blur-xs'),
-          showVisualPanel ? 'col-span-4 row-span-1 col-start-9 row-start-1' : 'col-span-1 row-start-1 col-start-3 min-h-18 md:min-h-24 md:row-start-1 md:col-start-5',
+          showVisualPanel ? 'col-span-1 row-span-1 col-start-1 row-start-3' : 'col-span-1 row-start-1 col-start-3 min-h-18 md:min-h-24 md:row-start-1 md:col-start-5',
         ]"
         content-class="h-full !p-3"
       >
@@ -425,7 +425,7 @@ onMounted(async () => {
         class="group h-full border-none rounded-md transition-all"
         :class="[
           pickSurfaceClass('bg-background/60 hover:bg-background', 'bg-background/50 hover:bg-background backdrop-blur-xs'),
-          showVisualPanel ? 'col-span-4 row-span-1 col-start-9 row-start-2' : 'col-span-1 row-start-2 col-start-3 min-h-18 md:min-h-24 md:row-start-1 md:col-start-6',
+          showVisualPanel ? 'col-span-1 row-span-1 col-start-2 row-start-3' : 'col-span-1 row-start-2 col-start-3 min-h-18 md:min-h-24 md:row-start-1 md:col-start-6',
         ]"
         content-class="h-full !p-3"
       >

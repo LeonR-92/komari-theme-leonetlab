@@ -2,7 +2,7 @@
   "name": "LeoNetLab Observatory",
   "short": "LeoNetLab",
   "description": "A cinematic global network observatory for Komari Monitor with a live dot-matrix data ocean, based on Komari Emerald.",
-  "version": "1.1.2",
+  "version": "1.1.3",
   "author": "LeoNetLab · based on Komari Emerald by Tokinx",
   "url": "https://github.com/fangleo5592-prog/komari-theme-leonetlab",
   "preview": "preview.png",

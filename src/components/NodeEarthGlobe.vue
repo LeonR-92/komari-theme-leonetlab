@@ -447,7 +447,7 @@ const offlineServers = computed(() => totalServers.value - onlineServers.value)
 </script>
 
 <template>
-  <div ref="containerRef" class="relative aspect-square w-full max-w-[520px] lg:max-w-[580px] xl:max-w-[640px] mx-auto -translate-y-7 md:-translate-y-18 xl:-translate-y-22">
+  <div ref="containerRef" class="node-earth-globe relative aspect-square w-full mx-auto self-center">
     <canvas
       ref="canvasRef"
       class="earth-globe-canvas absolute inset-0 w-full h-full select-none touch-none cursor-grab active:cursor-grabbing"
@@ -502,6 +502,18 @@ const offlineServers = computed(() => totalServers.value - onlineServers.value)
 <style scoped>
 .earth-globe-canvas {
   contain: layout paint;
+}
+
+.node-earth-globe {
+  width: min(100%, clamp(320px, 36vw, 440px));
+  max-width: 440px;
+}
+
+@media (max-width: 760px) {
+  .node-earth-globe {
+    width: calc(100vw - 32px);
+    max-width: calc(100vw - 32px);
+  }
 }
 
 .lnl-earth-flag {

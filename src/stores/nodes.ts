@@ -241,6 +241,7 @@ const useNodesStore = defineStore('nodes', () => {
       connections: status.connections,
       connections_udp: status.connections_udp,
       uptime: status.uptime,
+      ping: status.ping,
     }
   }
 

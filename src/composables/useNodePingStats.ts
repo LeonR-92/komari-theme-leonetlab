@@ -222,8 +222,8 @@ async function loadSharedPingRecords(entry: SharedPingRecordsEntry, hours: numbe
     try {
       const result = await rpc.getClient().call<SharedPingRecordsResponse>('common:getRecords', {
         type: 'ping',
-        // 新版 getRecords 可能只返回近期可用样本，hours 仅作为服务端查询窗口。
         hours,
+        maxCount: 4000,
       })
 
       entry.data.value = {

@@ -1,5 +1,6 @@
 import type { UuidCollection } from '@/utils/nodeResponse'
 import { normalizeUuidCollection } from '@/utils/nodeResponse'
+import { normalizeRecordCollection } from '@/utils/recordResponse'
 
 /**
  * Komari RPC2 Client SDK
@@ -743,13 +744,15 @@ export class KomariRpc {
    * 获取负载记录
    */
   async getLoadRecords(uuid?: string, hours?: number, loadType?: string, maxCount?: number): Promise<{ records: StatusRecord[] }> {
-    return this.client.call<{ records: StatusRecord[] }>('common:getRecords', {
+    const result = await this.client.call<{ records?: StatusRecord[] | Record<string, StatusRecord[]> }>('common:getRecords', {
       type: 'load',
       uuid,
       hours,
       load_type: loadType,
       maxCount,
     })
+
+    return { records: normalizeRecordCollection(result?.records, uuid) }
   }
 
   /**
