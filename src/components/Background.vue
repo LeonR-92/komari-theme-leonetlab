@@ -4,6 +4,21 @@ import { useAppStore } from '@/stores/app'
 
 const appStore = useAppStore()
 
+const telemetryLanes = [
+  '01001100  NODE:EDGE-01  RTT:143MS  LOSS:0.0%  LINK:UP  01100101',
+  'LAT:35.6762  LON:139.6503  TOKYO  RX:518KB/S  TX:494KB/S',
+  '10110110  MEM:31.9%  DISK:23.1%  LOAD:0.24  UPTIME:09D02H',
+  'SG-SIN  HKG-EDGE  LAX-CORE  FRA-IX  TELEMETRY / NOMINAL',
+  'PACKET 00110101 11001010  ROUTE 07  HOP 12  STATUS GREEN',
+  'UUID:••••  WS:CONNECTED  SAMPLE:3S  CLOCK:SYNC  QUEUE:0002',
+  'EDGE-IP:MASKED  TLS  HTTP/2  ASN  NETWORK OBSERVATORY',
+  'CPU:LIVE  RAM:NOMINAL  IO:STREAM  PROC:ACTIVE  TCP:READY',
+  '00101110 00110001 00110000 00101110 00110011  DATA STREAM',
+  'JP-TYO → US-LAX → EU-FRA  142MS  0.2%  TRANSIT STABLE',
+  'SENSOR:ACTIVE  PULSE:03  FRAME:8192  CHECKSUM:7F2A  VALID',
+  'LEONETLAB / GLOBAL EDGE / LIVE OBSERVATION / SIGNAL LOCKED',
+]
+
 const isLoaded = ref(false)
 const hasError = ref(false)
 
@@ -139,6 +154,16 @@ onUnmounted(() => {
         <div class="lnl-background-signal s1" />
         <div class="lnl-background-signal s2" />
         <div class="lnl-background-depth" />
+        <div class="lnl-background-data-ocean">
+          <div
+            v-for="(lane, index) in telemetryLanes"
+            :key="lane"
+            class="lnl-data-lane"
+            :style="{ '--lane-index': index, '--lane-duration': `${24 + index * 1.7}s` }"
+          >
+            <span>{{ lane }} / {{ lane }} / {{ lane }}</span>
+          </div>
+        </div>
         <div class="lnl-background-ocean" />
       </div>
     </Transition>
@@ -257,6 +282,40 @@ onUnmounted(() => {
   animation: depth-drift 22s linear infinite;
 }
 
+.lnl-background-data-ocean {
+  position: absolute;
+  z-index: 1;
+  right: -14%;
+  bottom: -22%;
+  left: -14%;
+  display: grid;
+  height: 60%;
+  grid-template-rows: repeat(12, 1fr);
+  gap: 4px;
+  overflow: hidden;
+  opacity: 0.24;
+  color: var(--lnl-green);
+  transform: perspective(720px) rotateX(61deg);
+  transform-origin: 50% 0;
+  mask-image: linear-gradient(transparent 0 28%, #000 52%, #000 78%, transparent 100%);
+}
+
+.lnl-data-lane {
+  min-width: max-content;
+  white-space: nowrap;
+  font: 8px/1 var(--font-mono);
+  letter-spacing: 0.17em;
+  text-shadow: 0 0 10px color-mix(in srgb, var(--lnl-green) 45%, transparent);
+  translate: calc((var(--lane-index) % 3) * -9%) 0;
+  animation: data-tide var(--lane-duration) linear infinite;
+  animation-delay: calc(var(--lane-index) * -1.9s);
+}
+
+.lnl-data-lane:nth-child(even) {
+  color: var(--lnl-cyan);
+  animation-direction: reverse;
+}
+
 .lnl-background-ocean::before {
   content: '';
   position: absolute;
@@ -292,6 +351,11 @@ onUnmounted(() => {
   }
   70% {
     translate: 42% 0;
+  }
+}
+@keyframes data-tide {
+  to {
+    translate: calc(-34% + (var(--lane-index) % 3) * -9%) 0;
   }
 }
 
@@ -341,9 +405,24 @@ onUnmounted(() => {
 @media (prefers-reduced-motion: reduce) {
   .lnl-background-signal,
   .lnl-background-depth,
+  .lnl-data-lane,
   .lnl-background-ocean::before,
   .lnl-background-ocean {
     animation: none;
+  }
+}
+
+@media (max-width: 760px) {
+  .lnl-background-data-ocean {
+    right: -60%;
+    bottom: -8%;
+    left: -60%;
+    height: 54%;
+    opacity: 0.27;
+  }
+
+  .lnl-data-lane:nth-child(n + 9) {
+    display: none;
   }
 }
 </style>

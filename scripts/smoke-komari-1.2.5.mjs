@@ -8,6 +8,7 @@ import process from 'node:process'
 
 const root = resolve(import.meta.dirname, '..')
 const dist = resolve(root, 'dist')
+const visualAuditEnabled = Boolean(process.env.SMOKE_SCREENSHOT_DIR)
 const nodeUuid = 'fixture-node-a'
 const secondNodeUuid = 'fixture-node-b'
 function client(uuid, name, region, weight) {
@@ -107,8 +108,14 @@ const server = createServer((request, response) => {
         theme: 'LeoNetLab',
         theme_settings: {
           rpcTransportMode: 'http',
-          earthViewMode: 'hide',
+          earthViewMode: visualAuditEnabled ? 'earth' : 'hide',
           visitorInfoCardEnabled: false,
+          icpEnabled: visualAuditEnabled,
+          icpNumber: visualAuditEnabled ? 'ICP 备案示例' : '',
+          icpUrl: 'https://beian.miit.gov.cn/',
+          policeEnabled: visualAuditEnabled,
+          policeNumber: visualAuditEnabled ? '公安备案示例' : '',
+          policeUrl: 'https://www.beian.gov.cn/',
         },
       },
     })
@@ -243,6 +250,7 @@ try {
   if (process.env.SMOKE_SCREENSHOT_DIR) {
     mkdirSync(process.env.SMOKE_SCREENSHOT_DIR, { recursive: true })
     await captureScreenshot('desktop-home', 1920, 1080, '/', 6000)
+    await captureScreenshot('desktop-earth-late', 1920, 1080, '/', 12000)
     await captureScreenshot('desktop-detail', 1600, 1000, `/instance/${nodeUuid}`, 6000)
     await captureScreenshot('mobile-intro', 390, 844, '/', 900)
     await captureScreenshot('mobile-home', 390, 844, '/', 6000)

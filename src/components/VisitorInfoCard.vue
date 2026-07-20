@@ -444,20 +444,26 @@ onMounted(async () => {
 
 <style scoped>
 .lnl-visitor {
+  position: fixed;
+  z-index: 30;
+  left: max(14px, env(safe-area-inset-left));
+  bottom: max(14px, env(safe-area-inset-bottom));
   display: flex;
-  justify-content: flex-end;
-  margin-top: 16px;
+  max-width: min(680px, calc(100vw - 28px));
+  justify-content: flex-start;
 }
 
 .lnl-visitor-trigger {
   display: flex;
-  max-width: min(100%, 920px);
+  max-width: 100%;
   align-items: center;
   gap: 14px;
   padding: 9px 11px 9px 13px;
   border: 1px solid var(--lnl-line);
   border-radius: 0;
-  background: color-mix(in srgb, var(--lnl-surface) 82%, transparent);
+  background: color-mix(in srgb, var(--background) 90%, transparent);
+  box-shadow: 0 12px 38px rgb(0 0 0 / 18%);
+  backdrop-filter: blur(16px) saturate(120%);
   color: inherit;
   text-align: left;
   transition:
@@ -513,12 +519,14 @@ onMounted(async () => {
 }
 
 @media (max-width: 760px) {
-  .lnl-visitor,
-  .lnl-visitor-trigger {
-    width: 100%;
+  .lnl-visitor {
+    right: 14px;
+    max-width: none;
   }
 
   .lnl-visitor-trigger {
+    width: auto;
+    max-width: 100%;
     align-items: flex-start;
   }
 

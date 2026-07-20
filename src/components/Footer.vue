@@ -22,26 +22,27 @@ onMounted(async () => {
 </script>
 
 <template>
-  <footer class="lnl-footer max-w-[1680px] mx-auto">
+  <VisitorInfoCard v-if="appStore.visitorInfoCardEnabled" />
+  <footer class="lnl-footer max-w-[1680px] mx-auto" :class="{ 'has-visitor': appStore.visitorInfoCardEnabled }">
     <div class="lnl-footer-rule">
       <span>EDGE / OBSERVATION COMPLETE</span><i />
-    </div>
-    <VisitorInfoCard v-if="appStore.visitorInfoCardEnabled" />
-    <div class="lnl-footer-meta">
-      <p>
-        <a href="https://github.com/komari-monitor/komari" target="_blank" rel="noopener noreferrer">Powered by Komari Monitor.</a>
-        <span v-if="serverVersion?.version">{{ serverVersion.version }}</span>
-      </p>
-      <p>
-        LeoNetLab Observatory · based on
-        <a href="https://github.com/Tokinx/komari-theme-emerald" target="_blank" rel="noopener noreferrer">Komari Emerald</a>
-      </p>
     </div>
     <div v-if="showFiling" class="lnl-filing">
       <a v-if="showIcp" :href="appStore.icpUrl" target="_blank" rel="noopener noreferrer">{{ appStore.icpNumber }}</a>
       <span v-if="showIcp && showPolice">/</span>
       <a v-if="showPolice && appStore.policeUrl" :href="appStore.policeUrl" target="_blank" rel="noopener noreferrer">{{ appStore.policeNumber }}</a>
       <span v-else-if="showPolice">{{ appStore.policeNumber }}</span>
+    </div>
+    <div class="lnl-footer-meta">
+      <p>
+        <a href="https://github.com/komari-monitor/komari" target="_blank" rel="noopener noreferrer">Powered by Komari Monitor.</a>
+        <span v-if="serverVersion?.version">{{ serverVersion.version }}</span>
+      </p>
+      <p>
+        <a href="https://github.com/fangleo5592-prog/komari-theme-leonetlab" target="_blank" rel="noopener noreferrer">LeoNetLab Observatory</a>
+        · based on
+        <a href="https://github.com/Tokinx/komari-theme-emerald" target="_blank" rel="noopener noreferrer">Komari Emerald</a>
+      </p>
     </div>
   </footer>
 </template>

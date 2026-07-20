@@ -183,7 +183,7 @@ onMounted(async () => {
 </script>
 
 <template>
-  <div :class="wrapperClass">
+  <div class="lnl-summary" :class="wrapperClass">
     <NodeEarthGlobe v-if="showEarth" :nodes="globeNodes" class="col-span-12 col-start-1 md:col-span-6 md:col-start-7" />
     <NodeEarthMaps v-else-if="showMaps" :nodes="globeNodes" class="col-span-12 col-start-1 md:col-span-6 md:col-start-7" />
 

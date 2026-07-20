@@ -20,7 +20,7 @@ bun run build
 构建完成后会生成：
 
 - `dist/`
-- `komari-theme-leonetlab-build-v1.0.2.zip`
+- `komari-theme-leonetlab-build-v1.0.3.zip`
 
 兼容性与构建检查：
 

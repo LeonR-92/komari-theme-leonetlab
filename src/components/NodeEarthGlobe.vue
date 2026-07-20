@@ -41,6 +41,7 @@ const DEFAULT_PHI = normalizePhi(-Math.PI / 2 - CHINA_COORD[1] * Math.PI / 180)
 const GLOBE_RADIUS = 0.8
 const GLOBE_SCALE = 1
 const MARKER_ELEVATION = 0
+const AUTO_ROTATION_RADIANS_PER_MS = 0.00015
 let phi = DEFAULT_PHI
 let targetPhi = phi
 let theta = INITIAL_THETA
@@ -62,6 +63,15 @@ function normalizePhi(value: number): number {
 
 function clampTheta(value: number): number {
   return Math.min(Math.max(value, MIN_THETA), MAX_THETA)
+}
+
+function keepPhiPrecision() {
+  const circle = Math.PI * 2
+  if (Math.abs(targetPhi) < circle)
+    return
+  const offset = Math.trunc(targetPhi / circle) * circle
+  targetPhi -= offset
+  phi -= offset
 }
 
 function resetStoppedView() {
@@ -151,7 +161,7 @@ function syncClusterOverlayPosition(cluster: RegionCluster, el: HTMLDivElement) 
   const { width, height } = getRenderSize()
   if (width <= 0 || height <= 0) {
     el.style.opacity = '0'
-    el.style.filter = 'blur(20px)'
+    el.style.visibility = 'hidden'
     return
   }
 
@@ -161,23 +171,20 @@ function syncClusterOverlayPosition(cluster: RegionCluster, el: HTMLDivElement) 
   const cosPhi = Math.cos(phi)
   const sinPhi = Math.sin(phi)
   const markerRadius = GLOBE_RADIUS + MARKER_ELEVATION
-  const visibleThreshold = GLOBE_RADIUS * GLOBE_RADIUS
   const [baseX, baseY, baseZ] = coordToGlobePoint(cluster.coord)
   const x = baseX * markerRadius
   const y = baseY * markerRadius
   const z = baseZ * markerRadius
   const screenX = cosPhi * x + sinPhi * z
   const screenY = sinPhi * sinTheta * x + cosTheta * y - cosPhi * sinTheta * z
-  const visible = (
-    -sinPhi * cosTheta * x + sinTheta * y + cosPhi * cosTheta * z >= 0
-    || screenX * screenX + screenY * screenY >= visibleThreshold
-  )
+  const cameraDepth = -sinPhi * cosTheta * x + sinTheta * y + cosPhi * cosTheta * z
+  const visibility = Math.min(1, Math.max(0, (cameraDepth + 0.025) / 0.1))
   const xPx = ((screenX / aspect) * GLOBE_SCALE + 1) * width / 2
   const yPx = ((-screenY) * GLOBE_SCALE + 1) * height / 2
 
   el.style.transform = `translate3d(${xPx}px, ${yPx}px, 0)`
-  el.style.opacity = visible ? '1' : '0'
-  el.style.filter = visible ? 'blur(0px)' : 'blur(20px)'
+  el.style.opacity = `${visibility}`
+  el.style.visibility = visibility > 0.01 ? 'visible' : 'hidden'
 }
 
 function syncClusterOverlayPositions() {
@@ -191,7 +198,7 @@ function syncClusterOverlayPositions() {
 
 function setClusterOverlayEl(code: string, el: Element | ComponentPublicInstance | null) {
   if (el instanceof HTMLDivElement) {
-    el.style.willChange = 'transform, opacity, filter'
+    el.style.willChange = 'transform, opacity'
     clusterOverlayEls.set(code, el)
 
     const cluster = regionClusters.value.find(item => item.code === code)
@@ -200,7 +207,7 @@ function setClusterOverlayEl(code: string, el: Element | ComponentPublicInstance
     }
     else {
       el.style.opacity = '0'
-      el.style.filter = 'blur(20px)'
+      el.style.visibility = 'hidden'
     }
     return
   }
@@ -276,13 +283,15 @@ function updateGlobeFrame() {
 // phi 收敛/静止时整帧跳过 globe.update，WebGL + overlay 位置更新双双归零
 const ORIENTATION_IDLE_EPSILON = 1e-5
 const { pause: pauseRaf, resume: resumeRaf } = useRafFn(
-  () => {
+  ({ delta }) => {
     if (!globe)
       return
     const prevPhi = phi
     const prevTheta = theta
-    if (!isPointerDown && shouldAutoRotate.value)
-      targetPhi += 0.0025
+    if (!isPointerDown && shouldAutoRotate.value) {
+      targetPhi += AUTO_ROTATION_RADIANS_PER_MS * Math.min(delta, 34)
+      keepPhiPrecision()
+    }
     phi += (targetPhi - phi) * 1
     theta += (targetTheta - theta) * 1
     if (
@@ -427,6 +436,11 @@ function onPointerUp(e: PointerEvent) {
   syncRafState()
 }
 
+function handleFlagError(event: Event) {
+  const image = event.currentTarget as HTMLImageElement
+  image.style.display = 'none'
+}
+
 const totalServers = computed(() => displayNodes.value.length)
 const onlineServers = computed(() => displayNodes.value.filter(node => node.online).length)
 const offlineServers = computed(() => totalServers.value - onlineServers.value)
@@ -443,12 +457,15 @@ const offlineServers = computed(() => totalServers.value - onlineServers.value)
     <template v-for="cluster in regionClusters" :key="cluster.code">
       <div
         :ref="bindClusterOverlayRef(cluster.code)"
-        class="absolute -top-3.5 left-0 pointer-events-none rounded backdrop-blur-sm transition-[opacity,filter] duration-500"
+        class="absolute -top-3.5 left-0 pointer-events-none transition-opacity duration-200"
       >
-        <img
-          :src="`/images/flags/${cluster.code}.svg`" :alt="cluster.code"
-          class="size-4 block absolute -bottom-2 -left-2 z-1"
-        >
+        <span class="lnl-earth-flag absolute -bottom-2 -left-2 z-3" aria-hidden="true">
+          <span>{{ cluster.code }}</span>
+          <img
+            :src="`/images/flags/${cluster.code}.svg`" :alt="cluster.code"
+            @error="handleFlagError"
+          >
+        </span>
         <div class="relative z-2 bg-background/60 rounded py-0.5 px-2 text-xs zoom-80 items-start justify-center text-nowrap">
           <div v-if="cluster.onlineServers > 0" class="flex items-center gap-1">
             <span class="inline-block size-1.5 rounded-full bg-green-600" />
@@ -485,5 +502,28 @@ const offlineServers = computed(() => totalServers.value - onlineServers.value)
 <style scoped>
 .earth-globe-canvas {
   contain: layout paint;
+}
+
+.lnl-earth-flag {
+  display: grid;
+  width: 22px;
+  height: 16px;
+  place-items: center;
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--lnl-line) 75%, transparent);
+  background: var(--background);
+  color: var(--muted-foreground);
+  font: 7px/1 var(--font-mono);
+  box-shadow: 0 2px 8px rgb(0 0 0 / 24%);
+}
+
+.lnl-earth-flag > * {
+  grid-area: 1 / 1;
+}
+
+.lnl-earth-flag img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
 }
 </style>
