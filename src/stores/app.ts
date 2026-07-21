@@ -19,6 +19,9 @@ const BYTE_DECIMALS: ByteDecimalsConfig = {
   TB: 2,
 }
 
+const THEME_MODE_STORAGE_KEY = 'appearance'
+const THEME_MODE_OVERRIDE_KEY = 'leonetlab:appearance:user-override'
+
 function isValidThemeMode(value: unknown): value is ThemeMode {
   return value === 'system' || value === 'light' || value === 'dark'
 }
@@ -40,12 +43,12 @@ function isValidEarthViewMode(value: unknown): value is EarthViewMode {
 const useAppStore = defineStore('app', () => {
   const loading = ref<boolean>(true)
 
-  // 使用 VueUse 的 useStorageAsync 实现自动持久化
-  const hadStoredThemeMode = localStorage.getItem('appearance') !== null
-  const themeMode = useStorageAsync<ThemeMode>('appearance', 'system', localStorage)
+  // appearance 会被存储组件自动写入，不能仅凭它是否存在来判断访客是否
+  // 手动选择过主题。单独的 override 标记只由页头切换操作写入。
+  const themeMode = useStorageAsync<ThemeMode>(THEME_MODE_STORAGE_KEY, 'system', localStorage)
+  const hasThemeModeOverride = ref(localStorage.getItem(THEME_MODE_OVERRIDE_KEY) === '1')
   const lang = useStorageAsync<Lang>('language', 'zh-CN', localStorage)
   const publicSettings = ref<PublicSettings>()
-  const themeDefaultApplied = ref(hadStoredThemeMode)
   const beijingClock = ref(Date.now())
   window.setInterval(() => {
     beijingClock.value = Date.now()
@@ -281,9 +284,8 @@ const useAppStore = defineStore('app', () => {
   })
 
   watch(publicSettings, (settings) => {
-    if (settings && !themeDefaultApplied.value) {
+    if (settings && !hasThemeModeOverride.value) {
       themeMode.value = defaultThemeMode.value
-      themeDefaultApplied.value = true
     }
   }, { immediate: true })
 
@@ -319,6 +321,9 @@ const useAppStore = defineStore('app', () => {
   })
 
   function updateThemeMode(mode?: ThemeMode) {
+    hasThemeModeOverride.value = true
+    localStorage.setItem(THEME_MODE_OVERRIDE_KEY, '1')
+
     if (mode) {
       themeMode.value = isValidThemeMode(mode) ? mode : 'system'
       return
@@ -341,6 +346,7 @@ const useAppStore = defineStore('app', () => {
   return {
     loading,
     themeMode,
+    hasThemeModeOverride,
     defaultThemeMode,
     isDark,
     resolvedThemeMode,

@@ -51,7 +51,7 @@ const countryCode = ref('')
 const visitTime = ref(formatVisitTime(new Date()))
 const flagVisible = ref(true)
 const expand = ref(false)
-const presentationState = ref<'waiting' | 'entering' | 'scanning' | 'verified' | 'collapsing' | 'compact'>(
+const presentationState = ref<'waiting' | 'entering' | 'scanning' | 'verified' | 'collapsing' | 'compacting' | 'compact'>(
   props.presentOnReady ? 'waiting' : 'compact',
 )
 const presentationTimers: number[] = []
@@ -117,9 +117,12 @@ function startPresentation() {
     presentationState.value = 'collapsing'
   }, 3580))
   presentationTimers.push(window.setTimeout(() => {
+    presentationState.value = 'compacting'
+  }, 4080))
+  presentationTimers.push(window.setTimeout(() => {
     presentationState.value = 'compact'
     expand.value = false
-  }, 4380))
+  }, 4520))
 }
 
 watch([() => props.introComplete, loading], startPresentation, { immediate: true })
@@ -441,9 +444,10 @@ onUnmounted(() => presentationTimers.forEach(timer => window.clearTimeout(timer)
 <template>
   <aside
     class="lnl-visitor"
+    :data-presentation-state="presentationState"
     :class="[
       `is-${presentationState}`,
-      { 'is-presenting': presentationActive },
+      { 'is-presenting': presentationActive, 'is-expanded': isExpanded },
     ]"
     aria-label="访客网络信息"
   >
@@ -536,13 +540,18 @@ onUnmounted(() => presentationTimers.forEach(timer => window.clearTimeout(timer)
   color: inherit;
   text-align: left;
   overflow: hidden;
+  height: 54px;
   transition:
     border-color 240ms ease,
     background-color 240ms ease,
-    transform 320ms cubic-bezier(0.22, 1, 0.36, 1);
+    transform 320ms cubic-bezier(0.22, 1, 0.36, 1),
+    width 440ms cubic-bezier(0.22, 1, 0.36, 1),
+    height 440ms cubic-bezier(0.22, 1, 0.36, 1),
+    padding 360ms cubic-bezier(0.22, 1, 0.36, 1);
 }
 
-.lnl-visitor.is-presenting .lnl-visitor-trigger {
+.lnl-visitor.is-presenting .lnl-visitor-trigger,
+.lnl-visitor.is-expanded .lnl-visitor-trigger {
   width: min(580px, calc(100vw - 28px));
   grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
@@ -552,9 +561,16 @@ onUnmounted(() => presentationTimers.forEach(timer => window.clearTimeout(timer)
   box-shadow:
     0 18px 56px rgb(0 0 0 / 24%),
     inset 0 0 42px color-mix(in srgb, var(--lnl-green) 4%, transparent);
+  height: 190px;
 }
 
-.lnl-visitor.is-presenting .lnl-visitor-rows {
+.lnl-visitor.is-collapsing .lnl-visitor-trigger,
+.lnl-visitor.is-compacting .lnl-visitor-trigger {
+  will-change: width, height, padding;
+}
+
+.lnl-visitor.is-presenting .lnl-visitor-rows,
+.lnl-visitor.is-expanded .lnl-visitor-rows {
   width: 100%;
 }
 
@@ -562,6 +578,12 @@ onUnmounted(() => presentationTimers.forEach(timer => window.clearTimeout(timer)
 .lnl-visitor.is-collapsing .lnl-visitor-scan-head {
   opacity: 0;
   transform: translate3d(-14px, 0, 0);
+}
+
+.lnl-visitor.is-compacting .lnl-visitor-rows,
+.lnl-visitor.is-compacting .lnl-visitor-action {
+  opacity: 0;
+  transform: translate3d(-8px, 0, 0);
 }
 
 .lnl-visitor-scan-head {
@@ -606,11 +628,13 @@ onUnmounted(() => presentationTimers.forEach(timer => window.clearTimeout(timer)
   white-space: nowrap;
 }
 
-.lnl-visitor.is-presenting .lnl-visitor-row small {
+.lnl-visitor.is-presenting .lnl-visitor-row small,
+.lnl-visitor.is-expanded .lnl-visitor-row small {
   display: block;
 }
 
-.lnl-visitor.is-presenting .lnl-visitor-row p {
+.lnl-visitor.is-presenting .lnl-visitor-row p,
+.lnl-visitor.is-expanded .lnl-visitor-row p {
   max-width: 215px;
   color: var(--foreground);
   font-size: 13px;
@@ -668,6 +692,9 @@ onUnmounted(() => presentationTimers.forEach(timer => window.clearTimeout(timer)
   color: var(--lnl-green);
   font: 9px var(--font-mono);
   letter-spacing: 0.08em;
+  transition:
+    opacity 240ms ease,
+    transform 320ms cubic-bezier(0.22, 1, 0.36, 1);
 }
 
 .visitor-pill-enter-active,
@@ -723,7 +750,7 @@ onUnmounted(() => presentationTimers.forEach(timer => window.clearTimeout(timer)
   }
 
   .lnl-visitor-trigger {
-    width: auto;
+    width: 100%;
     max-width: 100%;
     align-items: flex-start;
   }

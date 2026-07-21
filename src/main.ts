@@ -23,10 +23,26 @@ app.mount('#app')
 
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
+    const hadController = Boolean(navigator.serviceWorker.controller)
+    let reloadingForUpdate = false
+
+    navigator.serviceWorker.addEventListener('controllerchange', () => {
+      if (!hadController || reloadingForUpdate)
+        return
+
+      const reloadKey = `leonetlab:sw-reload:${__BUILD_VERSION__}`
+      if (sessionStorage.getItem(reloadKey) === 'done')
+        return
+
+      reloadingForUpdate = true
+      sessionStorage.setItem(reloadKey, 'done')
+      location.reload()
+    })
+
     navigator.serviceWorker.register('/sw.js', {
       scope: '/',
       updateViaCache: 'none',
-    }).catch(() => {
+    }).then(registration => registration.update()).catch(() => {
       // PWA support is progressive; monitoring remains usable if registration is blocked.
     })
   }, { once: true })

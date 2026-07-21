@@ -220,7 +220,7 @@ function getNodeItemTransitionStyle(index: number): Record<string, string> {
               <div class="relative z-1 w-8 h-8">
                 <div class="absolute top-0 right-0 ">
                   <Input
-                    v-model="searchText" placeholder="搜索节点名称、地区、系统"
+                    id="node-search" v-model="searchText" name="node-search" placeholder="搜索节点名称、地区、系统"
                     class="h-8 w-8 rounded-md border-none shadow-none transition-all placeholder:text-transparent focus:!w-60 focus:!pl-7.5 focus:placeholder:!text-muted-foreground focus:!ring-emerald-500/10"
                     :class="pickSurfaceClass('bg-background hover:!bg-background/95 focus:!bg-background', 'bg-background/50 hover:!bg-background/60 focus:!bg-background/80 backdrop-blur-xs')"
                   />

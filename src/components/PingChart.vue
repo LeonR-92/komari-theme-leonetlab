@@ -1138,11 +1138,45 @@ onUnmounted(() => {
     display: none;
   }
   .lnl-ping-probe-list {
-    display: flex;
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(98px, 1fr));
+    overflow: visible;
   }
   .lnl-ping-probe {
-    width: min(260px, 78vw);
-    min-width: min(260px, 78vw);
+    grid-template-columns: 3px minmax(0, 1fr) auto auto;
+    width: auto;
+    min-width: 0;
+    min-height: 78px;
+    gap: 2px 5px;
+    padding: 8px 7px;
+    border-bottom: 1px solid var(--lnl-line);
+  }
+  .lnl-ping-probe > i {
+    width: 3px;
+    height: 34px;
+  }
+  .lnl-ping-probe-copy strong {
+    font-size: 12px;
+  }
+  .lnl-ping-probe-copy small {
+    font-size: 7px;
+  }
+  .lnl-ping-probe-value {
+    gap: 2px;
+  }
+  .lnl-ping-probe-value strong {
+    font-size: 16px;
+  }
+  .lnl-ping-probe-value small,
+  .lnl-ping-probe-meta {
+    font-size: 7px;
+  }
+  .lnl-ping-probe-meta {
+    gap: 4px;
+  }
+  .lnl-ping-probe-info {
+    width: 22px;
+    height: 22px;
   }
   .lnl-ping-plot-head {
     min-height: 72px;
@@ -1159,6 +1193,11 @@ onUnmounted(() => {
     min-height: 300px;
     height: 300px;
     padding-inline: 2px;
+  }
+}
+@media (max-width: 520px) {
+  .lnl-ping-probe-meta span:nth-child(2) {
+    display: none;
   }
 }
 </style>

@@ -1,4 +1,4 @@
-const CACHE_NAME = 'leonetlab-observatory-v1.1.2'
+const CACHE_NAME = 'leonetlab-observatory-v1.1.9'
 const OFFLINE_URL = '/offline.html'
 const CORE_ASSETS = [
   OFFLINE_URL,

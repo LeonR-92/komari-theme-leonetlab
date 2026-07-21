@@ -115,7 +115,43 @@ const pingTasks = [{
   total: pingRecords.length,
   type: 'icmp',
 }]
+const dialogPingTasks = [
+  ...pingTasks,
+  {
+    id: 2,
+    name: '联通',
+    interval: 60,
+    loss: 0,
+    min: 56,
+    max: 91,
+    avg: 73,
+    latest: 87,
+    total: pingRecords.length,
+    type: 'tcp',
+    p99_p50_ratio: 0.84,
+  },
+  {
+    id: 3,
+    name: '移动',
+    interval: 60,
+    loss: 0,
+    min: 45,
+    max: 68,
+    avg: 57,
+    latest: 58,
+    total: pingRecords.length,
+    type: 'tcp',
+    p99_p50_ratio: 0.82,
+  },
+]
+const dialogPingRecords = [
+  ...pingRecords,
+  ...pingRecords.map(record => ({ ...record, task_id: 2, value: record.value < 0 ? 72 : record.value + 20 })),
+  ...pingRecords.map(record => ({ ...record, task_id: 3, value: record.value < 0 ? 56 : record.value + 3 })),
+]
 const rpcCalls = []
+let defaultThemeModeFixture = 'system'
+let visitorInfoEnabledFixture = false
 const leadingSlashesPattern = /^\/+/
 const lineBreakPattern = /\r?\n/
 
@@ -148,8 +184,9 @@ const server = createServer((request, response) => {
         theme: 'LeoNetLab',
         theme_settings: {
           rpcTransportMode: 'http',
+          defaultThemeMode: defaultThemeModeFixture,
           earthViewMode: 'earth',
-          visitorInfoCardEnabled: false,
+          visitorInfoCardEnabled: visitorInfoEnabledFixture,
           icpEnabled: visualAuditEnabled,
           icpNumber: visualAuditEnabled ? 'ICP 备案示例' : '',
           icpUrl: 'https://beian.miit.gov.cn/',
@@ -181,8 +218,11 @@ const server = createServer((request, response) => {
       }
       let result = results[rpcRequest.method]
       if (rpcRequest.method === 'common:getRecords') {
+        const isNodePingDialog = rpcRequest.params?.type === 'ping' && Boolean(rpcRequest.params?.uuid)
         result = rpcRequest.params?.type === 'ping'
-          ? { count: pingRecords.length, records: pingRecords, tasks: pingTasks }
+          ? isNodePingDialog
+            ? { count: dialogPingRecords.length, records: dialogPingRecords, tasks: dialogPingTasks }
+            : { count: pingRecords.length, records: pingRecords, tasks: pingTasks }
           : { count: historyRecords.length, records: { [nodeUuid]: historyRecords }, from: historyRecords[0].time, to: historyRecords.at(-1).time }
       }
       if (result === undefined) {
@@ -300,7 +340,7 @@ async function captureScreenshot(name, width, height, path, virtualTimeBudget, e
   })
 }
 
-async function runInteractivePage(name, width, height, expression, screenshotName) {
+async function runInteractivePage(name, width, height, expression, screenshotName, initScript) {
   const screenshotProfile = `${profile}-${name}`
   const screenshotDir = process.env.SMOKE_SCREENSHOT_DIR
 
@@ -358,6 +398,9 @@ async function runInteractivePage(name, width, height, expression, screenshotNam
     })
 
     await command('Page.enable')
+    if (initScript) {
+      await command('Page.addScriptToEvaluateOnNewDocument', { source: initScript })
+    }
     await command('Emulation.setDeviceMetricsOverride', {
       width,
       height,
@@ -490,6 +533,152 @@ const pingBarGeometryAuditExpression = `new Promise((resolve) => {
   }, 100);
 })`
 
+const themeModeAuditExpression = `new Promise((resolve) => {
+  const deadline = Date.now() + 8000;
+  const expectedAppearance = '__EXPECTED_APPEARANCE__';
+  const expectedDark = __EXPECTED_DARK__;
+  const timer = setInterval(() => {
+    const appearance = localStorage.getItem('appearance');
+    const dark = document.documentElement.classList.contains('dark');
+    const colorScheme = document.documentElement.style.colorScheme;
+    if (appearance === expectedAppearance && dark === expectedDark && colorScheme === (expectedDark ? 'dark' : 'light')) {
+      clearInterval(timer);
+      resolve({
+        appearance,
+        override: localStorage.getItem('leonetlab:appearance:user-override'),
+        dark,
+        colorScheme,
+      });
+    }
+    else if (Date.now() >= deadline) {
+      clearInterval(timer);
+      resolve({ appearance: 'timeout' });
+    }
+  }, 80);
+})`
+
+const mobileProbeMatrixAuditExpression = `new Promise((resolve) => {
+  const deadline = Date.now() + 12000;
+  const timer = setInterval(() => {
+    const button = document.querySelector('[role="button"][aria-label^="Tokyo Fixture"]');
+    if (button) {
+      clearInterval(timer);
+      button.click();
+      const listTimer = setInterval(() => {
+        const list = document.querySelector('.lnl-ping-probe-list');
+        const cards = [...document.querySelectorAll('.lnl-ping-probe')];
+        const listRect = list?.getBoundingClientRect();
+        if (list && listRect && cards.length === 3) {
+          clearInterval(listTimer);
+          resolve({
+            count: cards.length,
+            clientWidth: list.clientWidth,
+            scrollWidth: list.scrollWidth,
+            rows: new Set(cards.map(card => Math.round(card.getBoundingClientRect().top))).size,
+            contained: cards.every((card) => {
+              const rect = card.getBoundingClientRect();
+              return rect.left >= listRect.left - 0.5 && rect.right <= listRect.right + 0.5;
+            }),
+          });
+        }
+        else if (Date.now() >= deadline) {
+          clearInterval(listTimer);
+          resolve({ count: cards.length, state: 'timeout' });
+        }
+      }, 80);
+    }
+    else if (Date.now() >= deadline) {
+      clearInterval(timer);
+      resolve({ count: 0, state: 'button-timeout' });
+    }
+  }, 100);
+})`
+
+const visitorCollapseAuditExpression = `new Promise((resolve) => {
+  const deadline = performance.now() + 16000;
+  const frameDeltas = [];
+  const widths = [];
+  const heights = [];
+  const heightSamples = [];
+  const longTasks = [];
+  let previousFrame = performance.now();
+  let observingCollapse = false;
+  let compactingSeen = false;
+  let observer;
+  if ('PerformanceObserver' in window) {
+    observer = new PerformanceObserver((list) => {
+      for (const entry of list.getEntries())
+        if (observingCollapse)
+          longTasks.push(entry.duration);
+    });
+    try { observer.observe({ type: 'longtask' }); } catch {}
+  }
+
+  const finish = (state) => {
+    observer?.disconnect();
+    resolve({
+      state,
+      compactingSeen,
+      frames: frameDeltas.length,
+      maxFrame: frameDeltas.length ? Math.max(...frameDeltas) : 0,
+      maxLongTask: longTasks.length ? Math.max(...longTasks) : 0,
+      maxWidthStep: widths.length > 1 ? Math.max(...widths.slice(1).map((value, index) => Math.abs(value - widths[index]))) : 0,
+      maxHeightStep: heights.length > 1 ? Math.max(...heights.slice(1).map((value, index) => Math.abs(value - heights[index]))) : 0,
+      largestHeightChanges: heightSamples.slice(1).map((sample, index) => ({
+        from: heightSamples[index],
+        to: sample,
+        delta: Math.abs(sample.height - heightSamples[index].height),
+      })).sort((a, b) => b.delta - a.delta).slice(0, 4),
+    });
+  };
+
+  const frame = (now) => {
+    const visitor = document.querySelector('.lnl-visitor');
+    const state = visitor?.getAttribute('data-presentation-state');
+    if (state === 'collapsing' || state === 'compacting') {
+      observingCollapse = true;
+      compactingSeen ||= state === 'compacting';
+    }
+    if (observingCollapse) {
+      frameDeltas.push(now - previousFrame);
+      const rect = visitor?.querySelector('.lnl-visitor-trigger')?.getBoundingClientRect();
+      if (rect) {
+        widths.push(rect.width);
+        heights.push(rect.height);
+        heightSamples.push({ state, height: rect.height, time: now });
+      }
+    }
+    previousFrame = now;
+    if (observingCollapse && state === 'compact') {
+      finish('compact');
+      return;
+    }
+    if (now >= deadline) {
+      finish(state || 'timeout');
+      return;
+    }
+    requestAnimationFrame(frame);
+  };
+  requestAnimationFrame(frame);
+})`
+
+const visitorFixtureInitScript = `(() => {
+  const nativeFetch = window.fetch.bind(window);
+  window.fetch = (input, init) => {
+    const url = typeof input === 'string' ? input : input.url;
+    if (url.includes('api.ip.sb/geoip')) {
+      return Promise.resolve(new Response(JSON.stringify({
+        ip: '198.51.100.24',
+        isp: 'Fixture Network',
+        country: 'Test Region',
+        country_code: 'US',
+        city: 'Observatory',
+      }), { status: 200, headers: { 'Content-Type': 'application/json' } }));
+    }
+    return nativeFetch(input, init);
+  };
+})()`
+
 async function capturePingDialogScreenshot(name, width, height) {
   const result = await runInteractivePage(name, width, height, pingDialogOpenExpression, name)
   assert.equal(result, 'opened')
@@ -517,6 +706,48 @@ async function auditPingBarGeometry() {
   }
 }
 
+async function auditConfiguredThemeMode(defaultMode, expectedDark, initScript, expectedOverride = null) {
+  defaultThemeModeFixture = defaultMode
+  try {
+    const expectedAppearance = expectedOverride ? 'dark' : defaultMode
+    const expression = themeModeAuditExpression
+      .replace('__EXPECTED_APPEARANCE__', expectedAppearance)
+      .replace('__EXPECTED_DARK__', String(expectedDark))
+    const result = await runInteractivePage(`theme-mode-${defaultMode}-${expectedOverride ?? 'default'}`, 900, 700, expression, undefined, initScript)
+    assert.equal(result?.appearance, expectedAppearance)
+    assert.equal(result?.override, expectedOverride)
+    assert.equal(result?.dark, expectedDark)
+    assert.equal(result?.colorScheme, expectedDark ? 'dark' : 'light')
+  }
+  finally {
+    defaultThemeModeFixture = 'system'
+  }
+}
+
+async function auditMobileProbeMatrix() {
+  const result = await runInteractivePage('mobile-probe-matrix', 390, 844, mobileProbeMatrixAuditExpression)
+  assert.equal(result?.count, 3, `Expected three mobile probes: ${JSON.stringify(result)}`)
+  assert.ok(result?.scrollWidth <= result?.clientWidth + 1, `Mobile probes still require horizontal scrolling: ${JSON.stringify(result)}`)
+  assert.equal(result?.rows, 1, `Three probes should fit in one mobile row: ${JSON.stringify(result)}`)
+  assert.equal(result?.contained, true, `Mobile probe cards escaped their matrix: ${JSON.stringify(result)}`)
+}
+
+async function auditVisitorCollapse() {
+  visitorInfoEnabledFixture = true
+  try {
+    const result = await runInteractivePage('visitor-collapse', 900, 700, visitorCollapseAuditExpression, undefined, visitorFixtureInitScript)
+    assert.equal(result?.state, 'compact', `Visitor presentation did not finish: ${JSON.stringify(result)}`)
+    assert.equal(result?.compactingSeen, true, `Visitor compacting phase was skipped: ${JSON.stringify(result)}`)
+    assert.ok(result?.frames >= 20, `Visitor collapse produced too few animation frames: ${JSON.stringify(result)}`)
+    assert.ok(result?.maxFrame < 160, `Visitor collapse stalled for too long: ${JSON.stringify(result)}`)
+    assert.ok(result?.maxLongTask < 160, `Visitor collapse produced a long main-thread task: ${JSON.stringify(result)}`)
+    assert.ok(result?.maxHeightStep < 24, `Visitor collapse height changed too abruptly: ${JSON.stringify(result)}`)
+  }
+  finally {
+    visitorInfoEnabledFixture = false
+  }
+}
+
 try {
   const html = await dumpDom('home', '/')
 
@@ -533,6 +764,16 @@ try {
   await auditMobileFinanceOverflow(320)
   await auditMobileFinanceOverflow(390)
   await auditPingBarGeometry()
+  await auditConfiguredThemeMode('light', false)
+  await auditConfiguredThemeMode('dark', true)
+  await auditConfiguredThemeMode(
+    'light',
+    true,
+    `localStorage.setItem('appearance', 'dark'); localStorage.setItem('leonetlab:appearance:user-override', '1');`,
+    '1',
+  )
+  await auditMobileProbeMatrix()
+  await auditVisitorCollapse()
 
   const detailHtml = await dumpDom('detail', `/instance/${nodeUuid}`, 8000)
   assert.match(detailHtml, /资源与系统记录/)
