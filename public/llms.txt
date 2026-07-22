@@ -6,4 +6,4 @@ This site is a public, read-only server status dashboard powered by Komari Monit
 - Node detail pages present public historical telemetry when the server administrator enables records.
 - The management console at `/admin` is not part of the public theme.
 
-Project references: [Komari Monitor](https://github.com/komari-monitor/komari) and [LeoNetLab Observatory theme](https://github.com/fangleo5592-prog/komari-theme-leonetlab).
+Project references: [Komari Monitor](https://github.com/komari-monitor/komari) and [LeoNetLab Observatory theme](https://github.com/LeonR-92/komari-theme-leonetlab).

@@ -128,7 +128,7 @@ npm run smoke:1.2.5
 也可以在 Komari 主题管理中使用仓库地址导入：
 
 ```text
-https://github.com/fangleo5592-prog/komari-theme-leonetlab
+https://github.com/LeonR-92/komari-theme-leonetlab
 ```
 
 主题清单会保留该仓库地址。后续版本发布到 GitHub Releases 后，可在 Komari 后台直接检查并拉取最新版本。

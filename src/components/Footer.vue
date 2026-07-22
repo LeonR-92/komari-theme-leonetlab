@@ -48,7 +48,7 @@ onMounted(async () => {
         <span v-if="serverVersion?.version">{{ serverVersion.version }}</span>
       </p>
       <p>
-        <a href="https://github.com/fangleo5592-prog/komari-theme-leonetlab" target="_blank" rel="noopener noreferrer">LeoNetLab Observatory</a>
+        <a href="https://github.com/LeonR-92/komari-theme-leonetlab" target="_blank" rel="noopener noreferrer">LeoNetLab Observatory</a>
         · based on
         <a href="https://github.com/Tokinx/komari-theme-emerald" target="_blank" rel="noopener noreferrer">Komari Emerald</a>
       </p>
