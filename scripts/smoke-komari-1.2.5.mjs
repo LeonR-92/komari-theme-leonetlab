@@ -10,6 +10,7 @@ import process from 'node:process'
 const root = resolve(import.meta.dirname, '..')
 const dist = resolve(root, 'dist')
 const visualAuditEnabled = Boolean(process.env.SMOKE_SCREENSHOT_DIR)
+const financeDetailsLabelPattern = /查看财务汇率详情/
 const nodeUuid = 'fixture-node-a'
 const secondNodeUuid = 'fixture-node-b'
 function client(uuid, name, region, weight) {
@@ -46,6 +47,8 @@ const clients = [
   client(nodeUuid, 'Tokyo Fixture', 'JP', 20),
   client(secondNodeUuid, 'Frankfurt Fixture', 'DE', 10),
 ]
+clients[0].price = 30
+clients[0].expired_at = new Date(Date.now() + 2 * 24 * 60 * 60 * 1000).toISOString()
 function status(uuid, cpu) {
   return {
     client: uuid,
@@ -467,9 +470,18 @@ const pingDialogOpenExpression = `new Promise((resolve) => {
       const dialogTimer = setInterval(() => {
         const chart = document.querySelector('.lnl-ping-chart .echarts');
         const chartRect = chart?.getBoundingClientRect();
-        if (document.querySelector('.lnl-ping-workspace') && chartRect?.width > 100 && chartRect?.height > 200) {
+        const dialog = document.querySelector('.lnl-ping-dialog[data-state="open"]');
+        const dialogRect = dialog?.getBoundingClientRect();
+        if (document.querySelector('.lnl-ping-workspace') && dialogRect && chartRect?.width > 100 && chartRect?.height > 200) {
           clearInterval(dialogTimer);
-          resolve('opened');
+          resolve({
+            state: 'opened',
+            left: dialogRect.left,
+            right: dialogRect.right,
+            width: dialogRect.width,
+            viewportWidth: document.documentElement.clientWidth,
+            centerError: Math.abs((dialogRect.left + dialogRect.right) / 2 - document.documentElement.clientWidth / 2),
+          });
         }
         else if (Date.now() >= dialogDeadline) {
           clearInterval(dialogTimer);
@@ -497,6 +509,12 @@ const financeOverflowAuditExpression = `new Promise((resolve) => {
         const viewportWidth = document.documentElement.clientWidth;
         resolve({
           state: popover?.classList.contains('is-open') ? 'opened' : 'closed',
+          triggerText: button.textContent?.replace(/\s+/g, ' ').trim() || '',
+          textFits: [...button.querySelectorAll('span')].every((span) => {
+            const spanRect = span.getBoundingClientRect();
+            const buttonRect = button.getBoundingClientRect();
+            return spanRect.bottom <= buttonRect.bottom + 0.5 && spanRect.right <= buttonRect.right + 0.5;
+          }),
           viewportWidth,
           documentWidth: Math.max(document.documentElement.scrollWidth, document.body.scrollWidth),
           left: rect?.left ?? -1,
@@ -577,9 +595,10 @@ const globeFlagThemeAuditExpression = `new Promise((resolve) => {
   const deadline = Date.now() + 12000;
   const timer = setInterval(() => {
     const canvas = document.querySelector('.node-earth-globe:not(.is-intro) canvas');
+    const globeContainer = document.querySelector('.node-earth-globe:not(.is-intro)');
     const overlays = [...document.querySelectorAll('.node-earth-globe:not(.is-intro) .lnl-earth-overlay')];
     const themeButton = [...document.querySelectorAll('button')].find(button => /模式|北京时间/.test(button.getAttribute('aria-label') || ''));
-    if (canvas && overlays.length === 2 && themeButton) {
+    if (canvas && globeContainer && overlays.length === 2 && themeButton) {
       clearInterval(timer);
       const initialCanvas = canvas;
       const initialCount = overlays.length;
@@ -601,18 +620,25 @@ const globeFlagThemeAuditExpression = `new Promise((resolve) => {
           requestAnimationFrame(capture);
           return;
         }
+        const overlayTransformBeforeDrag = document.querySelector('.node-earth-globe:not(.is-intro) .lnl-earth-overlay')?.style.transform || '';
         const rect = canvas.getBoundingClientRect();
-        canvas.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, pointerId: 7, clientX: rect.left + rect.width * 0.5, clientY: rect.top + rect.height * 0.5 }));
-        canvas.dispatchEvent(new PointerEvent('pointermove', { bubbles: true, pointerId: 7, clientX: rect.left + rect.width * 0.7, clientY: rect.top + rect.height * 0.52 }));
-        canvas.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, pointerId: 7, clientX: rect.left + rect.width * 0.7, clientY: rect.top + rect.height * 0.52 }));
-        requestAnimationFrame(() => resolve({
+        globeContainer.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, pointerId: 7, clientX: rect.left + rect.width * 0.5, clientY: rect.top + rect.height * 0.5 }));
+        const draggingStarted = globeContainer.classList.contains('is-dragging');
+        globeContainer.dispatchEvent(new PointerEvent('pointermove', { bubbles: true, pointerId: 7, clientX: rect.left + rect.width * 0.7, clientY: rect.top + rect.height * 0.52 }));
+        const overlayTransformAfterMove = document.querySelector('.node-earth-globe:not(.is-intro) .lnl-earth-overlay')?.style.transform || '';
+        globeContainer.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, pointerId: 7, clientX: rect.left + rect.width * 0.7, clientY: rect.top + rect.height * 0.52 }));
+        setTimeout(() => resolve({
           initialCount,
           canvasSame: initialCanvas === document.querySelector('.node-earth-globe:not(.is-intro) canvas'),
           minCount: Math.min(...samples.map(item => item.count)),
           allLoaded: samples.every(item => item.loaded),
           allDisplayed: samples.every(item => item.displayed),
+          draggingStarted,
+          transformBefore: overlayTransformBeforeDrag,
+          transformAfterMove: overlayTransformAfterMove,
+          overlayMoved: overlayTransformBeforeDrag !== (document.querySelector('.node-earth-globe:not(.is-intro) .lnl-earth-overlay')?.style.transform || ''),
           draggingEnded: !document.querySelector('.node-earth-globe:not(.is-intro)')?.classList.contains('is-dragging'),
-        }));
+        }), 120);
       };
       requestAnimationFrame(capture);
     }
@@ -621,6 +647,85 @@ const globeFlagThemeAuditExpression = `new Promise((resolve) => {
       resolve({ state: 'timeout', overlays: overlays.length });
     }
   }, 80);
+})`
+
+const pingDialogCloseAuditExpression = `new Promise((resolve) => {
+  const deadline = Date.now() + 12000;
+  const timer = setInterval(() => {
+    const trigger = document.querySelector('[role="button"][aria-label^="Tokyo Fixture"]');
+    if (!trigger) {
+      if (Date.now() >= deadline) {
+        clearInterval(timer);
+        resolve({ state: 'trigger-timeout' });
+      }
+      return;
+    }
+    clearInterval(timer);
+    trigger.click();
+    const openDeadline = Date.now() + 5000;
+    const openTimer = setInterval(() => {
+      const dialog = document.querySelector('.lnl-ping-dialog[data-state="open"]');
+      const close = dialog?.querySelector('button[aria-label="关闭"]');
+      if (dialog && close) {
+        clearInterval(openTimer);
+        close.click();
+        let closedSeen = false;
+        let closedFrames = 0;
+        const started = performance.now();
+        const sample = () => {
+          const current = document.querySelector('.lnl-ping-dialog');
+          if (current?.getAttribute('data-state') === 'closed') {
+            closedSeen = true;
+            closedFrames += 1;
+          }
+          if ((!current && closedSeen) || performance.now() - started > 600) {
+            resolve({ state: current ? current.getAttribute('data-state') : 'removed', closedSeen, closedFrames });
+            return;
+          }
+          requestAnimationFrame(sample);
+        };
+        requestAnimationFrame(sample);
+      }
+      else if (Date.now() >= openDeadline) {
+        clearInterval(openTimer);
+        resolve({ state: 'dialog-timeout' });
+      }
+    }, 60);
+  }, 80);
+})`
+
+const introHandoffAuditExpression = `new Promise((resolve) => {
+  const deadline = Date.now() + 10000;
+  const timer = setInterval(() => {
+    const root = document.querySelector('.lnl-intro');
+    const source = document.querySelector('.lnl-intro-globe');
+    const target = document.querySelector('.lnl-summary .node-earth-globe:not(.is-intro)');
+    const skip = document.querySelector('.lnl-intro-skip');
+    if (root && source && target && skip) {
+      clearInterval(timer);
+      const sourceRect = source.getBoundingClientRect();
+      const targetRect = target.getBoundingClientRect();
+      const staged = Boolean(document.querySelector('.lnl-intro-staged'));
+      skip.click();
+      setTimeout(() => {
+        const style = root.style;
+        const handoffX = Number.parseFloat(style.getPropertyValue('--intro-handoff-x'));
+        const handoffY = Number.parseFloat(style.getPropertyValue('--intro-handoff-y'));
+        const handoffScale = Number.parseFloat(style.getPropertyValue('--intro-handoff-scale'));
+        resolve({
+          handoffReady: root.classList.contains('is-handoff-ready'),
+          staged,
+          xError: Math.abs(handoffX - (targetRect.left - sourceRect.left)),
+          yError: Math.abs(handoffY - (targetRect.top - sourceRect.top)),
+          scaleError: Math.abs(handoffScale - targetRect.width / sourceRect.width),
+        });
+      }, 80);
+    }
+    else if (Date.now() >= deadline) {
+      clearInterval(timer);
+      resolve({ state: 'timeout', hasRoot: Boolean(root), hasSource: Boolean(source), hasTarget: Boolean(target) });
+    }
+  }, 60);
 })`
 
 const mobileChromeLayoutAuditExpression = `new Promise((resolve) => {
@@ -657,6 +762,29 @@ const mobileChromeLayoutAuditExpression = `new Promise((resolve) => {
       resolve({ state: 'timeout' });
     }
   }, 80);
+})`
+
+const mobileIntroTypographyAuditExpression = `new Promise((resolve) => {
+  const deadline = Date.now() + 8000;
+  const timer = setInterval(() => {
+    const title = document.querySelector('.lnl-intro-copy > strong');
+    if (title) {
+      clearInterval(timer);
+      const rect = title.getBoundingClientRect();
+      resolve({
+        text: title.textContent?.trim() || '',
+        left: rect.left,
+        right: rect.right,
+        scrollWidth: title.scrollWidth,
+        clientWidth: title.clientWidth,
+        viewportWidth: document.documentElement.clientWidth,
+      });
+    }
+    else if (Date.now() >= deadline) {
+      clearInterval(timer);
+      resolve({ state: 'timeout' });
+    }
+  }, 60);
 })`
 
 const mobileProbeMatrixAuditExpression = `new Promise((resolve) => {
@@ -788,14 +916,18 @@ const visitorFixtureInitScript = `(() => {
 })()`
 
 async function capturePingDialogScreenshot(name, width, height) {
-  const result = await runInteractivePage(name, width, height, pingDialogOpenExpression, name, `sessionStorage.setItem('leonetlab:intro:1.2.0', 'seen');`)
-  assert.equal(result, 'opened')
+  const result = await runInteractivePage(name, width, height, pingDialogOpenExpression, name, `sessionStorage.setItem('leonetlab:intro:1.2.1', 'seen');`)
+  assert.equal(result?.state, 'opened')
+  assert.ok(result?.left >= -0.5 && result?.right <= result?.viewportWidth + 0.5, `Ping dialog escaped viewport: ${JSON.stringify(result)}`)
+  assert.ok(result?.centerError <= 1, `Ping dialog is not centered: ${JSON.stringify(result)}`)
 }
 
 async function auditMobileFinanceOverflow(width) {
   const screenshotName = process.env.SMOKE_SCREENSHOT_DIR && width === 390 ? 'mobile-finance-open' : undefined
-  const result = await runInteractivePage(`mobile-finance-audit-${width}`, width, 844, financeOverflowAuditExpression, screenshotName, `sessionStorage.setItem('leonetlab:intro:1.2.0', 'seen');`)
+  const result = await runInteractivePage(`mobile-finance-audit-${width}`, width, 844, financeOverflowAuditExpression, screenshotName, `sessionStorage.setItem('leonetlab:intro:1.2.1', 'seen');`)
   assert.equal(result?.state, 'opened')
+  assert.doesNotMatch(result?.triggerText ?? '', financeDetailsLabelPattern)
+  assert.equal(result?.textFits, true, `Finance trigger text escaped its card: ${JSON.stringify(result)}`)
   assert.equal(result?.viewportWidth, width)
   assert.ok(result?.documentWidth <= result?.viewportWidth, `Mobile document overflowed: ${JSON.stringify(result)}`)
   assert.ok(result?.left >= 0 && result?.right <= result?.viewportWidth + 0.5, `Finance panel escaped viewport: ${JSON.stringify(result)}`)
@@ -845,7 +977,7 @@ async function auditGlobeFlagsAcrossThemeChange() {
     780,
     globeFlagThemeAuditExpression,
     undefined,
-    `sessionStorage.setItem('leonetlab:intro:1.2.0', 'seen'); localStorage.setItem('appearance', 'light'); localStorage.setItem('leonetlab:appearance:user-override', '1');`,
+    `sessionStorage.setItem('leonetlab:intro:1.2.1', 'seen'); localStorage.setItem('appearance', 'light'); localStorage.setItem('leonetlab:appearance:user-override', '1');`,
   )
   reportBrowserAudit('globe-flags-theme-change', result)
   assert.equal(result?.initialCount, 2, `Expected two globe flag overlays: ${JSON.stringify(result)}`)
@@ -853,7 +985,30 @@ async function auditGlobeFlagsAcrossThemeChange() {
   assert.equal(result?.minCount, 2, `Globe flags disappeared during theme switch: ${JSON.stringify(result)}`)
   assert.equal(result?.allLoaded, true, `A globe flag asset failed to load: ${JSON.stringify(result)}`)
   assert.equal(result?.allDisplayed, true, `A globe flag was hidden: ${JSON.stringify(result)}`)
+  assert.equal(result?.overlayMoved, true, `Globe drag did not change the projected flag position: ${JSON.stringify(result)}`)
   assert.equal(result?.draggingEnded, true, `Globe drag state did not settle: ${JSON.stringify(result)}`)
+}
+
+async function auditPingDialogCloseAnimation() {
+  const result = await runInteractivePage(
+    'ping-dialog-close-animation',
+    1100,
+    780,
+    pingDialogCloseAuditExpression,
+    undefined,
+    `sessionStorage.setItem('leonetlab:intro:1.2.1', 'seen');`,
+  )
+  reportBrowserAudit('ping-dialog-close-animation', result)
+  assert.equal(result?.closedSeen, true, `Ping dialog skipped its closed state: ${JSON.stringify(result)}`)
+  assert.ok(result?.closedFrames >= 2, `Ping dialog exit animation had too few frames: ${JSON.stringify(result)}`)
+}
+
+async function auditIntroGlobeHandoff() {
+  const result = await runInteractivePage('intro-globe-handoff', 1100, 780, introHandoffAuditExpression)
+  reportBrowserAudit('intro-globe-handoff', result)
+  assert.equal(result?.handoffReady, true, `Intro globe did not prepare a dashboard handoff: ${JSON.stringify(result)}`)
+  assert.equal(result?.staged, true, `Dashboard content was not staged behind the intro: ${JSON.stringify(result)}`)
+  assert.ok(result?.xError < 1 && result?.yError < 1 && result?.scaleError < 0.01, `Intro handoff geometry did not match the dashboard globe: ${JSON.stringify(result)}`)
 }
 
 async function auditMobileProbeMatrix() {
@@ -888,7 +1043,7 @@ async function auditVisitorCollapse() {
 async function auditMobileChromeLayout() {
   visitorInfoEnabledFixture = true
   try {
-    const initScript = `${visitorFixtureInitScript}\nsessionStorage.setItem('leonetlab:intro:1.2.0', 'seen');`
+    const initScript = `${visitorFixtureInitScript}\nsessionStorage.setItem('leonetlab:intro:1.2.1', 'seen');`
     const result = await runInteractivePage('mobile-chrome-layout', 390, 844, mobileChromeLayoutAuditExpression, undefined, initScript)
     reportBrowserAudit('mobile-chrome-layout', result)
     assert.ok(Math.abs(result?.logoWidth - result?.logoHeight) < 0.5, `Mobile logo frame is not square: ${JSON.stringify(result)}`)
@@ -899,6 +1054,13 @@ async function auditMobileChromeLayout() {
   finally {
     visitorInfoEnabledFixture = false
   }
+}
+
+async function auditMobileIntroTypography() {
+  const result = await runInteractivePage('mobile-intro-typography', 390, 844, mobileIntroTypographyAuditExpression)
+  reportBrowserAudit('mobile-intro-typography', result)
+  assert.ok(result?.left >= -0.5 && result?.right <= result?.viewportWidth + 0.5, `Mobile intro title escaped viewport: ${JSON.stringify(result)}`)
+  assert.ok(result?.scrollWidth <= result?.clientWidth + 1, `Mobile intro title overflowed its column: ${JSON.stringify(result)}`)
 }
 
 try {
@@ -926,9 +1088,12 @@ try {
     '1',
   )
   await auditGlobeFlagsAcrossThemeChange()
+  await auditPingDialogCloseAnimation()
+  await auditIntroGlobeHandoff()
   await auditMobileProbeMatrix()
   await auditVisitorCollapse()
   await auditMobileChromeLayout()
+  await auditMobileIntroTypography()
 
   const detailHtml = await dumpDom('detail', `/instance/${nodeUuid}`, 8000)
   assert.match(detailHtml, /资源与系统记录/)

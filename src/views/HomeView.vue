@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import type { NodeData } from '@/stores/nodes'
 import { Icon } from '@iconify/vue'
-import { useDebounceFn } from '@vueuse/core'
-import { computed, defineAsyncComponent, nextTick, onActivated, onDeactivated, ref, watch } from 'vue'
+import { useDebounceFn, useIntervalFn, useNow } from '@vueuse/core'
+import { computed, defineAsyncComponent, nextTick, onActivated, onBeforeUnmount, onDeactivated, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import MarkdownRenderer from '@/components/MarkdownRenderer.vue'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
@@ -14,6 +14,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { useBackgroundSurface } from '@/composables/useBackgroundSurface'
 import { useAppStore } from '@/stores/app'
 import { useNodesStore } from '@/stores/nodes'
+import * as financeHelper from '@/utils/financeHelper'
 import { isNodeInGroup, parseNodeGroups } from '@/utils/groupHelper'
 import { isRegionMatch } from '@/utils/regionHelper'
 
@@ -31,8 +32,59 @@ const appStore = useAppStore()
 const { pickSurfaceClass } = useBackgroundSurface()
 const nodesStore = useNodesStore()
 const router = useRouter()
+const exchangeRates = ref(financeHelper.DEFAULT_EXCHANGE_RATES)
+const now = useNow({ interval: 60_000 })
+const expiryRotationIndex = ref(0)
+const EXPIRY_WARNING_MS = 3 * 24 * 60 * 60 * 1000
+
+const expiringNodes = computed(() => nodesStore.nodes
+  .map(node => ({ node, remainingMs: new Date(node.expired_at).getTime() - now.value.getTime() }))
+  .filter(item => Number.isFinite(item.remainingMs) && item.remainingMs > 0 && item.remainingMs <= EXPIRY_WARNING_MS)
+  .sort((a, b) => a.remainingMs - b.remainingMs))
+
+const currentExpiringNode = computed(() => {
+  if (expiringNodes.value.length === 0)
+    return null
+  return expiringNodes.value[expiryRotationIndex.value % expiringNodes.value.length]
+})
+
+const dailySpend = computed(() => financeHelper.formatFinanceAmount(
+  financeHelper.calculateTotalDailyCostCNY(nodesStore.nodes, exchangeRates.value),
+  'CNY',
+))
+
+const auxiliaryStatus = computed(() => {
+  const expiring = currentExpiringNode.value
+  if (!expiring) {
+    return {
+      key: 'daily-cost',
+      label: 'TODAY COST',
+      value: `${dailySpend.value.symbol}${dailySpend.value.value}`,
+      meta: dailySpend.value.currency,
+      urgent: false,
+    }
+  }
+
+  const hours = Math.max(1, Math.ceil(expiring.remainingMs / (60 * 60 * 1000)))
+  const remaining = hours < 24 ? `${hours} 小时` : `${Math.ceil(hours / 24)} 天`
+  return {
+    key: expiring.node.uuid,
+    label: 'EXPIRING ≤ 3D',
+    value: expiring.node.name,
+    meta: remaining,
+    urgent: true,
+  }
+})
+
+const { pause: pauseExpiryRotation, resume: resumeExpiryRotation } = useIntervalFn(() => {
+  if (expiringNodes.value.length > 1)
+    expiryRotationIndex.value = (expiryRotationIndex.value + 1) % expiringNodes.value.length
+  else
+    expiryRotationIndex.value = 0
+}, 4200)
 
 onActivated(() => {
+  resumeExpiryRotation()
   if (appStore.homeScrollPosition > 0) {
     nextTick(() => {
       window.scrollTo({ top: appStore.homeScrollPosition, behavior: 'instant' })
@@ -41,12 +93,20 @@ onActivated(() => {
 })
 
 onDeactivated(() => {
+  pauseExpiryRotation()
   appStore.homeScrollPosition = window.scrollY
+})
+
+onMounted(async () => {
+  const result = await financeHelper.getDailyExchangeRates()
+  exchangeRates.value = result.rates
 })
 
 const searchText = ref('')
 const debouncedSearchText = ref('')
 const selectedPingNodeUuid = ref<string | null>(null)
+const pingDialogOpen = ref(false)
+let pingDialogCleanupTimer: number | null = null
 const onlineNodeCount = computed(() => nodesStore.nodes.filter(node => node.online).length)
 const totalNodeCount = computed(() => nodesStore.nodes.length)
 
@@ -115,12 +175,17 @@ const selectedPingNode = computed(() => {
   return nodesStore.nodes.find(node => node.uuid === selectedPingNodeUuid.value) ?? null
 })
 
-const pingDialogOpen = computed({
-  get: () => selectedPingNode.value !== null,
-  set: (open: boolean) => {
-    if (!open)
+watch(pingDialogOpen, (open) => {
+  if (pingDialogCleanupTimer !== null) {
+    window.clearTimeout(pingDialogCleanupTimer)
+    pingDialogCleanupTimer = null
+  }
+  if (!open) {
+    pingDialogCleanupTimer = window.setTimeout(() => {
       selectedPingNodeUuid.value = null
-  },
+      pingDialogCleanupTimer = null
+    }, 280)
+  }
 })
 
 function handleNodeClick(node: typeof nodesStore.nodes[number]) {
@@ -128,8 +193,20 @@ function handleNodeClick(node: typeof nodesStore.nodes[number]) {
 }
 
 function handlePingClick(node: NodeData) {
+  if (pingDialogCleanupTimer !== null) {
+    window.clearTimeout(pingDialogCleanupTimer)
+    pingDialogCleanupTimer = null
+  }
   selectedPingNodeUuid.value = node.uuid
+  nextTick(() => {
+    pingDialogOpen.value = true
+  })
 }
+
+onBeforeUnmount(() => {
+  if (pingDialogCleanupTimer !== null)
+    window.clearTimeout(pingDialogCleanupTimer)
+})
 
 function getNodeItemTransitionKey(node: typeof nodesStore.nodes[number]): string {
   return `${appStore.nodeSelectedGroup}-${node.uuid}`
@@ -155,6 +232,17 @@ function getNodeItemTransitionStyle(index: number): Record<string, string> {
       <dl class="lnl-dashboard-status">
         <div><dt>ONLINE</dt><dd>{{ onlineNodeCount }}<span>/ {{ totalNodeCount }}</span></dd></div>
         <div><dt>TRANSPORT</dt><dd>{{ appStore.rpcTransportMode.toUpperCase() }}</dd></div>
+        <div class="lnl-dashboard-status-aux" :class="{ 'is-urgent': auxiliaryStatus.urgent }">
+          <Transition name="status-rotate" mode="out-in">
+            <div :key="auxiliaryStatus.key" class="lnl-dashboard-status-aux-inner">
+              <dt>{{ auxiliaryStatus.label }}</dt>
+              <dd :title="auxiliaryStatus.value">
+                <span class="lnl-dashboard-status-value">{{ auxiliaryStatus.value }}</span>
+                <small>{{ auxiliaryStatus.meta }}</small>
+              </dd>
+            </div>
+          </Transition>
+        </div>
       </dl>
     </section>
     <div v-if="appStore.connectionError" class="alert px-4">
@@ -316,6 +404,36 @@ function getNodeItemTransitionStyle(index: number): Record<string, string> {
   letter-spacing: 0.13em;
 }
 
+:global(.lnl-ping-dialog[data-state='open']) {
+  animation: lnl-ping-dialog-in 360ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+:global(.lnl-ping-dialog[data-state='closed']) {
+  animation: lnl-ping-dialog-out 240ms cubic-bezier(0.4, 0, 1, 1) both;
+}
+
+@keyframes lnl-ping-dialog-in {
+  from {
+    opacity: 0;
+    transform: translate3d(0, 20px, 0) scale(0.985);
+  }
+  to {
+    opacity: 1;
+    transform: translate3d(0, 0, 0) scale(1);
+  }
+}
+
+@keyframes lnl-ping-dialog-out {
+  from {
+    opacity: 1;
+    transform: translate3d(0, 0, 0) scale(1);
+  }
+  to {
+    opacity: 0;
+    transform: translate3d(0, 12px, 0) scale(0.992);
+  }
+}
+
 .node-card-switch-enter-active,
 .node-card-switch-leave-active {
   transition:
@@ -342,6 +460,11 @@ function getNodeItemTransitionStyle(index: number): Record<string, string> {
 }
 
 @media (prefers-reduced-motion: reduce) {
+  :global(.lnl-ping-dialog[data-state='open']),
+  :global(.lnl-ping-dialog[data-state='closed']) {
+    animation: none;
+  }
+
   .node-card-switch-enter-active,
   .node-card-switch-leave-active,
   .node-card-switch-move {

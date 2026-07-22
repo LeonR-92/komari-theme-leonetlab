@@ -19,6 +19,29 @@ const phases = computed(() => [
 const totalNodes = computed(() => nodesStore.nodes.length)
 const onlineNodes = computed(() => nodesStore.nodes.filter(node => node.online).length)
 const offlineNodes = computed(() => Math.max(0, totalNodes.value - onlineNodes.value))
+const rootRef = ref<HTMLElement>()
+const globeSceneRef = ref<HTMLElement>()
+
+function prepareHandoff(): boolean {
+  const root = rootRef.value
+  const source = globeSceneRef.value
+  const target = document.querySelector<HTMLElement>('.lnl-summary .node-earth-globe:not(.is-intro)')
+  if (!root || !source || !target)
+    return false
+
+  const sourceRect = source.getBoundingClientRect()
+  const targetRect = target.getBoundingClientRect()
+  if (sourceRect.width <= 0 || targetRect.width <= 0)
+    return false
+
+  root.style.setProperty('--intro-handoff-x', `${targetRect.left - sourceRect.left}px`)
+  root.style.setProperty('--intro-handoff-y', `${targetRect.top - sourceRect.top}px`)
+  root.style.setProperty('--intro-handoff-scale', `${targetRect.width / sourceRect.width}`)
+  root.classList.add('is-handoff-ready')
+  return true
+}
+
+defineExpose({ prepareHandoff })
 
 function handleLogoError(event: Event) {
   const image = event.currentTarget as HTMLImageElement
@@ -43,6 +66,7 @@ onUnmounted(() => timers.forEach(timer => window.clearTimeout(timer)))
 
 <template>
   <div
+    ref="rootRef"
     class="lnl-intro"
     :class="appStore.isDark ? 'lnl-intro-dark' : 'lnl-intro-light'"
     role="status"
@@ -58,12 +82,13 @@ onUnmounted(() => timers.forEach(timer => window.clearTimeout(timer)))
     </div>
 
     <div class="lnl-intro-scene">
-      <div class="lnl-intro-globe">
+      <div ref="globeSceneRef" class="lnl-intro-globe">
         <NodeEarthGlobe
           :nodes="nodesStore.earthNodes"
           variant="intro"
           :interactive="false"
           :show-status="false"
+          :auto-rotate="false"
         />
         <div class="lnl-intro-globe-hud" aria-hidden="true">
           <span class="lnl-intro-logo">
@@ -392,12 +417,14 @@ onUnmounted(() => timers.forEach(timer => window.clearTimeout(timer)))
 :global(.lnl-intro-exit-leave-active) .lnl-intro-globe {
   animation: none;
   transition:
-    opacity 0.54s ease,
-    transform 0.66s cubic-bezier(0.22, 1, 0.36, 1);
+    opacity 0.14s 0.7s ease,
+    transform 0.84s cubic-bezier(0.2, 0.78, 0.2, 1);
+  transform-origin: top left;
 }
 :global(.lnl-intro-exit-leave-to) .lnl-intro-globe {
-  opacity: 0.1;
-  transform: translate3d(29vw, 16vh, 0) scale(0.78);
+  opacity: 0;
+  transform: translate3d(var(--intro-handoff-x, 29vw), var(--intro-handoff-y, 16vh), 0)
+    scale(var(--intro-handoff-scale, 0.78));
 }
 :global(.lnl-intro-exit-leave-active)
   :is(.lnl-intro-copy, .lnl-intro-telemetry, .lnl-intro-top, .lnl-intro-bottom, .lnl-intro-progress, .lnl-intro-skip) {
@@ -473,11 +500,12 @@ onUnmounted(() => timers.forEach(timer => window.clearTimeout(timer)))
     text-align: center;
   }
   .lnl-intro-copy > strong {
-    font-size: clamp(30px, 9.5vw, 44px);
+    max-inline-size: 100%;
+    font-size: clamp(28px, 8.4vw, 40px);
     line-height: 1.02;
     overflow-wrap: anywhere;
     text-wrap: balance;
-    word-break: break-word;
+    word-break: normal;
   }
   .lnl-intro-copy > span,
   .lnl-intro-copy > p {
@@ -501,8 +529,9 @@ onUnmounted(() => timers.forEach(timer => window.clearTimeout(timer)))
     display: none;
   }
   :global(.lnl-intro-exit-leave-to) .lnl-intro-globe {
-    opacity: 0.08;
-    transform: translate3d(0, -24vh, 0) scale(1.04);
+    opacity: 0;
+    transform: translate3d(var(--intro-handoff-x, 0), var(--intro-handoff-y, -24vh), 0)
+      scale(var(--intro-handoff-scale, 1.04));
   }
 }
 

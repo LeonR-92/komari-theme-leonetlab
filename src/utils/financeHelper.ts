@@ -38,6 +38,7 @@ export const SUPPORTED_FINANCE_CURRENCIES = Object.keys(FINANCE_CURRENCY_CONFIG)
 export const DISPLAY_FINANCE_CURRENCIES = ['CNY', 'USD', 'HKD', 'EUR', 'GBP', 'JPY'] as const satisfies readonly CurrencyCode[]
 export type ExchangeRates = Record<CurrencyCode, number>
 export type ExchangeRateSource = 'cache' | 'network' | 'stale-cache' | 'default'
+interface ExchangeRateResult { rates: ExchangeRates, source: ExchangeRateSource }
 
 interface ExchangeRatesCache {
   base: 'CNY'
@@ -50,6 +51,7 @@ const CACHE_KEY = 'komari_finance_exchange_rates_cny_v1'
 const MS_PER_DAY = 24 * 60 * 60 * 1000
 const MONTH_DAYS = 30
 const LONG_TERM_YEARS = 100
+let pendingExchangeRateRequest: Promise<ExchangeRateResult> | null = null
 
 export const DEFAULT_EXCHANGE_RATES = Object.fromEntries(
   Object.entries(FINANCE_CURRENCY_CONFIG).map(([currency, config]) => [currency, config.rate]),
@@ -198,6 +200,24 @@ export function calculateMonthlyAverageCostCNY(
   return priceCNY / billingCycle * MONTH_DAYS
 }
 
+export function calculateTotalDailyCostCNY(
+  nodes: NodeData[],
+  exchangeRates: ExchangeRates,
+  excludeFreeTags = true,
+): number {
+  return nodes.reduce((sum, node) => {
+    if (excludeFreeTags && node.tags?.includes('白嫖'))
+      return sum
+
+    const priceCNY = getPriceCNY(node, exchangeRates)
+    const billingCycle = Number(node.billing_cycle)
+    if (priceCNY <= 0 || !Number.isFinite(billingCycle) || billingCycle <= 0)
+      return sum
+
+    return sum + priceCNY / billingCycle
+  }, 0)
+}
+
 export function calculateRemainingValueCNY(
   node: NodeData,
   exchangeRates: ExchangeRates,
@@ -247,10 +267,20 @@ export function formatFinanceAmount(amount: number, currency: CurrencyCode): {
   }
 }
 
-export async function getDailyExchangeRates(): Promise<{
-  rates: ExchangeRates
-  source: ExchangeRateSource
-}> {
+export async function getDailyExchangeRates(): Promise<ExchangeRateResult> {
+  if (pendingExchangeRateRequest)
+    return pendingExchangeRateRequest
+
+  pendingExchangeRateRequest = loadDailyExchangeRates()
+  try {
+    return await pendingExchangeRateRequest
+  }
+  finally {
+    pendingExchangeRateRequest = null
+  }
+}
+
+async function loadDailyExchangeRates(): Promise<ExchangeRateResult> {
   const today = getTodayDateKey()
   const cached = readCachedExchangeRates()
 

@@ -195,7 +195,7 @@ textarea {
 
 .lnl-reveal-header,
 .lnl-intro-reveal .lnl-dashboard-head,
-.lnl-intro-reveal .lnl-summary,
+.lnl-intro-reveal .lnl-summary-metrics,
 .lnl-intro-reveal .node-info {
   animation: lnl-section-rise 0.72s cubic-bezier(0.16, 1, 0.3, 1) both;
   will-change: opacity, transform;
@@ -203,11 +203,20 @@ textarea {
 .lnl-intro-reveal .lnl-dashboard-head {
   animation-delay: 80ms;
 }
-.lnl-intro-reveal .lnl-summary {
+.lnl-intro-reveal .lnl-summary-metrics {
   animation-delay: 190ms;
 }
 .lnl-intro-reveal .node-info {
   animation-delay: 360ms;
+}
+
+.lnl-header-staged,
+.lnl-intro-staged .lnl-dashboard-head,
+.lnl-intro-staged .lnl-summary-metrics,
+.lnl-intro-staged .node-info {
+  opacity: 0;
+  transform: translate3d(0, 20px, 0);
+  pointer-events: none;
 }
 
 @keyframes lnl-section-rise {
@@ -360,16 +369,16 @@ textarea {
 }
 .lnl-dashboard-status {
   display: grid;
-  grid-template-columns: repeat(2, minmax(105px, 1fr));
+  grid-template-columns: repeat(3, minmax(105px, 1fr));
   margin: 0;
   border: 1px solid var(--lnl-line);
   background: color-mix(in srgb, var(--lnl-surface) 82%, transparent);
 }
-.lnl-dashboard-status div {
+.lnl-dashboard-status > div {
   min-width: 118px;
   padding: 15px 17px;
 }
-.lnl-dashboard-status div + div {
+.lnl-dashboard-status > div + div {
   border-left: 1px solid var(--lnl-line);
 }
 .lnl-dashboard-status dt {
@@ -386,6 +395,52 @@ textarea {
   margin-left: 4px;
   color: var(--muted-foreground);
   font-size: 10px;
+}
+
+.lnl-dashboard-status .lnl-dashboard-status-aux {
+  min-width: 174px;
+  overflow: hidden;
+}
+.lnl-dashboard-status-aux-inner {
+  min-width: 0;
+}
+.lnl-dashboard-status-aux dd {
+  display: flex;
+  min-width: 0;
+  align-items: baseline;
+  gap: 6px;
+}
+.lnl-dashboard-status-aux .lnl-dashboard-status-value {
+  min-width: 0;
+  margin: 0;
+  overflow: hidden;
+  color: var(--lnl-green);
+  font-size: 14px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.lnl-dashboard-status-aux small {
+  flex: none;
+  color: var(--muted-foreground);
+  font: 9px/1 var(--font-mono);
+}
+.lnl-dashboard-status-aux.is-urgent dt,
+.lnl-dashboard-status-aux.is-urgent .lnl-dashboard-status-value {
+  color: var(--lnl-warn, #d97706);
+}
+.status-rotate-enter-active,
+.status-rotate-leave-active {
+  transition:
+    opacity 180ms ease,
+    transform 240ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+.status-rotate-enter-from {
+  opacity: 0;
+  transform: translateY(7px);
+}
+.status-rotate-leave-to {
+  opacity: 0;
+  transform: translateY(-5px);
 }
 
 .home-view > .p-4,
@@ -676,14 +731,11 @@ textarea {
 }
 
 .lnl-intro-exit-leave-active {
-  will-change: opacity, transform;
-  transition:
-    opacity 0.62s cubic-bezier(0.22, 1, 0.36, 1),
-    transform 0.62s cubic-bezier(0.22, 1, 0.36, 1);
+  will-change: opacity;
+  transition: opacity 0.18s 0.7s ease;
 }
 .lnl-intro-exit-leave-to {
   opacity: 0;
-  transform: translate3d(0, -2.5%, 0) scale(1.008);
 }
 
 @keyframes lnl-live {
@@ -740,8 +792,21 @@ textarea {
   .lnl-dashboard-status {
     width: 100%;
   }
-  .lnl-dashboard-status div {
+  .lnl-dashboard-status > div {
     min-width: 0;
+    padding: 12px 10px;
+  }
+  .lnl-dashboard-status .lnl-dashboard-status-aux {
+    min-width: 0;
+  }
+  .lnl-dashboard-status dd {
+    font-size: 18px;
+  }
+  .lnl-dashboard-status-aux .lnl-dashboard-status-value {
+    font-size: 11px;
+  }
+  .lnl-dashboard-status-aux small {
+    font-size: 7px;
   }
   .lnl-footer-meta {
     align-items: flex-start;
@@ -794,7 +859,7 @@ textarea {
   }
   .lnl-reveal-header,
   .lnl-intro-reveal .lnl-dashboard-head,
-  .lnl-intro-reveal .lnl-summary,
+  .lnl-intro-reveal .lnl-summary-metrics,
   .lnl-intro-reveal .node-info {
     animation: none;
   }

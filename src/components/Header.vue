@@ -125,7 +125,13 @@ function handleLogoError(event: Event) {
       :class="[`to-${themeTransition.target}`, `is-${themeTransition.phase}`]"
       aria-hidden="true"
     />
-    <div v-if="leavingForAdmin" class="lnl-route-cover" role="status" aria-live="polite">
+    <div
+      v-if="leavingForAdmin"
+      class="lnl-route-cover"
+      :class="appStore.isDark ? 'is-dark' : 'is-light'"
+      role="status"
+      aria-live="polite"
+    >
       <div class="lnl-route-grid" aria-hidden="true" />
       <div class="lnl-route-core" aria-hidden="true">
         <i /><span><img v-if="logoVisible" :src="appStore.brandLogoUrl" alt="" @error="handleLogoError"></span><i />
@@ -165,15 +171,29 @@ function handleLogoError(event: Event) {
   background: #edf7f1;
 }
 .lnl-route-cover {
+  --route-bg: #030b09;
+  --route-ink: #e5eee9;
+  --route-muted: #91a79e;
+  --route-accent: #74e6b2;
+  --route-cyan: #75c9d4;
+  --route-surface: #071310;
   position: fixed;
   z-index: 120;
   inset: 0;
   display: grid;
   place-items: center;
   overflow: hidden;
-  background: #030b09;
-  color: #e5eee9;
+  background: var(--route-bg);
+  color: var(--route-ink);
   animation: lnl-route-cover-in 0.86s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+.lnl-route-cover.is-light {
+  --route-bg: #edf6f1;
+  --route-ink: #10251d;
+  --route-muted: #506c61;
+  --route-accent: #167a56;
+  --route-cyan: #227f89;
+  --route-surface: #f7fbf8;
 }
 .lnl-route-cover::before {
   content: '';
@@ -183,16 +203,16 @@ function handleLogoError(event: Event) {
   bottom: 0;
   left: 0;
   height: 2px;
-  background: linear-gradient(90deg, transparent, #74e6b2, #75c9d4, transparent);
-  box-shadow: 0 -12px 42px rgba(116, 230, 178, 0.24);
+  background: linear-gradient(90deg, transparent, var(--route-accent), var(--route-cyan), transparent);
+  box-shadow: 0 -12px 42px color-mix(in srgb, var(--route-accent) 24%, transparent);
   animation: lnl-route-leading-edge 0.86s cubic-bezier(0.16, 1, 0.3, 1) both;
 }
 .lnl-route-grid {
   position: absolute;
   inset: 0;
   background-image:
-    linear-gradient(rgba(116, 230, 178, 0.04) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(116, 230, 178, 0.04) 1px, transparent 1px);
+    linear-gradient(color-mix(in srgb, var(--route-accent) 5%, transparent) 1px, transparent 1px),
+    linear-gradient(90deg, color-mix(in srgb, var(--route-accent) 5%, transparent) 1px, transparent 1px);
   background-size: 42px 42px;
   mask-image: radial-gradient(circle, #000, transparent 72%);
 }
@@ -202,7 +222,7 @@ function handleLogoError(event: Event) {
   left: 50%;
   width: 154px;
   aspect-ratio: 1;
-  border: 1px solid rgba(116, 230, 178, 0.2);
+  border: 1px solid color-mix(in srgb, var(--route-accent) 24%, transparent);
   border-radius: 50%;
   transform: translate(-50%, -50%);
   animation: lnl-route-orbit 3s linear infinite;
@@ -214,8 +234,8 @@ function handleLogoError(event: Event) {
   width: 68px;
   height: 68px;
   padding: 7px;
-  border: 1px solid rgba(116, 230, 178, 0.42);
-  background: #071310;
+  border: 1px solid color-mix(in srgb, var(--route-accent) 45%, transparent);
+  background: var(--route-surface);
   transform: translate(-50%, -50%);
 }
 .lnl-route-core img {
@@ -232,8 +252,8 @@ function handleLogoError(event: Event) {
   width: 6px;
   height: 6px;
   border-radius: 50%;
-  background: #74e6b2;
-  box-shadow: 0 0 14px rgba(116, 230, 178, 0.7);
+  background: var(--route-accent);
+  box-shadow: 0 0 14px color-mix(in srgb, var(--route-accent) 70%, transparent);
 }
 .lnl-route-core i:last-child {
   right: -3px;
@@ -252,14 +272,14 @@ function handleLogoError(event: Event) {
   letter-spacing: 0.14em;
 }
 .lnl-route-copy span {
-  color: #74e6b2;
+  color: var(--route-accent);
 }
 .lnl-route-copy strong {
   font: 400 clamp(26px, 4vw, 42px)/1.1 var(--font-display);
 }
 .lnl-route-copy p {
   margin: 0;
-  color: #91a79e;
+  color: var(--route-muted);
 }
 .lnl-route-track {
   position: absolute;
@@ -267,13 +287,13 @@ function handleLogoError(event: Event) {
   bottom: 8vh;
   left: 8vw;
   height: 1px;
-  background: rgba(116, 230, 178, 0.14);
+  background: color-mix(in srgb, var(--route-accent) 14%, transparent);
 }
 .lnl-route-track i {
   display: block;
   width: 100%;
   height: 100%;
-  background: linear-gradient(90deg, #74e6b2, #75c9d4);
+  background: linear-gradient(90deg, var(--route-accent), var(--route-cyan));
   transform-origin: left;
   animation: lnl-route-track 0.76s 0.1s cubic-bezier(0.2, 0.72, 0.2, 1) both;
 }

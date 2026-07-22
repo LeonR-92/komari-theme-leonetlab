@@ -184,7 +184,7 @@ onMounted(async () => {
 
 <template>
   <div class="lnl-summary" :class="wrapperClass">
-    <NodeEarthGlobe v-if="showEarth" :nodes="globeNodes" class="col-span-12 col-start-1 row-start-1 md:col-span-6 md:col-start-7" />
+    <NodeEarthGlobe v-if="showEarth" :nodes="globeNodes" :interactive="true" class="col-span-12 col-start-1 row-start-1 md:col-span-6 md:col-start-7" />
     <NodeEarthMaps v-else-if="showMaps" :nodes="globeNodes" class="col-span-12 col-start-1 row-start-1 md:col-span-6 md:col-start-7" />
 
     <div class="lnl-summary-metrics" :class="cardGridClass">
@@ -260,7 +260,7 @@ onMounted(async () => {
           class="group h-full border-none rounded-md transition-all"
           :class="pickSurfaceClass('bg-background/60 hover:bg-background', 'bg-background/50 hover:bg-background backdrop-blur-xs')"
           content-class="h-full !p-3" role="button" tabindex="0" aria-controls="lnl-finance-popover"
-          title="查看财务汇率详情" :aria-expanded="openFinanceCard" data-finance-trigger
+          aria-label="查看财务汇率详情" :aria-expanded="openFinanceCard" data-finance-trigger
           @click="openFinanceCard = !openFinanceCard"
           @keydown.enter.prevent="openFinanceCard = !openFinanceCard"
           @keydown.space.prevent="openFinanceCard = !openFinanceCard"

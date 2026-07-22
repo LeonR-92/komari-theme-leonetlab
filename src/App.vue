@@ -14,7 +14,7 @@ const appStore = useAppStore()
 const isReady = ref(false)
 // Bump this key only when a release intentionally needs to present the intro
 // again. The value still keeps the animation to once per browser session.
-const INTRO_SESSION_KEY = 'leonetlab:intro:1.2.0'
+const INTRO_SESSION_KEY = 'leonetlab:intro:1.2.1'
 const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches
 function shouldPlayIntro(): boolean {
   if (reducedMotion)
@@ -34,6 +34,8 @@ const introComplete = ref(!introWillPlay)
 const appShellMounted = ref(!introWillPlay)
 const ambientAnimationReady = ref(!introWillPlay)
 const introRevealActive = ref(false)
+const introFinishing = ref(false)
+const loadingCoverRef = ref<InstanceType<typeof LoadingCover> | null>(null)
 const launchStartedAt = performance.now()
 const launchMinimumMs = introWillPlay ? 3200 : 0
 let introFinalizeTimer: ReturnType<typeof window.setTimeout> | null = null
@@ -75,27 +77,23 @@ onMounted(async () => {
   }
   finally {
     await wait(Math.max(0, launchMinimumMs - (performance.now() - launchStartedAt)))
-    finishIntro()
+    if (introWillPlay)
+      await finishIntro()
   }
 })
 
-function finishIntro() {
-  if (!showLaunch.value && introWillPlay)
+async function finishIntro() {
+  if (!introWillPlay || !showLaunch.value || introFinishing.value)
     return
+  introFinishing.value = true
   appShellMounted.value = true
-  introRevealActive.value = true
+  await nextTick()
+  loadingCoverRef.value?.prepareHandoff()
+  await new Promise<void>(resolve => window.requestAnimationFrame(() => window.requestAnimationFrame(() => resolve())))
   showLaunch.value = false
   if (introFinalizeTimer !== null)
     window.clearTimeout(introFinalizeTimer)
-  introFinalizeTimer = window.setTimeout(handleIntroAfterLeave, 700)
-  introRevealTimer = window.setTimeout(() => {
-    introRevealActive.value = false
-  }, 1500)
-  ambientStartTimer = window.setTimeout(() => {
-    window.requestAnimationFrame(() => {
-      ambientAnimationReady.value = true
-    })
-  }, 420)
+  introFinalizeTimer = window.setTimeout(handleIntroAfterLeave, 980)
   try {
     sessionStorage.setItem(INTRO_SESSION_KEY, 'seen')
   }
@@ -114,6 +112,16 @@ function handleIntroAfterLeave() {
   introComplete.value = true
   appStore.introActive = false
   appShellMounted.value = true
+  introRevealActive.value = true
+  introFinishing.value = false
+  introRevealTimer = window.setTimeout(() => {
+    introRevealActive.value = false
+  }, 1500)
+  ambientStartTimer = window.setTimeout(() => {
+    window.requestAnimationFrame(() => {
+      ambientAnimationReady.value = true
+    })
+  }, 260)
 }
 
 onUnmounted(() => {
@@ -132,11 +140,11 @@ onUnmounted(() => {
   <Provider>
     <Background v-if="appShellMounted" :paused="!ambientAnimationReady" />
     <Transition name="lnl-intro-exit" @after-leave="handleIntroAfterLeave">
-      <LoadingCover v-if="showLaunch" @skip="finishIntro" />
+      <LoadingCover v-if="showLaunch" ref="loadingCoverRef" @skip="finishIntro" />
     </Transition>
-    <Header v-if="appShellMounted" :class="{ 'lnl-reveal-header': introRevealActive }" />
+    <Header v-if="appShellMounted" :class="{ 'lnl-reveal-header': introRevealActive, 'lnl-header-staged': showLaunch }" />
     <main v-if="appShellMounted && !appStore.loading" class="flex-1">
-      <div class="lnl-shell max-w-[1680px] mx-auto" :class="{ 'lnl-intro-reveal': introRevealActive }">
+      <div class="lnl-shell max-w-[1680px] mx-auto" :class="{ 'lnl-intro-reveal': introRevealActive, 'lnl-intro-staged': showLaunch }">
         <RouterView v-slot="{ Component }">
           <Transition v-bind="pageTransitionProps">
             <KeepAlive :include="['HomeView']">

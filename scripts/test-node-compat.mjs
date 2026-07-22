@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { calculateTotalDailyCostCNY, DEFAULT_EXCHANGE_RATES } from '../src/utils/financeHelper.ts'
 import { normalizeUuidCollection } from '../src/utils/nodeResponse.ts'
 import { getLatencyToneClass, getLossToneClass, summarizePingSamples } from '../src/utils/pingMetrics.ts'
 import { normalizeRecordCollection } from '../src/utils/recordResponse.ts'
@@ -43,5 +44,11 @@ assert.equal(getLatencyToneClass(150), 'bg-lime-400/80')
 assert.equal(getLossToneClass(0), 'bg-emerald-600/90')
 assert.equal(getLatencyToneClass(201), 'bg-rose-500/80')
 assert.equal(getLossToneClass(10), 'bg-rose-500/80')
+
+const dailyCost = calculateTotalDailyCostCNY([
+  { price: 30, billing_cycle: 30, currency: 'CNY', tags: '' },
+  { price: 0, billing_cycle: 30, currency: 'CNY', tags: '' },
+], DEFAULT_EXCHANGE_RATES)
+assert.equal(dailyCost, 1)
 
 console.log('Komari 1.2.5-fix1/1.2.5-fix2/1.2.7 node, record, and Ping metric compatibility passed.')

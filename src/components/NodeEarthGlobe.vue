@@ -19,6 +19,7 @@ const props = defineProps<{
   variant?: 'dashboard' | 'intro'
   interactive?: boolean
   showStatus?: boolean
+  autoRotate?: boolean
 }>()
 
 const appStore = useAppStore()
@@ -36,7 +37,7 @@ const elementVisible = useElementVisibility(containerRef)
 const shouldRender = computed(() => documentVisibility.value === 'visible'
   && elementVisible.value
   && (props.variant === 'intro' || !appStore.introActive))
-const shouldAutoRotate = computed(() => appStore.earthViewMode !== 'earth-stop')
+const shouldAutoRotate = computed(() => props.autoRotate ?? appStore.earthViewMode !== 'earth-stop')
 const interactive = computed(() => props.interactive ?? props.variant !== 'intro')
 const showStatus = computed(() => props.showStatus ?? props.variant !== 'intro')
 
@@ -316,7 +317,7 @@ function syncRafState() {
   if (!globe)
     return
 
-  if (shouldRender.value && (shouldAutoRotate.value || isPointerDown)) {
+  if ((documentVisibility.value === 'visible' && isPointerDown) || (shouldRender.value && shouldAutoRotate.value)) {
     resumeRaf()
     return
   }
@@ -431,7 +432,12 @@ function onPointerDown(e: PointerEvent) {
   lastPointerX = e.clientX
   lastPointerY = e.clientY
   const target = e.currentTarget as HTMLElement
-  target.setPointerCapture(e.pointerId)
+  try {
+    target.setPointerCapture(e.pointerId)
+  }
+  catch {
+    // Synthetic events and older WebViews may not expose an active pointer to capture.
+  }
   syncRafState()
 }
 function onPointerMove(e: PointerEvent) {
@@ -443,6 +449,11 @@ function onPointerMove(e: PointerEvent) {
   lastPointerY = e.clientY
   targetPhi += deltaX / 200
   targetTheta = clampTheta(targetTheta + deltaY / 300)
+  // Pointer input should remain responsive even when IntersectionObserver has
+  // not yet marked the globe visible. The RAF loop continues auto-rotation.
+  phi = targetPhi
+  theta = targetTheta
+  updateGlobeFrame()
 }
 function onPointerUp(e: PointerEvent) {
   if (!interactive.value)
@@ -468,13 +479,17 @@ const offlineServers = computed(() => totalServers.value - onlineServers.value)
 <template>
   <div
     ref="containerRef" class="node-earth-globe relative aspect-square w-full mx-auto"
-    :class="[{ 'is-dragging': dragging, 'is-intro': variant === 'intro' }, variant === 'intro' ? '' : '-translate-y-6 md:-translate-y-12']"
+    :class="[
+      { 'is-dragging': dragging, 'is-intro': variant === 'intro' },
+      variant === 'intro' ? '' : '-translate-y-6 md:-translate-y-12',
+      interactive ? 'touch-none cursor-grab active:cursor-grabbing' : '',
+    ]"
+    :aria-label="interactive ? '可拖动旋转的全球节点地球' : undefined"
+    @pointerdown="onPointerDown" @pointermove="onPointerMove" @pointerup="onPointerUp" @pointercancel="onPointerUp"
   >
     <canvas
       ref="canvasRef"
-      class="earth-globe-canvas absolute inset-0 w-full h-full select-none"
-      :class="interactive ? 'touch-none cursor-grab active:cursor-grabbing' : 'pointer-events-none'"
-      @pointerdown="onPointerDown" @pointermove="onPointerMove" @pointerup="onPointerUp" @pointercancel="onPointerUp"
+      class="earth-globe-canvas pointer-events-none absolute inset-0 w-full h-full select-none"
     />
 
     <template v-for="cluster in regionClusters" :key="cluster.code">

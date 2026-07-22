@@ -34,6 +34,13 @@ if ('serviceWorker' in navigator) {
       if (sessionStorage.getItem(reloadKey) === 'done')
         return
 
+      // Do not interrupt the first-visit handoff with a second full page load.
+      // The new worker already controls the next natural navigation/reload.
+      if (document.querySelector('.lnl-intro')) {
+        sessionStorage.setItem(reloadKey, 'done')
+        return
+      }
+
       reloadingForUpdate = true
       sessionStorage.setItem(reloadKey, 'done')
       location.reload()
