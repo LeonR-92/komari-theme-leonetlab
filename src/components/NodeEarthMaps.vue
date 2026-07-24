@@ -166,11 +166,11 @@ onMounted(async () => {
         class="absolute top-0 right-0 z-2 text-[10px] text-muted-foreground pointer-events-none flex gap-2 items-center backdrop-blur-lg bg-background/60 rounded px-2 py-0.5"
       >
         <div v-if="onlineServers > 0" class="flex items-center gap-1">
-          <span class="inline-block size-1.5 rounded-full bg-green-600 animate-pulse" />
+          <span class="inline-block size-1.5 rounded-full bg-green-600 animate-pulse motion-reduce:animate-none" />
           <span class="text-green-600">{{ onlineServers }}</span>
         </div>
         <div v-if="offlineServers > 0" class="flex items-center gap-1">
-          <span class="inline-block size-1.5 rounded-full bg-yellow-600 animate-pulse" />
+          <span class="inline-block size-1.5 rounded-full bg-yellow-600 animate-pulse motion-reduce:animate-none" />
           <span class="text-yellow-600">{{ offlineServers }}</span>
         </div>
       </div>

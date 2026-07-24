@@ -45,6 +45,10 @@ const DEFAULT_BYTE_DECIMALS: ByteDecimalsConfig = {
  * @returns 格式化后的字符串，如 "1.5 GB"
  */
 export function formatBytes(bytes: number, decimals = 1): string {
+  // 非法输入（NaN/Infinity/负数）直接返回占位，避免出现 "NaN PB"
+  if (!Number.isFinite(bytes) || bytes < 0)
+    return '0 B'
+
   if (bytes === 0)
     return '0 B'
 
@@ -62,6 +66,10 @@ export function formatBytes(bytes: number, decimals = 1): string {
  */
 export function formatBytesWithConfig(bytes: number, config?: ByteDecimalsConfig): string {
   const mergedConfig = { ...DEFAULT_BYTE_DECIMALS, ...config }
+
+  // 非法输入（NaN/Infinity/负数）按 0 处理，避免出现 "NaN PB"
+  if (!Number.isFinite(bytes) || bytes < 0)
+    bytes = 0
 
   if (bytes === 0) {
     // 0 字节时，检查 B 是否被禁用
@@ -105,6 +113,10 @@ export function formatBytesWithConfig(bytes: number, config?: ByteDecimalsConfig
  */
 export function formatBytesSplit(bytes: number, config?: ByteDecimalsConfig): { value: string, unit: string } {
   const mergedConfig = { ...DEFAULT_BYTE_DECIMALS, ...config }
+
+  // 非法输入（NaN/Infinity/负数）按 0 处理，避免出现 "NaN PB"
+  if (!Number.isFinite(bytes) || bytes < 0)
+    bytes = 0
 
   if (bytes === 0) {
     if (mergedConfig.B === -1)
@@ -276,7 +288,7 @@ export function getStatus(percentage: number): 'success' | 'warning' | 'error' {
  * @param timestamp 时间戳字符串或 Date 对象
  * @returns 格式化后的字符串，如 "2024-01-15 14:30:00"
  */
-export function formatDateTime(timestamp: string | Date | undefined, format = 'YYYY-MM-DD HH:mm:ss'): string {
+export function formatDateTime(timestamp: string | Date | null | undefined, format = 'YYYY-MM-DD HH:mm:ss'): string {
   if (!timestamp)
     return '-'
 

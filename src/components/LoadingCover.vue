@@ -21,11 +21,22 @@ const onlineNodes = computed(() => nodesStore.nodes.filter(node => node.online).
 const offlineNodes = computed(() => Math.max(0, totalNodes.value - onlineNodes.value))
 const rootRef = ref<HTMLElement>()
 const globeSceneRef = ref<HTMLElement>()
+// is-handoff-ready 必须走响应式 class 绑定：App 侧 fallthrough :class 变化会
+// 触发 Vue 重算整个 class 属性，命令式 classList.add 的类会被覆盖丢失。
+const handoffReady = ref(false)
+
+function queryHandoffTarget(): HTMLElement | null {
+  return document.querySelector<HTMLElement>('.lnl-summary .node-earth-globe:not(.is-intro)')
+}
+
+// 交接起点矩形只在 prepareHandoff 时冻结一次；交接中的窗口 resize 只按
+// 新目标矩形更新 CSS 变量，避免重新锚定起点造成瞬跳。
+let handoffSourceRect: { left: number, top: number, width: number, height: number } | null = null
 
 function prepareHandoff(): boolean {
   const root = rootRef.value
   const source = globeSceneRef.value
-  const target = document.querySelector<HTMLElement>('.lnl-summary .node-earth-globe:not(.is-intro)')
+  const target = queryHandoffTarget()
   if (!root || !source || !target)
     return false
 
@@ -34,18 +45,43 @@ function prepareHandoff(): boolean {
   if (sourceRect.width <= 0 || targetRect.width <= 0)
     return false
 
-  root.style.setProperty('--intro-handoff-x', `${targetRect.left - sourceRect.left}px`)
-  root.style.setProperty('--intro-handoff-y', `${targetRect.top - sourceRect.top}px`)
-  root.style.setProperty('--intro-handoff-scale', `${targetRect.width / sourceRect.width}`)
+  handoffSourceRect = {
+    left: sourceRect.left,
+    top: sourceRect.top,
+    width: sourceRect.width,
+    height: sourceRect.height,
+  }
+  applyHandoffTarget(root, targetRect)
   root.style.setProperty('--intro-handoff-source-left', `${sourceRect.left}px`)
   root.style.setProperty('--intro-handoff-source-top', `${sourceRect.top}px`)
   root.style.setProperty('--intro-handoff-source-width', `${sourceRect.width}px`)
   root.style.setProperty('--intro-handoff-source-height', `${sourceRect.height}px`)
-  root.classList.add('is-handoff-ready')
+  handoffReady.value = true
   return true
 }
 
-defineExpose({ prepareHandoff })
+function applyHandoffTarget(root: HTMLElement, targetRect: DOMRect) {
+  if (!handoffSourceRect)
+    return
+  root.style.setProperty('--intro-handoff-x', `${targetRect.left - handoffSourceRect.left}px`)
+  root.style.setProperty('--intro-handoff-y', `${targetRect.top - handoffSourceRect.top}px`)
+  root.style.setProperty('--intro-handoff-scale', `${targetRect.width / handoffSourceRect.width}`)
+}
+
+// 交接飞行期间窗口尺寸变化时重新测量目标位置，CSS 过渡会平滑改向新终点。
+function remeasureHandoff(): boolean {
+  const root = rootRef.value
+  const target = queryHandoffTarget()
+  if (!root || !target || !handoffSourceRect || !handoffReady.value)
+    return false
+  const targetRect = target.getBoundingClientRect()
+  if (targetRect.width <= 0)
+    return false
+  applyHandoffTarget(root, targetRect)
+  return true
+}
+
+defineExpose({ prepareHandoff, remeasureHandoff, handoffReady })
 
 function handleLogoError(event: Event) {
   const image = event.currentTarget as HTMLImageElement
@@ -72,7 +108,7 @@ onUnmounted(() => timers.forEach(timer => window.clearTimeout(timer)))
   <div
     ref="rootRef"
     class="lnl-intro"
-    :class="appStore.isDark ? 'lnl-intro-dark' : 'lnl-intro-light'"
+    :class="[appStore.isDark ? 'lnl-intro-dark' : 'lnl-intro-light', { 'is-handoff-ready': handoffReady }]"
     role="status"
     aria-live="polite"
     aria-label="正在连接监控数据"

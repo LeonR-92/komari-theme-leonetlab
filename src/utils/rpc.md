@@ -121,19 +121,13 @@ const info = await rpc.getPublicInfo()
 const { version, hash } = await rpc.getBackendVersion()
 ```
 
-#### `getNodesLatestStatus(uuid?: string, uuids?: string[]): Promise<Record<string, NodeStatus>>`
+#### `getNodesLatestStatus(): Promise<Record<string, NodeStatus>>`
 
-获取节点最新运行状态。
+获取所有节点的最新运行状态。当前实现不接受 uuid/uuids 过滤参数，始终返回全量 UUID 键状态映射。
 
 ```typescript
 // 获取所有节点状态
 const allStatus = await rpc.getNodesLatestStatus()
-
-// 获取单个节点状态
-const status = await rpc.getNodesLatestStatus('uuid-xxx')
-
-// 获取多个节点状态
-const multiStatus = await rpc.getNodesLatestStatus(undefined, ['uuid-1', 'uuid-2'])
 ```
 
 #### `getMe(): Promise<MeInfo>`
@@ -227,7 +221,7 @@ interface Client {
   billing_cycle: number
   auto_renewal: boolean
   currency: string
-  expired_at: string
+  expired_at: string | null // 未设置过期时间时为 null
   group: string
   tags: string
   hidden: boolean

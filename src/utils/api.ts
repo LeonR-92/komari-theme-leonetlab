@@ -28,7 +28,7 @@ export interface MeInfo {
 
 /** 公开站点属性 */
 export interface PublicSettings {
-  allow_cors: boolean
+  cors_origin_check_enabled: boolean
   custom_body: string
   custom_head: string
   description: string
@@ -413,6 +413,9 @@ export class RealtimeWebSocket {
   private listeners: Set<(data: WebSocketRealtimeResponse) => void> = new Set()
   private errorListeners: Set<(error: Event) => void> = new Set()
   private isOpen = false
+  /** 手动关闭标记：close() 之后不再自动重连 */
+  private manuallyClosed = false
+  private reconnectTimer: ReturnType<typeof setTimeout> | null = null
 
   constructor(options: {
     baseUrl?: string
@@ -429,6 +432,8 @@ export class RealtimeWebSocket {
    * 连接 WebSocket
    */
   connect(): Promise<void> {
+    // 显式重新连接时解除手动关闭标记，恢复自动重连行为
+    this.manuallyClosed = false
     return new Promise((resolve, reject) => {
       try {
         this.ws = new WebSocket(this.url)
@@ -460,7 +465,10 @@ export class RealtimeWebSocket {
 
         this.ws.onclose = () => {
           this.isOpen = false
-          this.attemptReconnect()
+          // 手动关闭（close()）后不再自动重连
+          if (!this.manuallyClosed) {
+            this.attemptReconnect()
+          }
         }
       }
       catch (error) {
@@ -475,7 +483,8 @@ export class RealtimeWebSocket {
   private attemptReconnect(): void {
     if (this.reconnectAttempts < this.maxReconnectAttempts) {
       this.reconnectAttempts++
-      setTimeout(() => {
+      this.reconnectTimer = setTimeout(() => {
+        this.reconnectTimer = null
         this.connect().catch(() => {
           // Ignore reconnect errors
         })
@@ -516,6 +525,11 @@ export class RealtimeWebSocket {
    * 关闭连接
    */
   close(): void {
+    this.manuallyClosed = true
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer)
+      this.reconnectTimer = null
+    }
     if (this.ws) {
       this.ws.close()
       this.ws = null

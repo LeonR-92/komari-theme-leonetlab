@@ -38,7 +38,11 @@ const expiryRotationIndex = ref(0)
 const EXPIRY_WARNING_MS = 3 * 24 * 60 * 60 * 1000
 
 const expiringNodes = computed(() => nodesStore.nodes
-  .map(node => ({ node, remainingMs: new Date(node.expired_at).getTime() - now.value.getTime() }))
+  .map(node => ({
+    node,
+    // expired_at 未设置（null/空）时记为 NaN，下方过滤会排除
+    remainingMs: node.expired_at ? new Date(node.expired_at).getTime() - now.value.getTime() : Number.NaN,
+  }))
   .filter(item => Number.isFinite(item.remainingMs) && item.remainingMs > 0 && item.remainingMs <= EXPIRY_WARNING_MS)
   .sort((a, b) => a.remainingMs - b.remainingMs))
 
@@ -292,6 +296,7 @@ function getNodeItemTransitionStyle(index: number): Record<string, string> {
             <div class="ml-auto search flex gap-2 items-center pointer-events-auto">
               <Button
                 variant="outline" size="icon" aria-label="卡片视图"
+                :aria-pressed="appStore.nodeViewMode === 'card'"
                 class="h-8 w-8 border-none shadow-none rounded-md"
                 :class="[pickSurfaceClass('bg-background hover:bg-background/95', 'bg-background/50 hover:bg-background/60 backdrop-blur-xs'), appStore.nodeViewMode === 'card' ? '!text-emerald-800 dark:!text-emerald-300 !bg-background' : '']"
                 @click="appStore.nodeViewMode = 'card'"
@@ -300,6 +305,7 @@ function getNodeItemTransitionStyle(index: number): Record<string, string> {
               </Button>
               <Button
                 variant="outline" size="icon" aria-label="列表视图"
+                :aria-pressed="appStore.nodeViewMode === 'list'"
                 class="h-8 w-8 border-none shadow-none rounded-md"
                 :class="[pickSurfaceClass('bg-background hover:bg-background/95', 'bg-background/50 hover:bg-background/60 backdrop-blur-xs'), appStore.nodeViewMode === 'list' ? '!text-emerald-800 dark:!text-emerald-300 !bg-background' : '']"
                 @click="appStore.nodeViewMode = 'list'"

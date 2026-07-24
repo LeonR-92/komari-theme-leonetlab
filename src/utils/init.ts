@@ -41,6 +41,8 @@ class InitManager {
   private useWebSocket: boolean | null = null // 根据主题配置决定
   private wsCloseUnsubscribe: (() => void) | null = null
   private wsErrorUnsubscribe: (() => void) | null = null
+  /** POST 轮询连续失败次数（达到 postFailureThreshold 才亮错误） */
+  private consecutivePollFailures = 0
   constructor(config: InitConfig = {}) {
     this.config = { ...DEFAULT_CONFIG, ...config }
     this.rpc = getSharedRpc()
@@ -116,7 +118,8 @@ class InitManager {
         this.appStore.updateLoginState(false)
         this.appStore.loading = false
         location.href = '/admin'
-        return
+        // 跳转前必须中止后续初始化，避免继续发送 fetchPublicSettings 等请求
+        throw new Error('[InitManager] Initialization aborted: redirecting to /admin')
       }
       console.error('[InitManager] Health check failed:', error)
       this.appStore.connectionError = true
@@ -374,7 +377,8 @@ class InitManager {
       // 更新节点状态
       this.nodesStore.updateNodeStatuses(statusesResult)
 
-      // 连接恢复正常，重置错误状态
+      // 连接恢复正常，清零连续失败计数并重置错误状态
+      this.consecutivePollFailures = 0
       this.appStore.connectionError = false
     }
     catch (error) {
@@ -385,8 +389,11 @@ class InitManager {
         console.error('[InitManager] Poll error:', error)
       }
 
-      // 一次失败就显示错误
-      this.appStore.connectionError = true
+      // 连续失败达到阈值才亮错误，避免单次抖动打断界面
+      this.consecutivePollFailures += 1
+      if (this.consecutivePollFailures >= this.config.postFailureThreshold) {
+        this.appStore.connectionError = true
+      }
     }
     finally {
       this.isPolling = false

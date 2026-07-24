@@ -9,6 +9,7 @@
 - 已按 Komari `1.2.5-fix1` 的公开主题与 RPC 结构开发，并兼容该版本 `common:getNodes` 返回的节点数组。
 - Komari `1.2.5-fix2` 已把 `common:getNodes` 修正为 UUID 键控对象；主题继续通过同一兼容层同时接受 fix1 数组与 fix2/1.2.7 对象。
 - 对 Komari `1.2.7` 保持兼容；其新增指标 RPC 可用时用于详情图表，不可用时回退到 `common:getRecords`。访客审计 RPC 是可选能力，本主题不依赖它。
+- 官方 `1.2.6` 与 `1.3.0` 稳定版已发布；经接口比对，主题使用的 `common:*` 与 `public:queryMetrics`/`public:getPingMetricStats` 在 `1.2.6`/`1.3.x` 均无变化，实际兼容。指标存储未初始化返回的 `-32603` 也会安全回退到 `common:getRecords`。
 - 主题配置使用 `managed` 类型；服务器 1.0.5 及以上可用。
 
 ## 构建
@@ -23,7 +24,7 @@ bun run build
 构建完成后会生成：
 
 - `dist/`
-- `komari-theme-leonetlab-build-v1.2.5.zip`
+- `komari-theme-leonetlab-build-v1.2.6.zip`
 
 兼容性与构建检查：
 
@@ -33,6 +34,14 @@ npm run smoke:1.2.5
 ```
 
 `smoke:1.2.5` 会启动本地模拟接口并用无界面 Chrome/Edge 验证 1.2.5-fix1 数组节点响应、fix2/1.2.7 对象兼容、历史记录 RPC 回退、详情分区和 Ping 数据能够实际渲染；同时检查动态/静态地球模式、首访地球真实移动轨迹、国旗在明暗切换与拖动期间不丢失、Ping 内容动效、移动端 Logo 与访客卡片边界。
+
+## 1.2.6 更新摘要
+
+- 重做首访 intro → 首页地球仪交接的朝向连续性：共享朝向从组件实例作用域移入模块作用域，dashboard 地球仪在交接完成瞬间精确继承 intro 最后一帧的 phi/theta（回归断言误差 < 0.01 rad）并继续自转，不再瞬跳回默认角度。
+- 首访交接飞行期间监听窗口 resize，按 rAF 节流重新测量 FLIP 目标位置；跳过按钮仍会立即触发并完成交接。
+- 减少动态效果偏好补全：地球仪在该偏好下不再自动旋转（保留拖拽），节点卡片/列表的 ping 波纹、地球与地图的状态脉冲点、页头状态轮换等无限动画全部静止。
+- Ping 图表在官方指标存储未初始化（`-32603` "metric store not initialized"）时回退到 `common:getRecords`，其它内部错误仍原样上抛。
+- 兼容范围扩展到官方 `1.2.6` 与 `1.3.x` 稳定版；首访会话标记升级为 1.2.6，老用户更新后会看到一次新 intro。
 
 ## 1.2.5 更新摘要
 

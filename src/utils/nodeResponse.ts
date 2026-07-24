@@ -1,7 +1,7 @@
 /**
- * Komari changed `common:getNodes` from an array in 1.2.5 to a UUID-keyed
- * object in later releases. Keep that version difference at the data boundary
- * so the rest of the theme always works with one stable shape.
+ * Komari `common:getNodes` 返回形状历史：原始 1.2.5 已是 UUID 键对象，
+ * 1.2.5-fix1 回归为数组，1.2.5-fix2 起恢复 UUID 键对象。
+ * 在数据边界统一归一化为一种稳定形状，主题其余部分无需关心版本差异。
  */
 export type UuidCollection<T> = T[] | Record<string, T>
 

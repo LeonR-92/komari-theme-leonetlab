@@ -4,7 +4,7 @@ import type { StatusRecord } from '@/utils/rpc'
 import { Icon } from '@iconify/vue'
 import { useIntervalFn } from '@vueuse/core'
 import dayjs from 'dayjs'
-import { computed, onMounted, ref, shallowRef, watch } from 'vue'
+import { computed, onMounted, onUnmounted, ref, shallowRef, watch } from 'vue'
 import VChart from 'vue-echarts'
 import { CardX } from '@/components/ui/card-x'
 import { Empty } from '@/components/ui/empty'
@@ -162,6 +162,8 @@ const remoteData = shallowRef<StatusRecord[]>([])
 const loading = ref(false)
 const isInitialLoad = ref(true) // 是否为首次加载（用于控制实时模式下的 NSpin 显示）
 const error = ref<string | null>(null)
+/** 单调递增请求序号：过期响应直接丢弃，防止慢历史响应覆盖新数据 */
+let fetchRequestId = 0
 
 // 节点信息
 const nodeInfo = computed(() => nodesStore.nodesByUuid.get(props.uuid))
@@ -205,6 +207,8 @@ async function fetchRecentData() {
   if (!props.uuid)
     return
 
+  const requestId = ++fetchRequestId
+
   // 只在首次加载时显示 loading
   if (isInitialLoad.value) {
     loading.value = true
@@ -213,18 +217,24 @@ async function fetchRecentData() {
 
   try {
     const result = await rpc.getNodeRecentStatus(props.uuid)
+    if (requestId !== fetchRequestId)
+      return
     const records = result?.records || []
     records.sort((a, b) => dayjs(a.time).valueOf() - dayjs(b.time).valueOf())
     const maxLength = 150
     remoteData.value = records.slice(-maxLength)
   }
   catch (err) {
+    if (requestId !== fetchRequestId)
+      return
     error.value = err instanceof Error ? err.message : '获取数据失败'
-    remoteData.value = []
+    // 实时模式单次轮询失败保留旧数据，避免图表被清空
   }
   finally {
-    loading.value = false
-    isInitialLoad.value = false
+    if (requestId === fetchRequestId) {
+      loading.value = false
+      isInitialLoad.value = false
+    }
   }
 }
 
@@ -232,6 +242,7 @@ async function fetchHistoryData() {
   if (!props.uuid)
     return
 
+  const requestId = ++fetchRequestId
   const hours = selectedHours.value || 4
 
   loading.value = true
@@ -244,6 +255,8 @@ async function fetchHistoryData() {
       hours,
       maxCount: 4000,
     })
+    if (requestId !== fetchRequestId)
+      return
     const records = normalizeRecordCollection(result?.records, props.uuid)
 
     // 按时间排序
@@ -254,11 +267,15 @@ async function fetchHistoryData() {
     remoteData.value = records
   }
   catch (err) {
+    if (requestId !== fetchRequestId)
+      return
     error.value = err instanceof Error ? err.message : '获取数据失败'
     remoteData.value = []
   }
   finally {
-    loading.value = false
+    if (requestId === fetchRequestId) {
+      loading.value = false
+    }
   }
 }
 
@@ -848,6 +865,11 @@ watch(() => props.uuid, () => {
 
 onMounted(() => {
   fetchData()
+})
+
+onUnmounted(() => {
+  // 卸载后丢弃仍在途的响应
+  fetchRequestId += 1
 })
 </script>
 

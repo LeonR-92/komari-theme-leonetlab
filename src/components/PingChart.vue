@@ -198,6 +198,8 @@ const PING_DIALOG_REFRESH_INTERVAL_MS = 30_000
 
 // 任务选择
 const selectedTaskIds = ref<number[]>([])
+/** 用户手动清空选择标记：置位后 30 秒后台轮询不再自动恢复全选 */
+const userClearedSelection = ref(false)
 const cutPeak = ref(false)
 const showDelay = ref(true)
 const showLoss = ref(true)
@@ -221,9 +223,20 @@ function isMethodNotFoundError(err: unknown): boolean {
   return err instanceof RpcError && err.code === -32601
 }
 
+// 官方 metric store 未初始化错误消息的识别模式（模块作用域，避免重复编译）
+const METRIC_STORE_ERROR_PATTERN = /metric store/i
+
 function canFallbackToLegacyRecords(err: unknown): boolean {
-  return isMethodNotFoundError(err)
-    || (err instanceof RpcError && err.code === -32602)
+  if (isMethodNotFoundError(err))
+    return true
+  if (!(err instanceof RpcError))
+    return false
+  if (err.code === -32602)
+    return true
+  // 官方 public:queryMetrics 在 metric store 初始化失败时返回
+  // InternalError(-32603) "metric store not initialized"；仅该场景回退到
+  // common:getRecords，其它 -32603 内部错误继续上抛，不静默吞掉。
+  return err.code === -32603 && METRIC_STORE_ERROR_PATTERN.test(err.message)
 }
 
 function getMetricTaskId(series: MetricSeries, point: MetricPoint): number | null {
@@ -365,7 +378,8 @@ async function fetchRecords() {
     remoteLossData.value = result.lossPoints
     tasks.value = result.tasks
 
-    if (tasks.value.length > 0 && selectedTaskIds.value.length === 0) {
+    // 仅在用户未手动清空时自动全选；后台轮询不得撤销「清空」操作
+    if (tasks.value.length > 0 && selectedTaskIds.value.length === 0 && !userClearedSelection.value) {
       selectedTaskIds.value = tasks.value.map(t => t.id)
     }
   }
@@ -563,15 +577,20 @@ function toggleTask(taskId: number) {
     selectedTaskIds.value = selectedTaskIds.value.filter(id => id !== taskId)
   }
   else {
+    // 重新勾选任意任务视为撤销「清空」意图
+    userClearedSelection.value = false
     selectedTaskIds.value = [...selectedTaskIds.value, taskId]
   }
 }
 
 function showAllTasks() {
+  userClearedSelection.value = false
   selectedTaskIds.value = tasks.value.map(t => t.id)
 }
 
 function hideAllTasks() {
+  // 记录用户手动清空意图，阻止后台轮询自动恢复全选
+  userClearedSelection.value = true
   selectedTaskIds.value = []
 }
 
@@ -753,6 +772,8 @@ const pingChartOption = computed(() => {
 // ==================== 生命周期 ====================
 
 watch(selectedView, () => {
+  // 切换时间窗：清除手动清空标记并重新自动全选
+  userClearedSelection.value = false
   selectedTaskIds.value = []
   fetchRecords()
 }, { immediate: true })
@@ -761,6 +782,8 @@ watch(() => props.uuid, () => {
   remoteData.value = []
   remoteLossData.value = []
   tasks.value = []
+  // 切换节点：清除手动清空标记并重新自动全选
+  userClearedSelection.value = false
   selectedTaskIds.value = []
   fetchRecords()
 })

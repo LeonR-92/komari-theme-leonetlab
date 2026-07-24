@@ -167,11 +167,11 @@ const showEarth = computed(() => appStore.earthViewMode === 'earth' || appStore.
 const showMaps = computed(() => appStore.earthViewMode === 'maps')
 const showVisualPanel = computed(() => showEarth.value || showMaps.value)
 const wrapperClass = computed(() => showVisualPanel.value
-  ? 'p-4 grid grid-cols-12 grid-rows-1 gap-2 h-auto md:h-58'
+  ? 'p-4 grid grid-cols-12 grid-rows-1 gap-2 h-auto lg:h-58'
   : 'p-4 grid grid-cols-1 gap-2 h-auto')
 const cardGridClass = computed(() => showVisualPanel.value
-  ? 'h-42 -mt-42 col-span-12 row-start-3 z-9 grid grid-cols-12 grid-rows-2 gap-2 md:mt-0 md:h-auto md:col-span-6 md:row-start-1'
-  : 'col-span-1 grid grid-cols-3 md:grid-cols-6 gap-2')
+  ? 'h-42 -mt-42 col-span-12 row-start-3 z-9 grid grid-cols-12 grid-rows-2 gap-2 lg:mt-0 lg:h-auto lg:col-span-6 lg:row-start-1'
+  : 'col-span-1 grid grid-cols-3 lg:grid-cols-6 gap-2')
 
 onMounted(async () => {
   exchangeRateBaseCurrency.value = financeHelper.getStoredFinanceCurrency()
@@ -184,8 +184,8 @@ onMounted(async () => {
 
 <template>
   <div class="lnl-summary" :class="wrapperClass">
-    <NodeEarthGlobe v-if="showEarth" :nodes="globeNodes" :interactive="true" class="col-span-12 col-start-1 row-start-1 md:col-span-6 md:col-start-7" />
-    <NodeEarthMaps v-else-if="showMaps" :nodes="globeNodes" class="col-span-12 col-start-1 row-start-1 md:col-span-6 md:col-start-7" />
+    <NodeEarthGlobe v-if="showEarth" :nodes="globeNodes" :interactive="true" class="col-span-12 col-start-1 row-start-1 lg:col-span-6 lg:col-start-7" />
+    <NodeEarthMaps v-else-if="showMaps" :nodes="globeNodes" class="col-span-12 col-start-1 row-start-1 lg:col-span-6 lg:col-start-7" />
 
     <div class="lnl-summary-metrics" :class="cardGridClass">
       <CardX
@@ -193,7 +193,7 @@ onMounted(async () => {
         class="group h-full border-none rounded-md transition-all"
         :class="[
           pickSurfaceClass('bg-background/60 hover:bg-background', 'bg-background/50 hover:bg-background backdrop-blur-xs'),
-          showVisualPanel ? 'col-span-4 row-span-1 col-start-1 row-start-1' : 'col-span-1 row-start-1 col-start-1 min-h-18 md:min-h-24 md:row-start-1 md:col-start-1',
+          showVisualPanel ? 'col-span-4 row-span-1 col-start-1 row-start-1' : 'col-span-1 row-start-1 col-start-1 min-h-18 lg:min-h-24 lg:row-start-1 lg:col-start-1',
         ]"
         content-class="h-full !p-3"
       >
@@ -207,7 +207,7 @@ onMounted(async () => {
           </div>
           <Transition v-bind="metricSwitchTransitionProps">
             <div
-              :key="`memory-${summaryTransitionKey}`" class="flex items-baseline gap-1 min-w-0"
+              :key="`memory-${summaryTransitionKey}`" class="flex flex-wrap items-baseline gap-1 min-w-0"
               :style="getMetricSwitchStyle(0)"
             >
               <span class="text-md md:text-2xl font-bold leading-none tracking-tight">
@@ -225,7 +225,7 @@ onMounted(async () => {
         class="group h-full border-none rounded-md transition-all"
         :class="[
           pickSurfaceClass('bg-background/60 hover:bg-background', 'bg-background/50 hover:bg-background backdrop-blur-xs'),
-          showVisualPanel ? 'col-span-4 row-span-1 col-start-1 row-start-2' : 'col-span-1 row-start-2 col-start-1 min-h-18 md:min-h-24 md:row-start-1 md:col-start-2',
+          showVisualPanel ? 'col-span-4 row-span-1 col-start-1 row-start-2' : 'col-span-1 row-start-2 col-start-1 min-h-18 lg:min-h-24 lg:row-start-1 lg:col-start-2',
         ]"
         content-class="h-full !p-3"
       >
@@ -239,7 +239,7 @@ onMounted(async () => {
           </div>
           <Transition v-bind="metricSwitchTransitionProps">
             <div
-              :key="`disk-${summaryTransitionKey}`" class="flex items-baseline gap-1 min-w-0"
+              :key="`disk-${summaryTransitionKey}`" class="flex flex-wrap items-baseline gap-1 min-w-0"
               :style="getMetricSwitchStyle(1)"
             >
               <span class="text-md md:text-2xl font-bold leading-none tracking-tight">{{ formattedDiskUsed.value
@@ -253,7 +253,7 @@ onMounted(async () => {
       </CardX>
       <div
         class="relative w-full h-full"
-        :class="showVisualPanel ? 'col-span-4 row-span-1 col-start-5 row-start-1' : 'col-span-1 row-start-1 col-start-2 min-h-18 md:min-h-24 md:row-start-1 md:col-start-3'"
+        :class="showVisualPanel ? 'col-span-4 row-span-1 col-start-5 row-start-1' : 'col-span-1 row-start-1 col-start-2 min-h-18 lg:min-h-24 lg:row-start-1 lg:col-start-3'"
       >
         <CardX
           hoverable
@@ -276,7 +276,7 @@ onMounted(async () => {
             </div>
             <Transition v-bind="metricSwitchTransitionProps">
               <div
-                :key="`remaining-value-${summaryTransitionKey}`" class="flex items-baseline gap-1 min-w-0"
+                :key="`remaining-value-${summaryTransitionKey}`" class="flex flex-wrap items-baseline gap-1 min-w-0"
                 :style="getMetricSwitchStyle(2)"
               >
                 <span class="text-md md:text-2xl font-bold leading-none tracking-tight">
@@ -363,7 +363,7 @@ onMounted(async () => {
         class="group h-full border-none rounded-md transition-all"
         :class="[
           pickSurfaceClass('bg-background/60 hover:bg-background', 'bg-background/50 hover:bg-background backdrop-blur-xs'),
-          showVisualPanel ? 'col-span-4 row-span-1 col-start-5 row-start-2' : 'col-span-1 row-start-2 col-start-2 min-h-18 md:min-h-24 md:row-start-1 md:col-start-4',
+          showVisualPanel ? 'col-span-4 row-span-1 col-start-5 row-start-2' : 'col-span-1 row-start-2 col-start-2 min-h-18 lg:min-h-24 lg:row-start-1 lg:col-start-4',
         ]"
         content-class="h-full !p-3"
       >
@@ -402,7 +402,7 @@ onMounted(async () => {
         class="group h-full border-none rounded-md transition-all"
         :class="[
           pickSurfaceClass('bg-background/60 hover:bg-background', 'bg-background/50 hover:bg-background backdrop-blur-xs'),
-          showVisualPanel ? 'col-span-4 row-span-1 col-start-9 row-start-1' : 'col-span-1 row-start-1 col-start-3 min-h-18 md:min-h-24 md:row-start-1 md:col-start-5',
+          showVisualPanel ? 'col-span-4 row-span-1 col-start-9 row-start-1' : 'col-span-1 row-start-1 col-start-3 min-h-18 lg:min-h-24 lg:row-start-1 lg:col-start-5',
         ]"
         content-class="h-full !p-3"
       >
@@ -431,7 +431,7 @@ onMounted(async () => {
         class="group h-full border-none rounded-md transition-all"
         :class="[
           pickSurfaceClass('bg-background/60 hover:bg-background', 'bg-background/50 hover:bg-background backdrop-blur-xs'),
-          showVisualPanel ? 'col-span-4 row-span-1 col-start-9 row-start-2' : 'col-span-1 row-start-2 col-start-3 min-h-18 md:min-h-24 md:row-start-1 md:col-start-6',
+          showVisualPanel ? 'col-span-4 row-span-1 col-start-9 row-start-2' : 'col-span-1 row-start-2 col-start-3 min-h-18 lg:min-h-24 lg:row-start-1 lg:col-start-6',
         ]"
         content-class="h-full !p-3"
       >

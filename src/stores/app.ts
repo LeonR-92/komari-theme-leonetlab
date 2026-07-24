@@ -289,6 +289,10 @@ const useAppStore = defineStore('app', () => {
   })
 
   // 当 publicSettings 加载后，如果 localStorage 没有保存过视图模式或值为非法值，使用默认值
+  // 竞态审计结论（2026-07）：不存在水合覆盖风险。useStorageAsync 基于同步的
+  // localStorage 读取，在 store 创建后的微任务内即完成水合；而 publicSettings
+  // 只能在 init() 的网络请求完成后才被赋值，远晚于水合。immediate watcher 首次
+  // 触发时 settings 为 undefined，不会写回默认值覆盖用户偏好。
   watch(publicSettings, (settings) => {
     if (settings && !isValidViewMode(storedViewMode.value)) {
       // 触发 computed setter，会自动保存到 localStorage

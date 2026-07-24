@@ -15,7 +15,8 @@
   --secondary: oklch(0.925 0.016 164);
   --secondary-foreground: oklch(0.25 0.035 164);
   --muted: oklch(0.925 0.016 164);
-  --muted-foreground: oklch(0.48 0.025 164);
+  /* 0.45 保证浅色模式次级文字对比度 ≥4.5:1（oklch 公式复核：on background 6.66:1） */
+  --muted-foreground: oklch(0.45 0.025 164);
   --accent: oklch(0.9 0.035 160);
   --accent-foreground: oklch(0.22 0.04 164);
   --destructive: oklch(0.56 0.2 27);
@@ -745,6 +746,17 @@ textarea {
   }
 }
 
+/* 761–1024px 中间断点：状态条会挤压左列到约 300px，提前堆叠避免拥挤 */
+@media (max-width: 1024px) {
+  .lnl-dashboard-head {
+    grid-template-columns: 1fr;
+    gap: 24px;
+  }
+  .lnl-dashboard-status {
+    width: 100%;
+  }
+}
+
 @media (max-width: 760px) {
   .lnl-header-inner {
     min-height: 64px;
@@ -869,6 +881,15 @@ textarea {
   }
   .lnl-page-enter-from,
   .lnl-page-leave-to {
+    opacity: 1;
+    transform: none;
+  }
+  .status-rotate-enter-active,
+  .status-rotate-leave-active {
+    transition: none;
+  }
+  .status-rotate-enter-from,
+  .status-rotate-leave-to {
     opacity: 1;
     transform: none;
   }

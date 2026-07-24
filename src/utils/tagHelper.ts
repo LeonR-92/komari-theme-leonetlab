@@ -3,8 +3,8 @@ import dayjs from 'dayjs'
 /** 计费周期类型 */
 export type BillingCycleType = 'monthly' | 'quarterly' | 'semi_annual' | 'annual' | 'biennial' | 'triennial' | 'quinquennial' | 'once' | 'custom'
 
-/** 过期状态类型 */
-export type ExpireStatus = 'expired' | 'critical' | 'warning' | 'normal' | 'long_term'
+/** 过期状态类型；'none' 表示未设置过期时间（后端 ExpiredAt 未设置时 JSON 为 null） */
+export type ExpireStatus = 'none' | 'expired' | 'critical' | 'warning' | 'normal' | 'long_term'
 
 /** 支持的标签颜色 */
 export type TagColor
@@ -160,18 +160,18 @@ export function getBillingCycleText(billingCycle: number, lang: 'zh-CN' | 'en-US
 
 /**
  * 计算距离过期的天数
- * @param expiredAt 过期时间（字符串或时间戳）
- * @returns 距离过期的天数，负数表示已过期
+ * @param expiredAt 过期时间（字符串或时间戳），null/空串/非法日期表示未设置
+ * @returns 距离过期的天数，负数表示已过期；未设置时返回 null
  */
-export function getDaysUntilExpired(expiredAt: string | number | undefined): number {
-  if (!expiredAt)
-    return 0
+export function getDaysUntilExpired(expiredAt: string | number | null | undefined): number | null {
+  if (expiredAt === null || expiredAt === undefined || expiredAt === '')
+    return null
 
   const expiredDate = dayjs(expiredAt)
   const now = dayjs()
 
   if (!expiredDate.isValid())
-    return 0
+    return null
 
   return Math.round(expiredDate.diff(now, 'day', true))
 }
@@ -179,11 +179,13 @@ export function getDaysUntilExpired(expiredAt: string | number | undefined): num
 /**
  * 获取过期状态
  * @param expiredAt 过期时间
- * @returns 过期状态
+ * @returns 过期状态；未设置过期时间时返回 'none'，不应渲染任何过期标签
  */
-export function getExpireStatus(expiredAt: string | number | undefined): ExpireStatus {
+export function getExpireStatus(expiredAt: string | number | null | undefined): ExpireStatus {
   const days = getDaysUntilExpired(expiredAt)
 
+  if (days === null)
+    return 'none'
   if (days <= 0)
     return 'expired'
   if (days < EXPIRE_THRESHOLDS.critical)
@@ -200,9 +202,11 @@ export function getExpireStatus(expiredAt: string | number | undefined): ExpireS
  * @param expiredAt 过期时间
  * @returns Tailwind 文本颜色类
  */
-export function getExpireTextClass(expiredAt: string | number | undefined): string {
+export function getExpireTextClass(expiredAt: string | number | null | undefined): string {
   const status = getExpireStatus(expiredAt)
 
+  if (status === 'none')
+    return ''
   if (status === 'expired' || status === 'critical')
     return 'text-destructive'
   if (status === 'warning')
@@ -259,9 +263,13 @@ export function getExpireStatusHexColor(status: ExpireStatus): string {
  * @param lang 语言
  * @returns 显示文本
  */
-export function getExpireText(expiredAt: string | number | undefined, lang: 'zh-CN' | 'en-US' = 'zh-CN'): string {
+export function getExpireText(expiredAt: string | number | null | undefined, lang: 'zh-CN' | 'en-US' = 'zh-CN'): string {
   const days = getDaysUntilExpired(expiredAt)
   const status = getExpireStatus(expiredAt)
+
+  if (status === 'none' || days === null) {
+    return ''
+  }
 
   if (status === 'expired') {
     return lang === 'zh-CN' ? '已过期' : 'Expired'

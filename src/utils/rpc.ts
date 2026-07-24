@@ -132,7 +132,8 @@ export interface Client {
   billing_cycle: number
   auto_renewal: boolean
   currency: string
-  expired_at: string
+  /** 过期时间；后端 ExpiredAt 未设置时 JSON 为 null */
+  expired_at: string | null
   group: string
   tags: string
   hidden: boolean
@@ -144,7 +145,7 @@ export interface Client {
 
 /** 公开站点信息 */
 export interface PublicInfo {
-  allow_cors: boolean
+  cors_origin_check_enabled: boolean
   custom_body: string
   custom_head: string
   description: string
@@ -172,7 +173,7 @@ export interface VersionInfo {
  */
 export interface NodeStatusPing {
   name: string
-  /** 最新探测延迟（毫秒）；<0 表示丢包，与 PingRecord.value === -1 同义 */
+  /** 最新一次非丢包样本的延迟（毫秒）；官方实现会跳过丢包样本，-1 表示窗口内无有效样本 */
   latest: number
   avg: number
   tail: number
@@ -222,8 +223,10 @@ export interface StatusRecord {
   swap: number
   swap_total: number
   load: number
-  load5: number
-  load15: number
+  /** 官方 flatRecord 不含 load5/load15，故为可选 */
+  load5?: number
+  /** 官方 flatRecord 不含 load5/load15，故为可选 */
+  load15?: number
   temp: number
   disk: number
   disk_total: number
@@ -705,9 +708,10 @@ export class KomariRpc {
 
   /**
    * 获取节点最近状态记录
+   * 注意：官方实现只解析 uuid 参数，不存在 limit 参数
    */
-  async getNodeRecentStatus(uuid: string, limit?: number): Promise<{ count: number, records: StatusRecord[] }> {
-    return this.client.call<{ count: number, records: StatusRecord[] }>('common:getNodeRecentStatus', { uuid, limit })
+  async getNodeRecentStatus(uuid: string): Promise<{ count: number, records: StatusRecord[] }> {
+    return this.client.call<{ count: number, records: StatusRecord[] }>('common:getNodeRecentStatus', { uuid })
   }
 
   /**

@@ -160,6 +160,7 @@ const rpcCalls = []
 let defaultThemeModeFixture = 'system'
 let earthViewModeFixture = 'earth'
 let visitorInfoEnabledFixture = false
+let metricStoreUninitializedFixture = false
 const leadingSlashesPattern = /^\/+/
 const lineBreakPattern = /\r?\n/
 
@@ -241,6 +242,15 @@ const server = createServer((request, response) => {
         'common:getNodeRecentStatus': { count: historyRecords.length, records: historyRecords },
       }
       let result = results[rpcRequest.method]
+      // 官方 metric store 未初始化时 public:queryMetrics 返回 InternalError(-32603)。
+      if (rpcRequest.method === 'public:queryMetrics' && metricStoreUninitializedFixture) {
+        json(response, {
+          jsonrpc: '2.0',
+          id: rpcRequest.id,
+          error: { code: -32603, message: 'Internal error: metric store not initialized' },
+        })
+        return
+      }
       if (rpcRequest.method === 'common:getRecords') {
         const isNodePingDialog = rpcRequest.params?.type === 'ping' && Boolean(rpcRequest.params?.uuid)
         result = rpcRequest.params?.type === 'ping'
@@ -760,10 +770,19 @@ const introHandoffAuditExpression = `new Promise((resolve) => {
         const middle = sample();
         await new Promise(done => setTimeout(done, 400));
         const late = sample();
-        await new Promise(done => setTimeout(done, 350));
+        // 封面现在由交接计时器在 1080+120ms 后卸载（旧设计为 Vue Transition
+        // 的 1080ms 卸载），settle 采样需越过该时点。
+        await new Promise(done => setTimeout(done, 620));
         const settled = sample();
         samplingFrames = false;
         longTaskObserver?.disconnect();
+        const probe = window.__lnlGlobeProbe || {};
+        const handoffPhiError = probe.handoff && probe.intro ? Math.abs(probe.handoff.phi - probe.intro.phi) : null;
+        const handoffThetaError = probe.handoff && probe.intro ? Math.abs(probe.handoff.theta - probe.intro.theta) : null;
+        const dashboardNoBackwardJump = Boolean(probe.dashboard && probe.handoff && probe.dashboard.phi >= probe.handoff.phi - 1e-9);
+        const centerErrorX = late.rect ? Math.abs((late.rect.left + late.rect.width / 2) - (targetRect.left + targetRect.width / 2)) : null;
+        const centerErrorY = late.rect ? Math.abs((late.rect.top + late.rect.height / 2) - (targetRect.top + targetRect.height / 2)) : null;
+        const widthError = late.rect ? Math.abs(late.rect.width - targetRect.width) : null;
         resolve({
           handoffReady: root.classList.contains('is-handoff-ready'),
           staged,
@@ -782,6 +801,15 @@ const introHandoffAuditExpression = `new Promise((resolve) => {
           xError: Math.abs(handoffX - (targetRect.left - sourceRect.left)),
           yError: Math.abs(handoffY - (targetRect.top - sourceRect.top)),
           scaleError: Math.abs(handoffScale - targetRect.width / sourceRect.width),
+          probeIntro: probe.intro || null,
+          probeHandoff: probe.handoff || null,
+          probeDashboard: probe.dashboard || null,
+          handoffPhiError,
+          handoffThetaError,
+          dashboardNoBackwardJump,
+          centerErrorX,
+          centerErrorY,
+          widthError,
         });
       }, 70);
     }
@@ -1050,7 +1078,7 @@ const visitorFixtureInitScript = `(() => {
 })()`
 
 async function capturePingDialogScreenshot(name, width, height) {
-  const result = await runInteractivePage(name, width, height, pingDialogOpenExpression, name, `sessionStorage.setItem('leonetlab:intro:1.2.5', 'seen');`)
+  const result = await runInteractivePage(name, width, height, pingDialogOpenExpression, name, `sessionStorage.setItem('leonetlab:intro:1.2.6', 'seen');`)
   assert.equal(result?.state, 'opened')
   assert.ok(result?.left >= -0.5 && result?.right <= result?.viewportWidth + 0.5, `Ping dialog escaped viewport: ${JSON.stringify(result)}`)
   assert.ok(result?.centerError <= 1, `Ping dialog is not centered: ${JSON.stringify(result)}`)
@@ -1058,7 +1086,7 @@ async function capturePingDialogScreenshot(name, width, height) {
 
 async function auditMobileFinanceOverflow(width) {
   const screenshotName = process.env.SMOKE_SCREENSHOT_DIR && width === 390 ? 'mobile-finance-open' : undefined
-  const result = await runInteractivePage(`mobile-finance-audit-${width}`, width, 844, financeOverflowAuditExpression, screenshotName, `sessionStorage.setItem('leonetlab:intro:1.2.5', 'seen');`)
+  const result = await runInteractivePage(`mobile-finance-audit-${width}`, width, 844, financeOverflowAuditExpression, screenshotName, `sessionStorage.setItem('leonetlab:intro:1.2.6', 'seen');`)
   assert.equal(result?.state, 'opened')
   assert.doesNotMatch(result?.triggerText ?? '', financeDetailsLabelPattern)
   assert.equal(result?.assistiveHintHidden, true, `Finance assistive hint became visible: ${JSON.stringify(result)}`)
@@ -1112,7 +1140,7 @@ async function auditGlobeFlagsAcrossThemeChange() {
     780,
     globeFlagThemeAuditExpression,
     undefined,
-    `sessionStorage.setItem('leonetlab:intro:1.2.5', 'seen'); localStorage.setItem('appearance', 'light'); localStorage.setItem('leonetlab:appearance:user-override', '1');`,
+    `sessionStorage.setItem('leonetlab:intro:1.2.6', 'seen'); localStorage.setItem('appearance', 'light'); localStorage.setItem('leonetlab:appearance:user-override', '1');`,
   )
   reportBrowserAudit('globe-flags-theme-change', result)
   assert.equal(result?.initialCount, 2, `Expected two globe flag overlays: ${JSON.stringify(result)}`)
@@ -1131,7 +1159,7 @@ async function auditPingDialogCloseAnimation() {
     780,
     pingDialogCloseAuditExpression,
     undefined,
-    `sessionStorage.setItem('leonetlab:intro:1.2.5', 'seen');`,
+    `sessionStorage.setItem('leonetlab:intro:1.2.6', 'seen');`,
   )
   reportBrowserAudit('ping-dialog-close-animation', result)
   assert.equal(result?.closedSeen, true, `Ping dialog skipped its closed state: ${JSON.stringify(result)}`)
@@ -1139,7 +1167,7 @@ async function auditPingDialogCloseAnimation() {
 }
 
 async function auditIntroGlobeHandoff() {
-  const result = await runInteractivePage('intro-globe-handoff', 1100, 780, introHandoffAuditExpression)
+  const result = await runInteractivePage('intro-globe-handoff', 1100, 780, introHandoffAuditExpression, undefined, 'window.__lnlGlobeProbe = {};')
   reportBrowserAudit('intro-globe-handoff', result)
   assert.equal(result?.handoffReady, true, `Intro globe did not prepare a dashboard handoff: ${JSON.stringify(result)}`)
   assert.equal(result?.staged, true, `Dashboard content was not staged behind the intro: ${JSON.stringify(result)}`)
@@ -1158,6 +1186,40 @@ async function auditIntroGlobeHandoff() {
   assert.ok(result?.frames >= 20, `Intro handoff produced too few animation frames: ${JSON.stringify(result)}`)
   assert.ok(result?.maxFrame < 160, `Intro handoff stalled between frames: ${JSON.stringify(result)}`)
   assert.ok(result?.maxLongTask < 160, `Intro handoff produced a long main-thread task: ${JSON.stringify(result)}`)
+  // 交接相位连续性：dashboard 接管的 phi/theta 必须等于 intro 最后一帧，且之后不回跳。
+  assert.ok(result?.probeIntro, `Intro globe orientation probe was not recorded: ${JSON.stringify(result)}`)
+  assert.ok(result?.probeHandoff, `Dashboard globe did not adopt the intro orientation: ${JSON.stringify(result)}`)
+  assert.ok(result?.handoffPhiError !== null && result?.handoffPhiError < 0.01, `Globe phi jumped across the handoff: ${JSON.stringify(result)}`)
+  assert.ok(result?.handoffThetaError !== null && result?.handoffThetaError < 0.01, `Globe theta jumped across the handoff: ${JSON.stringify(result)}`)
+  assert.equal(result?.dashboardNoBackwardJump, true, `Dashboard globe snapped back after the handoff: ${JSON.stringify(result)}`)
+  assert.ok(result?.centerErrorX !== null && result?.centerErrorX < 28 && result?.centerErrorY !== null && result?.centerErrorY < 28, `Intro globe canvas center missed the dashboard canvas center: ${JSON.stringify(result)}`)
+  assert.ok(result?.widthError !== null && result?.widthError < 28, `Intro globe canvas size missed the dashboard canvas size: ${JSON.stringify(result)}`)
+}
+
+async function auditMetricStoreFallback() {
+  metricStoreUninitializedFixture = true
+  try {
+    const before = rpcCalls.length
+    const result = await runInteractivePage(
+      'metric-store-fallback',
+      1100,
+      780,
+      pingDialogOpenExpression,
+      undefined,
+      `sessionStorage.setItem('leonetlab:intro:1.2.6', 'seen');`,
+    )
+    reportBrowserAudit('metric-store-fallback', result)
+    assert.equal(result?.state, 'opened', `Ping dialog did not open behind an uninitialized metric store: ${JSON.stringify(result)}`)
+    const calls = rpcCalls.slice(before)
+    assert.ok(calls.some(call => call.method === 'public:queryMetrics'), 'Metric RPC was not attempted')
+    assert.ok(
+      calls.some(call => call.method === 'common:getRecords' && call.params?.type === 'ping' && call.params?.uuid === nodeUuid),
+      'Ping dialog did not fall back to common:getRecords after the -32603 metric-store error',
+    )
+  }
+  finally {
+    metricStoreUninitializedFixture = false
+  }
 }
 
 async function auditGlobeMotionMode(mode, expectedMoved) {
@@ -1169,7 +1231,7 @@ async function auditGlobeMotionMode(mode, expectedMoved) {
       780,
       globeMotionAuditExpression.replace('__EARTH_MODE__', mode),
       undefined,
-      `sessionStorage.setItem('leonetlab:intro:1.2.5', 'seen');`,
+      `sessionStorage.setItem('leonetlab:intro:1.2.6', 'seen');`,
     )
     reportBrowserAudit(`globe-motion-${mode}`, result)
     assert.equal(result?.moved, expectedMoved, `Unexpected ${mode} globe motion: ${JSON.stringify(result)}`)
@@ -1186,7 +1248,7 @@ async function auditPingContentMotion() {
     780,
     pingContentMotionAuditExpression,
     undefined,
-    `sessionStorage.setItem('leonetlab:intro:1.2.5', 'seen');`,
+    `sessionStorage.setItem('leonetlab:intro:1.2.6', 'seen');`,
   )
   reportBrowserAudit('ping-content-motion', result)
   assert.match(result?.toolbarAnimation || '', pingSectionInPattern, `Ping toolbar has no entrance transition: ${JSON.stringify(result)}`)
@@ -1229,7 +1291,7 @@ async function auditVisitorCollapse() {
 async function auditMobileChromeLayout() {
   visitorInfoEnabledFixture = true
   try {
-    const initScript = `${visitorFixtureInitScript}\nsessionStorage.setItem('leonetlab:intro:1.2.5', 'seen');`
+    const initScript = `${visitorFixtureInitScript}\nsessionStorage.setItem('leonetlab:intro:1.2.6', 'seen');`
     const result = await runInteractivePage('mobile-chrome-layout', 390, 844, mobileChromeLayoutAuditExpression, undefined, initScript)
     reportBrowserAudit('mobile-chrome-layout', result)
     assert.ok(Math.abs(result?.logoWidth - result?.logoHeight) < 0.5, `Mobile logo frame is not square: ${JSON.stringify(result)}`)
@@ -1278,6 +1340,7 @@ try {
   await auditGlobeMotionMode('earth-stop', false)
   await auditPingDialogCloseAnimation()
   await auditPingContentMotion()
+  await auditMetricStoreFallback()
   await auditIntroGlobeHandoff()
   await auditMobileProbeMatrix()
   await auditVisitorCollapse()

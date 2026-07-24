@@ -202,19 +202,26 @@ function formatOfflineTime(node: NodeData): string {
 function getPriceTags(node: NodeData): PriceTagItem[] {
   const tags: PriceTagItem[] = []
   const lang = appStore.lang
-  const days = getDaysUntilExpired(node.expired_at)
-  const status = getExpireStatus(node.expired_at)
   const priceText = formatPriceWithCycle(node.price, node.billing_cycle, node.currency, lang)
   if (node.price !== 0)
     tags.push({ text: priceText })
-  if (status === 'expired')
+  // 未设置过期时间（expired_at 为 null/空）时不生成任何过期标签
+  if (!node.expired_at)
+    return tags
+  const days = getDaysUntilExpired(node.expired_at)
+  const status = getExpireStatus(node.expired_at)
+  if (status === 'expired') {
     tags.push({ text: lang === 'zh-CN' ? '已过期' : 'Expired' })
-  else if (status === 'long_term')
+  }
+  else if (status === 'long_term') {
     tags.push({ text: lang === 'zh-CN' ? '长期' : 'Long-term' })
-  else if (lang === 'zh-CN')
-    tags.push({ text: `余 ${days} 天`, prefix: '余 ', highlightValue: String(days), suffix: ' 天' })
-  else
-    tags.push({ text: `${days} days left`, highlightValue: String(days), suffix: ' days left' })
+  }
+  else if (status !== 'none' && days !== null) {
+    if (lang === 'zh-CN')
+      tags.push({ text: `余 ${days} 天`, prefix: '余 ', highlightValue: String(days), suffix: ' 天' })
+    else
+      tags.push({ text: `${days} days left`, highlightValue: String(days), suffix: ' days left' })
+  }
   return tags
 }
 
@@ -241,7 +248,12 @@ function getCustomTags(node: NodeData): Array<string> {
         <div
           v-for="col in columns" :key="col.key"
           :class="[col.sortable ? 'cursor-pointer' : '', ['status', 'os'].includes(col.key) ? 'text-center' : 'text-left']"
+          :role="col.sortable ? 'button' : undefined"
+          :tabindex="col.sortable ? 0 : undefined"
+          :aria-label="col.sortable ? `按${col.label}排序` : undefined"
           @click="handleSort(col)"
+          @keydown.enter.prevent="handleSort(col)"
+          @keydown.space.prevent="handleSort(col)"
         >
           <span class="text-xs text-muted-foreground">
             {{ col.label }}{{ col.sortable && sortKey === col.key ? (sortDir === 1 ? ' ↑' : ' ↓') : '' }}
@@ -259,10 +271,15 @@ function getCustomTags(node: NodeData): Array<string> {
         <div
           v-for="(node, index) in sortedNodes"
           :key="getRowTransitionKey(node)"
+          role="link"
+          tabindex="0"
+          :aria-label="`查看节点 ${node.name} 详情`"
           class="relative flex h-16 cursor-pointer flex-col justify-center rounded-lg px-2 shadow-[0_0_4px,0_0_0_1px] shadow-transparent transition-all bg-background/60 hover:bg-background hover:shadow-emerald-600/10"
           :class="[pickSurfaceClass('', 'backdrop-blur-sm'), !node.online && '!shadow-red-600/10']"
           :style="getRowTransitionStyle(index)"
           @click="handleClick(node)"
+          @keydown.enter="handleClick(node)"
+          @keydown.space.prevent="handleClick(node)"
         >
           <div class="grid gap-2 items-center" :style="gridStyle">
             <template v-for="col in columns" :key="col.key">
@@ -270,7 +287,7 @@ function getCustomTags(node: NodeData): Array<string> {
               <div v-if="col.key === 'status'" class="flex justify-center">
                 <div class="size-2 rounded-full relative" :class="[node.online ? 'bg-emerald-600' : 'bg-red-600']">
                   <div
-                    class="animate-ping absolute inset-0 rounded-full opacity-50"
+                    class="animate-ping motion-reduce:animate-none absolute inset-0 rounded-full opacity-50"
                     :class="[node.online ? 'bg-emerald-600' : 'bg-red-600']"
                   />
                 </div>
@@ -345,7 +362,7 @@ function getCustomTags(node: NodeData): Array<string> {
                       {{ (node.cpu ?? 0).toFixed(1) }}%
                     </span>
                     <span class="hidden group-hover:inline">
-                      {{ node.load.toFixed(2) ?? 0 }}, {{ node.load5.toFixed(2) ?? 0 }}, {{ node.load15.toFixed(2) ?? 0
+                      {{ (node.load ?? 0).toFixed(2) }}, {{ (node.load5 ?? 0).toFixed(2) }}, {{ (node.load15 ?? 0).toFixed(2)
                       }}
                     </span>
                   </div>

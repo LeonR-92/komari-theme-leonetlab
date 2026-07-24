@@ -33,7 +33,8 @@ export interface NodeData {
   billing_cycle: number
   auto_renewal: boolean
   currency: string
-  expired_at: string
+  /** 过期时间；后端 ExpiredAt 未设置时 JSON 为 null */
+  expired_at: string | null
   group: string
   tags: string
   hidden: boolean
@@ -300,7 +301,7 @@ const useNodesStore = defineStore('nodes', () => {
       }
     }
 
-    // 按 weight 降序排序（weight 越大越靠前）
+    // 按 weight 升序排序（weight 越小越靠前，与官方前端一致）
     sortNodesByWeight()
     refreshEarthNodes(true)
   }
@@ -389,7 +390,7 @@ const useNodesStore = defineStore('nodes', () => {
       }
     }
 
-    // 按 weight 降序排序
+    // 按 weight 升序排序（weight 越小越靠前，与官方前端一致）
     sortNodesByWeight()
     refreshEarthNodes(true)
   }

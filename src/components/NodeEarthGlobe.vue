@@ -2,6 +2,8 @@
 // Intro and dashboard globes are separate WebGL instances during the FLIP
 // handoff. Share only the final orientation so the arriving globe does not
 // jump back to its default angle when the dashboard is revealed.
+// 共享朝向与回归探针位于独立模块 @/utils/globeIntroShared（模块级单例）；
+// 切勿移回 <script setup> 顶层，否则每个实例各持一份，交接会瞬跳回默认角度。
 </script>
 
 <script setup lang="ts">
@@ -12,6 +14,7 @@ import {
   useDocumentVisibility,
   useElementSize,
   useElementVisibility,
+  useMediaQuery,
   useRafFn,
 } from '@vueuse/core'
 import createGlobe from 'cobe'
@@ -19,6 +22,7 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useAppStore } from '@/stores/app'
 import { useNodesStore } from '@/stores/nodes'
 import { getCoordByCode, getCountryCodeFromRegion } from '@/utils/geoHelper'
+import { getGlobeProbe, sharedIntroOrientation } from '@/utils/globeIntroShared'
 
 const props = defineProps<{
   nodes?: NodeData[]
@@ -28,7 +32,9 @@ const props = defineProps<{
   motion?: 'auto' | 'static'
 }>()
 
-const sharedIntroOrientation = { phi: 0, theta: 0, valid: false }
+// 无头浏览器回归探针：仅当页面预置 window.__lnlGlobeProbe 时记录朝向与
+// 交接快照，生产环境不存在该全局变量，保持零开销。
+const globeProbe = getGlobeProbe()
 
 const appStore = useAppStore()
 const nodesStore = useNodesStore()
@@ -47,8 +53,11 @@ const shouldRender = computed(() => documentVisibility.value === 'visible'
   && (props.variant === 'intro' || !appStore.introActive))
 // Emerald exposes five layout modes. Only `earth` rotates automatically;
 // `earth-stop` remains draggable but holds its orientation after release.
-const shouldAutoRotate = computed(() => props.motion === 'auto'
-  || (props.motion === undefined && appStore.earthViewMode === 'earth'))
+// 系统开启"减少动态效果"时地球仪不自动旋转，但保留用户拖拽。
+const prefersReducedMotion = useMediaQuery('(prefers-reduced-motion: reduce)')
+const shouldAutoRotate = computed(() => !prefersReducedMotion.value
+  && (props.motion === 'auto'
+    || (props.motion === undefined && appStore.earthViewMode === 'earth')))
 const interactive = computed(() => props.interactive ?? props.variant !== 'intro')
 const showStatus = computed(() => props.showStatus ?? props.variant !== 'intro')
 
@@ -297,6 +306,15 @@ function updateGlobeFrame() {
     sharedIntroOrientation.theta = theta
     sharedIntroOrientation.valid = true
   }
+  if (globeProbe) {
+    globeProbe[props.variant === 'intro' ? 'intro' : 'dashboard'] = {
+      phi,
+      theta,
+      t: performance.now(),
+      autoRotate: shouldAutoRotate.value,
+      shouldRender: shouldRender.value,
+    }
+  }
   const { width, height } = getRenderSize()
   globe.update({ phi, theta, width, height })
   syncClusterOverlayPositions()
@@ -306,25 +324,36 @@ function updateGlobeFrame() {
 const ORIENTATION_IDLE_EPSILON = 1e-5
 const { pause: pauseRaf, resume: resumeRaf } = useRafFn(
   ({ delta }) => {
-    if (!globe)
-      return
-    const prevPhi = phi
-    const prevTheta = theta
-    if (!isPointerDown && shouldAutoRotate.value) {
-      targetPhi += AUTO_ROTATION_RADIANS_PER_MS * Math.min(delta, 34)
-      keepPhiPrecision()
+    try {
+      if (globeProbe) {
+        const key = props.variant === 'intro' ? 'introLoopFrames' : 'dashLoopFrames'
+        ;(globeProbe as Record<string, unknown>)[key] = ((globeProbe as Record<string, number>)[key] ?? 0) + 1
+      }
+      if (!globe)
+        return
+      const prevPhi = phi
+      const prevTheta = theta
+      if (!isPointerDown && shouldAutoRotate.value) {
+        targetPhi += AUTO_ROTATION_RADIANS_PER_MS * Math.min(delta, 34)
+        keepPhiPrecision()
+      }
+      phi += (targetPhi - phi) * 1
+      theta += (targetTheta - theta) * 1
+      if (
+        Math.abs(phi - prevPhi) < ORIENTATION_IDLE_EPSILON
+        && Math.abs(theta - prevTheta) < ORIENTATION_IDLE_EPSILON
+      ) {
+        if (!shouldAutoRotate.value && shouldKeepStaticRedraw())
+          updateGlobeFrame()
+        return
+      }
+      updateGlobeFrame()
     }
-    phi += (targetPhi - phi) * 1
-    theta += (targetTheta - theta) * 1
-    if (
-      Math.abs(phi - prevPhi) < ORIENTATION_IDLE_EPSILON
-      && Math.abs(theta - prevTheta) < ORIENTATION_IDLE_EPSILON
-    ) {
-      if (!shouldAutoRotate.value && shouldKeepStaticRedraw())
-        updateGlobeFrame()
-      return
+    catch (error) {
+      if (globeProbe)
+        (globeProbe as Record<string, unknown>).loopError = String((error as Error)?.stack || error)
+      throw error
     }
-    updateGlobeFrame()
   },
   { immediate: false }, // , fpsLimit: 30
 )
@@ -339,18 +368,42 @@ function syncRafState() {
   }
 
   pauseRaf()
+  if (globeProbe) {
+    globeProbe.lastPause = {
+      variant: props.variant ?? 'dashboard',
+      t: performance.now(),
+      shouldRender: shouldRender.value,
+      autoRotate: shouldAutoRotate.value,
+      documentVisibility: documentVisibility.value,
+      elementVisible: elementVisible.value,
+    }
+  }
   if (shouldRender.value)
     updateGlobeFrame()
+}
+
+// dashboard 实例接管 intro 的最终朝向，并记录交接快照供探针断言相位连续。
+function adoptSharedIntroOrientation() {
+  if (!sharedIntroOrientation.valid)
+    return
+  phi = sharedIntroOrientation.phi
+  targetPhi = phi
+  theta = sharedIntroOrientation.theta
+  targetTheta = theta
+  if (globeProbe) {
+    globeProbe.handoff = {
+      phi: sharedIntroOrientation.phi,
+      theta: sharedIntroOrientation.theta,
+      t: performance.now(),
+    }
+  }
 }
 
 function startGlobe() {
   if (!canvasRef.value)
     return
-  if (props.variant !== 'intro' && appStore.introActive && sharedIntroOrientation.valid) {
-    phi = sharedIntroOrientation.phi
-    targetPhi = phi
-    theta = sharedIntroOrientation.theta
-    targetTheta = theta
+  if (props.variant !== 'intro' && appStore.introActive) {
+    adoptSharedIntroOrientation()
   }
   if (appStore.earthViewMode === 'earth-stop') {
     resetStoppedView()
@@ -370,6 +423,12 @@ function startGlobe() {
 // cobe 不会清理自己创建的 wrapper，这里手动收尾。
 function stopGlobe() {
   pauseRaf()
+  if (globeProbe) {
+    (globeProbe as Record<string, unknown>)[props.variant === 'intro' ? 'introStoppedAt' : 'dashStoppedAt'] = {
+      t: performance.now(),
+      stack: new Error('stopGlobe').stack?.split('\n').slice(1, 5).join('|'),
+    }
+  }
   globe?.destroy()
   globe = null
   if (canvasRef.value && containerRef.value) {
@@ -426,6 +485,12 @@ watch(
   },
 )
 
+// 系统"减少动态效果"偏好在运行时切换时同步 rAF：停止或恢复自动旋转。
+watch(shouldAutoRotate, () => {
+  if (globe)
+    syncRafState()
+})
+
 // 仅地区集合或在线状态变化时才推送 markers；速率推送不触发
 watch(
   () => regionClusters.value.map(clusterKey).join(','),
@@ -456,12 +521,7 @@ watch(
       return
     await nextTick()
     requestAnimationFrame(() => {
-      if (sharedIntroOrientation.valid) {
-        phi = sharedIntroOrientation.phi
-        targetPhi = phi
-        theta = sharedIntroOrientation.theta
-        targetTheta = theta
-      }
+      adoptSharedIntroOrientation()
       updateGlobeFrame()
       syncRafState()
     })
@@ -568,15 +628,15 @@ const offlineServers = computed(() => totalServers.value - onlineServers.value)
       class="absolute top-6 md:top-12 left-0 text-[10px] text-muted-foreground pointer-events-none flex gap-2 items-center backdrop-blur-lg bg-background/60 rounded px-2 py-0.5"
     >
       <div v-if="onlineServers > 0" class="flex items-center gap-1">
-        <span class="inline-block size-1.5 rounded-full bg-green-600 animate-pulse" />
+        <span class="inline-block size-1.5 rounded-full bg-green-600 animate-pulse motion-reduce:animate-none" />
         <span class="text-green-600">{{ onlineServers }}</span>
       </div>
       <div v-if="offlineServers > 0" class="flex items-center gap-1">
-        <span class="inline-block size-1.5 rounded-full bg-yellow-600 animate-pulse" />
+        <span class="inline-block size-1.5 rounded-full bg-yellow-600 animate-pulse motion-reduce:animate-none" />
         <span class="text-yellow-600">{{ offlineServers }}</span>
       </div>
       <!-- <div v-if="totalServers > 0" class="flex items-center gap-1">
-        <span class="inline-block size-1.5 rounded-full bg-blue-600 animate-pulse" />
+        <span class="inline-block size-1.5 rounded-full bg-blue-600 animate-pulse motion-reduce:animate-none" />
         <span class="text-blue-600">{{ totalServers }}</span>
       </div> -->
     </div>

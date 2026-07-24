@@ -488,7 +488,7 @@ onUnmounted(() => presentationTimers.forEach(timer => window.clearTimeout(timer)
             class="min-w-0 transition-[opacity,transform] duration-220 ease-[cubic-bezier(0.22,1,0.36,1)]"
             :class="[isExpanded || !index ? 'block opacity-100 translate-y-0' : 'hidden md:block md:opacity-100', !isExpanded && index ? 'md:translate-y-0' : '']"
           >
-            <div v-if="loading" class="h-2 w-15 animate-pulse rounded-full bg-muted/70" />
+            <div v-if="loading" class="h-2 w-15 animate-pulse motion-reduce:animate-none rounded-full bg-muted/70" />
             <template v-else>
               <small>{{ item.label }}</small>
               <p>{{ item.value }}</p>

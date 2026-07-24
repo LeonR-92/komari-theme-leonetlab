@@ -9,7 +9,8 @@ type WorldGeoJson = Exclude<
 const WORLD_MAP_NAME = 'komari-world'
 const WORLD_MAP_ASSET_URL = `${import.meta.env.BASE_URL}maps/world.json`
 const WORLD_MAP_CACHE_KEY_PREFIX = 'komari-theme-emerald:world-map'
-const WORLD_MAP_CACHE_KEY = `${WORLD_MAP_CACHE_KEY_PREFIX}` // :${__BUILD_GIT_HASH__}
+// 缓存键带构建哈希后缀，旧版本缓存通过 pruneStaleWorldMapCache 清理
+const WORLD_MAP_CACHE_KEY = `${WORLD_MAP_CACHE_KEY_PREFIX}:${__BUILD_GIT_HASH__}`
 
 const ECHARTS_WORLD_NAME_TO_CODE: Record<string, string> = {
   'aland': 'AX',
@@ -88,7 +89,13 @@ function readCachedWorldGeoJson(): WorldGeoJson | null {
     if (!raw)
       return null
 
-    const parsed = JSON.parse(raw) as { data?: unknown }
+    const parsed = JSON.parse(raw) as { buildHash?: unknown, data?: unknown }
+    // 构建哈希不匹配视为未命中，清除旧键防止跨版本脏数据
+    if (parsed.buildHash !== __BUILD_GIT_HASH__) {
+      window.localStorage.removeItem(WORLD_MAP_CACHE_KEY)
+      return null
+    }
+
     if (!isValidWorldGeoJson(parsed.data)) {
       window.localStorage.removeItem(WORLD_MAP_CACHE_KEY)
       return null
@@ -159,6 +166,9 @@ function normalizeWorldGeoJson(worldGeoJson: WorldGeoJson): WorldGeoJson {
 }
 
 async function loadWorldGeoJson(): Promise<WorldGeoJson> {
+  // 加载前顺带清理非当前版本的旧缓存键
+  pruneStaleWorldMapCache()
+
   const cachedWorldGeoJson = readCachedWorldGeoJson()
   if (cachedWorldGeoJson)
     return cachedWorldGeoJson
