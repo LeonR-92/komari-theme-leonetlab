@@ -1087,7 +1087,7 @@ const visitorFixtureInitScript = `(() => {
 })()`
 
 async function capturePingDialogScreenshot(name, width, height) {
-  const result = await runInteractivePage(name, width, height, pingDialogOpenExpression, name, `sessionStorage.setItem('leonetlab:intro:1.2.6', 'seen');`)
+  const result = await runInteractivePage(name, width, height, pingDialogOpenExpression, name, `sessionStorage.setItem('leonetlab:intro:1.2.7', 'seen');`)
   assert.equal(result?.state, 'opened')
   assert.ok(result?.left >= -0.5 && result?.right <= result?.viewportWidth + 0.5, `Ping dialog escaped viewport: ${JSON.stringify(result)}`)
   assert.ok(result?.centerError <= 1, `Ping dialog is not centered: ${JSON.stringify(result)}`)
@@ -1095,7 +1095,7 @@ async function capturePingDialogScreenshot(name, width, height) {
 
 async function auditMobileFinanceOverflow(width) {
   const screenshotName = process.env.SMOKE_SCREENSHOT_DIR && width === 390 ? 'mobile-finance-open' : undefined
-  const result = await runInteractivePage(`mobile-finance-audit-${width}`, width, 844, financeOverflowAuditExpression, screenshotName, `sessionStorage.setItem('leonetlab:intro:1.2.6', 'seen');`)
+  const result = await runInteractivePage(`mobile-finance-audit-${width}`, width, 844, financeOverflowAuditExpression, screenshotName, `sessionStorage.setItem('leonetlab:intro:1.2.7', 'seen');`)
   assert.equal(result?.state, 'opened')
   assert.doesNotMatch(result?.triggerText ?? '', financeDetailsLabelPattern)
   assert.equal(result?.assistiveHintHidden, true, `Finance assistive hint became visible: ${JSON.stringify(result)}`)
@@ -1149,7 +1149,7 @@ async function auditGlobeFlagsAcrossThemeChange() {
     780,
     globeFlagThemeAuditExpression,
     undefined,
-    `sessionStorage.setItem('leonetlab:intro:1.2.6', 'seen'); localStorage.setItem('appearance', 'light'); localStorage.setItem('leonetlab:appearance:user-override', '1');`,
+    `sessionStorage.setItem('leonetlab:intro:1.2.7', 'seen'); localStorage.setItem('appearance', 'light'); localStorage.setItem('leonetlab:appearance:user-override', '1');`,
   )
   reportBrowserAudit('globe-flags-theme-change', result)
   assert.equal(result?.initialCount, 2, `Expected two globe flag overlays: ${JSON.stringify(result)}`)
@@ -1168,7 +1168,7 @@ async function auditPingDialogCloseAnimation() {
     780,
     pingDialogCloseAuditExpression,
     undefined,
-    `sessionStorage.setItem('leonetlab:intro:1.2.6', 'seen');`,
+    `sessionStorage.setItem('leonetlab:intro:1.2.7', 'seen');`,
   )
   reportBrowserAudit('ping-dialog-close-animation', result)
   assert.equal(result?.closedSeen, true, `Ping dialog skipped its closed state: ${JSON.stringify(result)}`)
@@ -1217,7 +1217,7 @@ async function auditMetricStoreFallback() {
       780,
       pingDialogOpenExpression,
       undefined,
-      `sessionStorage.setItem('leonetlab:intro:1.2.6', 'seen');`,
+      `sessionStorage.setItem('leonetlab:intro:1.2.7', 'seen');`,
     )
     reportBrowserAudit('metric-store-fallback', result)
     assert.equal(result?.state, 'opened', `Ping dialog did not open behind an uninitialized metric store: ${JSON.stringify(result)}`)
@@ -1242,7 +1242,7 @@ async function auditGlobeMotionMode(mode, expectedMoved) {
       780,
       globeMotionAuditExpression.replace('__EARTH_MODE__', mode),
       undefined,
-      `sessionStorage.setItem('leonetlab:intro:1.2.6', 'seen');`,
+      `sessionStorage.setItem('leonetlab:intro:1.2.7', 'seen');`,
     )
     reportBrowserAudit(`globe-motion-${mode}`, result)
     assert.equal(result?.moved, expectedMoved, `Unexpected ${mode} globe motion: ${JSON.stringify(result)}`)
@@ -1259,7 +1259,7 @@ async function auditPingContentMotion() {
     780,
     pingContentMotionAuditExpression,
     undefined,
-    `sessionStorage.setItem('leonetlab:intro:1.2.6', 'seen');`,
+    `sessionStorage.setItem('leonetlab:intro:1.2.7', 'seen');`,
   )
   reportBrowserAudit('ping-content-motion', result)
   assert.match(result?.toolbarAnimation || '', pingSectionInPattern, `Ping toolbar has no entrance transition: ${JSON.stringify(result)}`)
@@ -1302,7 +1302,7 @@ async function auditVisitorCollapse() {
 async function auditMobileChromeLayout() {
   visitorInfoEnabledFixture = true
   try {
-    const initScript = `${visitorFixtureInitScript}\nsessionStorage.setItem('leonetlab:intro:1.2.6', 'seen');`
+    const initScript = `${visitorFixtureInitScript}\nsessionStorage.setItem('leonetlab:intro:1.2.7', 'seen');`
     const result = await runInteractivePage('mobile-chrome-layout', 390, 844, mobileChromeLayoutAuditExpression, undefined, initScript)
     reportBrowserAudit('mobile-chrome-layout', result)
     assert.ok(Math.abs(result?.logoWidth - result?.logoHeight) < 0.5, `Mobile logo frame is not square: ${JSON.stringify(result)}`)

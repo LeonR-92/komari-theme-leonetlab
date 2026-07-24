@@ -1,5 +1,13 @@
 # 更新日志
 
+## 1.2.7 — 2026-07-24
+
+- 修复多节点真实环境下首访交接"地球无平移、直接闪现到位 + 页面卡顿"：封面卸载原按点击时刻的固定计时器（1080+120ms）驱动，主线程长任务推迟 CSS 过渡起点后，卸载与过渡起点几乎同时发生，飞行不可见；现改为由 `.lnl-intro-globe` transform 过渡的 `transitionend` 事件驱动卸载，固定计时器（1080+900ms）仅作兜底，主线程繁忙时交接只会推迟、不再闪跳。
+- 飞行前等待交接目标就绪：慢服务器上 dashboard 可能在数据就绪后才挂载，现仅 earth/earth-stop 模式下按 rAF 轮询 `prepareHandoff` 至多 1.5s，避免朝未挂载的目标飞行。
+- 移动端性能（发热/掉帧）治理，桌面行为不变：背景 DataOcean 移动端仅静态帧；cobe 地球移动端 DPR ≤1.5、mapSamples 下调、rAF 帧率上限 30fps；首页卡片与列表视图的 TransitionGroup 在移动端使用无过渡 move 占位类，跳过每子节点 getBoundingClientRect 位置测量与强制回流（enter/leave 动画保留）；实时轮询在后台标签页暂停，移动端轮询间隔 5 秒下限；Ping/负载/地图 ECharts 动画在移动端关闭。
+- 性能诊断证据：40 节点 fixture + CDP CPU Profiler（移动端 390x844、CPU 4x 节流），修复前稳态 7.2fps、主线程 11.4s/10s 占满、getBoundingClientRect 1.5s/10s；证据存于 `artifacts/audit-20260724/`。
+- Service Worker 缓存升级为 1.2.7，首访会话标记同步升级（`leonetlab:intro:1.2.7`），老用户更新后重放一次修复后的交接动画。
+
 ## 1.2.6 — 2026-07-24
 
 - 修复首访交接的共享朝向死代码：`sharedIntroOrientation` 原声明在 `<script setup>` 顶层，每个组件实例各持一份，dashboard 地球仪永远读不到 intro 朝向（`valid` 恒 false），交接末尾瞬跳回默认角度；现移入模块作用域，dashboard 在交接完成瞬间继承 intro 最后一帧 phi/theta（断言误差 < 0.01 rad）并继续自转。

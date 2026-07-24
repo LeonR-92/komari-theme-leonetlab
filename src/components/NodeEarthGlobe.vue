@@ -23,6 +23,7 @@ import { useAppStore } from '@/stores/app'
 import { useNodesStore } from '@/stores/nodes'
 import { getCoordByCode, getCountryCodeFromRegion } from '@/utils/geoHelper'
 import { getGlobeProbe, sharedIntroOrientation } from '@/utils/globeIntroShared'
+import { isMobileLike } from '@/utils/mobilePerf'
 
 const props = defineProps<{
   nodes?: NodeData[]
@@ -123,11 +124,11 @@ function shouldKeepStaticRedraw(): boolean {
   return now < staticRedrawUntil
 }
 
-// 减少高采样导致的性能问题
+// 减少高采样导致的性能问题；移动端 DPR 上限更激进以压低 WebGL 填充率
 function getCappedDpr(): number {
   if (typeof window === 'undefined')
     return 1
-  return Math.min(window.devicePixelRatio || 1, 2)
+  return Math.min(window.devicePixelRatio || 1, isMobileLike ? 1.5 : 2)
 }
 
 interface RegionCluster {
@@ -288,7 +289,8 @@ function buildInitialOptions(): COBEOptions {
     theta,
     dark: colors.dark,
     diffuse: 1.2,
-    mapSamples: props.variant === 'intro' ? 7200 : 10000,
+    // 移动端降低 cobe 点阵采样数，削减每帧 WebGL 绘制成本
+    mapSamples: props.variant === 'intro' ? (isMobileLike ? 5600 : 7200) : (isMobileLike ? 6000 : 10000),
     mapBrightness: colors.mapBrightness,
     baseColor: colors.baseColor,
     markerColor: colors.markerColor,
@@ -355,7 +357,7 @@ const { pause: pauseRaf, resume: resumeRaf } = useRafFn(
       throw error
     }
   },
-  { immediate: false }, // , fpsLimit: 30
+  { immediate: false, fpsLimit: isMobileLike ? 30 : null }, // 移动端帧率上限 30fps，降低常驻渲染负载
 )
 
 function syncRafState() {

@@ -10,6 +10,7 @@ import { Spinner } from '@/components/ui/spinner'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { useBackgroundSurface } from '@/composables/useBackgroundSurface'
 import { useAppStore } from '@/stores/app'
+import { isMobileLike } from '@/utils/mobilePerf'
 import { cutPeakValues } from '@/utils/recordHelper'
 import { getSharedRpc, RpcError } from '@/utils/rpc'
 import '@/utils/echarts' // 共享 ECharts 配置
@@ -23,6 +24,8 @@ const { pickSurfaceClass } = useBackgroundSurface()
 const isDark = computed(() => appStore.isDark)
 const reduceChartMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches
 const motionEnabled = computed(() => !appStore.disablePageAnimation && !reduceChartMotion)
+// ECharts 动画在移动端关闭：图表动画是持续 GPU/CPU 负载，移动端只保留 CSS 入场。
+const chartMotionEnabled = computed(() => motionEnabled.value && !isMobileLike)
 // 使用共享的 RPC 实例，避免重复创建连接
 const rpc = getSharedRpc()
 
@@ -672,7 +675,7 @@ const pingChartOption = computed(() => {
   })
 
   return {
-    animation: motionEnabled.value,
+    animation: chartMotionEnabled.value,
     animationDuration: 560,
     animationDurationUpdate: 240,
     animationEasing: 'cubicOut' as const,

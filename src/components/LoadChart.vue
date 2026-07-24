@@ -14,6 +14,7 @@ import { useBackgroundSurface } from '@/composables/useBackgroundSurface'
 import { useAppStore } from '@/stores/app'
 import { useNodesStore } from '@/stores/nodes'
 import { formatBytes, formatBytesSplit } from '@/utils/helper'
+import { isMobileLike } from '@/utils/mobilePerf'
 import { fillMissingTimePoints } from '@/utils/recordHelper'
 import { normalizeRecordCollection } from '@/utils/recordResponse'
 import { getSharedRpc } from '@/utils/rpc'
@@ -105,8 +106,9 @@ const baseTooltipConfig = computed(() => ({
 const chartMargin = { top: 30, right: 24, bottom: 32, left: 56 }
 const chartMarginWithLegend = { top: 30, right: 24, bottom: 52, left: 56 }
 const reduceChartMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches
+// ECharts 动画在移动端关闭：图表动画是持续 GPU/CPU 负载，移动端直接呈现最终帧。
 const chartAnimationConfig = computed(() => ({
-  animation: !appStore.disablePageAnimation && !reduceChartMotion,
+  animation: !appStore.disablePageAnimation && !reduceChartMotion && !isMobileLike,
   animationDuration: 520,
   animationDurationUpdate: 220,
   animationEasing: 'cubicOut' as const,

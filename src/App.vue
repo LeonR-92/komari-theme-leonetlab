@@ -14,9 +14,17 @@ const appStore = useAppStore()
 const isReady = ref(false)
 // Bump this key only when a release intentionally needs to present the intro
 // again. The value still keeps the animation to once per browser session.
-// 1.2.6 重做了首访交接的朝向连续性，老用户应看到新 intro。
-const INTRO_SESSION_KEY = 'leonetlab:intro:1.2.6'
+// 1.2.7 修复了交接闪跳（等真实过渡结束再卸载）并让老用户重放修复后的 intro。
+const INTRO_SESSION_KEY = 'leonetlab:intro:1.2.7'
 const INTRO_HANDOFF_DURATION_MS = 1080
+// 交接卸载必须等真实过渡结束（transitionend），固定计时器只作兜底：主线程
+// 长任务会推迟 CSS 过渡的起点，若按点击时刻计时卸载，飞行中段的封面会被
+// 提前撤掉，表现为"地球没有平移、直接闪现到位"。兜底时长放宽到覆盖过渡
+// 被推迟排队的余量。
+const INTRO_HANDOFF_FALLBACK_MS = INTRO_HANDOFF_DURATION_MS + 900
+// 慢服务器上 dashboard 可能在数据就绪后才完成挂载：飞行前最多等目标地球仪
+// 1.5s，避免朝一个尚未挂载的目标交接（过渡几何失准同样表现为闪跳）。
+const INTRO_HANDOFF_TARGET_WAIT_MS = 1500
 const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches
 function shouldPlayIntro(): boolean {
   if (reducedMotion)
@@ -65,6 +73,14 @@ function stopHandoffResizeWatch() {
     handoffResizeRaf = 0
   }
 }
+
+// 地球飞行过渡真实结束时收尾；只响应 intro 地球容器自身的 transform 过渡。
+function handleHandoffTransitionEnd(event: TransitionEvent) {
+  const target = event.target as HTMLElement | null
+  if (event.propertyName !== 'transform' || !target?.classList?.contains('lnl-intro-globe'))
+    return
+  handleIntroAfterLeave()
+}
 const pageTransitionProps = computed(() => appStore.disablePageAnimation
   ? { css: false as const }
   : {
@@ -111,16 +127,26 @@ async function finishIntro() {
   introFinishing.value = true
   appShellMounted.value = true
   await nextTick()
-  loadingCoverRef.value?.prepareHandoff()
+  // 只有 earth/earth-stop 模式存在交接目标地球仪；其余模式直接按回退变量飞行。
+  const expectsGlobeTarget = appStore.earthViewMode === 'earth' || appStore.earthViewMode === 'earth-stop'
+  if (expectsGlobeTarget) {
+    const waitDeadline = performance.now() + INTRO_HANDOFF_TARGET_WAIT_MS
+    while (!loadingCoverRef.value?.prepareHandoff() && performance.now() < waitDeadline)
+      await new Promise<void>(resolve => window.requestAnimationFrame(() => resolve()))
+  }
+  else {
+    loadingCoverRef.value?.prepareHandoff()
+  }
   await new Promise<void>(resolve => window.requestAnimationFrame(() => window.requestAnimationFrame(() => resolve())))
   // 手动切换 leave 类而不是 v-if + <Transition>：Vue 的 Transition 会在
   // leave 开始时立即销毁组件实例（仅延迟移除 DOM），cobe 地球随之冻结。
   // 保持组件存活可让地球在飞行期间继续旋转，交接全程相位连续。
   introLeaving.value = true
   window.addEventListener('resize', handleHandoffResize)
+  window.addEventListener('transitionend', handleHandoffTransitionEnd)
   if (introFinalizeTimer !== null)
     window.clearTimeout(introFinalizeTimer)
-  introFinalizeTimer = window.setTimeout(handleIntroAfterLeave, INTRO_HANDOFF_DURATION_MS + 120)
+  introFinalizeTimer = window.setTimeout(handleIntroAfterLeave, INTRO_HANDOFF_FALLBACK_MS)
   try {
     sessionStorage.setItem(INTRO_SESSION_KEY, 'seen')
   }
@@ -133,6 +159,7 @@ function handleIntroAfterLeave() {
   if (introComplete.value)
     return
   stopHandoffResizeWatch()
+  window.removeEventListener('transitionend', handleHandoffTransitionEnd)
   if (introFinalizeTimer !== null) {
     window.clearTimeout(introFinalizeTimer)
     introFinalizeTimer = null
@@ -157,6 +184,7 @@ function handleIntroAfterLeave() {
 onUnmounted(() => {
   appStore.introActive = false
   stopHandoffResizeWatch()
+  window.removeEventListener('transitionend', handleHandoffTransitionEnd)
   if (introFinalizeTimer !== null)
     window.clearTimeout(introFinalizeTimer)
   if (introRevealTimer !== null)

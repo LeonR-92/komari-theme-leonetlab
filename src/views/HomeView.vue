@@ -16,6 +16,7 @@ import { useAppStore } from '@/stores/app'
 import { useNodesStore } from '@/stores/nodes'
 import * as financeHelper from '@/utils/financeHelper'
 import { isNodeInGroup, parseNodeGroups } from '@/utils/groupHelper'
+import { isMobileLike, MOBILE_NO_MOVE_CLASS } from '@/utils/mobilePerf'
 import { isRegionMatch } from '@/utils/regionHelper'
 
 defineOptions({ name: 'HomeView' })
@@ -332,6 +333,7 @@ function getNodeItemTransitionStyle(index: number): Record<string, string> {
               v-if="nodeList.length !== 0 && appStore.nodeViewMode === 'card'"
               :appear="!appStore.disablePageAnimation"
               :css="!appStore.disablePageAnimation"
+              :move-class="isMobileLike ? MOBILE_NO_MOVE_CLASS : undefined"
               name="node-card-switch"
               tag="div"
               class="gap-4 grid grid-cols-1 sm:grid-cols-[repeat(auto-fill,minmax(330px,1fr))]"

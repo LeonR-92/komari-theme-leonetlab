@@ -9,6 +9,7 @@ import { useAppStore } from '@/stores/app'
 import { useNodesStore } from '@/stores/nodes'
 import { ensureWorldMapRegistered } from '@/utils/echartsWorldMap'
 import { getCoordByCode, getCountryCodeFromRegion } from '@/utils/geoHelper'
+import { isMobileLike } from '@/utils/mobilePerf'
 import { getRegionDisplayName } from '@/utils/regionHelper'
 import '@/utils/echarts'
 
@@ -109,6 +110,8 @@ const mapSeriesData = computed(() => points.value.map(point => ({
 })))
 
 const chartOption = computed<EChartsOption>(() => ({
+  // 移动端关闭地图动画，减少持续 GPU/CPU 负载
+  animation: !isMobileLike,
   animationDurationUpdate: 300,
   animationEasingUpdate: 'cubicOut',
   series: [

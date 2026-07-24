@@ -7,6 +7,7 @@ import type { Client, KomariRpc, NodeStatus } from '@/utils/rpc'
 import { useAppStore } from '@/stores/app'
 import { useNodesStore } from '@/stores/nodes'
 import { getSharedApi } from '@/utils/api'
+import { isMobileLike, MOBILE_POLL_INTERVAL_FLOOR_MS } from '@/utils/mobilePerf'
 import { getSharedRpc, RpcError } from '@/utils/rpc'
 
 /** 初始化配置 */
@@ -52,16 +53,17 @@ class InitManager {
 
   /**
    * 获取轮询间隔（毫秒）
-   * 从 publicSettings.theme_settings.dataUpdateInterval 读取，默认 3 秒
+   * 从 publicSettings.theme_settings.dataUpdateInterval 读取，默认 3 秒。
+   * 移动端（触屏/小视口）设置 5 秒下限以降低常驻网络与渲染负载，桌面行为不变。
    */
   private getPollInterval(): number {
     const settings = this.appStore.publicSettings?.theme_settings
     const interval = settings?.dataUpdateInterval
     // 确保值在合理范围内（1-60秒）
-    if (typeof interval === 'number' && interval >= 1 && interval <= 60) {
-      return interval * 1000 // 转换为毫秒
-    }
-    return 3000 // 默认 3 秒
+    const base = typeof interval === 'number' && interval >= 1 && interval <= 60
+      ? interval * 1000 // 转换为毫秒
+      : 3000 // 默认 3 秒
+    return isMobileLike ? Math.max(base, MOBILE_POLL_INTERVAL_FLOOR_MS) : base
   }
 
   /**
@@ -355,6 +357,11 @@ class InitManager {
    */
   private async poll(): Promise<void> {
     if (this.isPolling) {
+      return
+    }
+
+    // 后台标签页不轮询：不可见时的状态刷新既浪费电量也触发不可见的批量重渲染。
+    if (typeof document !== 'undefined' && document.visibilityState === 'hidden') {
       return
     }
 

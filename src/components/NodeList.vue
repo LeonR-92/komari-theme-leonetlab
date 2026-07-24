@@ -10,6 +10,7 @@ import { ProgressThin } from '@/components/ui/progress-thin'
 import { useBackgroundSurface } from '@/composables/useBackgroundSurface'
 import { useAppStore } from '@/stores/app'
 import { formatBytesPerSecondWithConfig, formatBytesWithConfig, formatDateTime, formatUptimeWithFormat, getStatus } from '@/utils/helper'
+import { isMobileLike, MOBILE_NO_MOVE_CLASS } from '@/utils/mobilePerf'
 import { getOSImage, getOSName } from '@/utils/osImageHelper'
 import { getRegionCode, getRegionDisplayName } from '@/utils/regionHelper'
 import { formatPriceWithCycle, getDaysUntilExpired, getExpireStatus, getExpireTextClass, parseTags } from '@/utils/tagHelper'
@@ -264,6 +265,7 @@ function getCustomTags(node: NodeData): Array<string> {
       <TransitionGroup
         :appear="!appStore.disablePageAnimation"
         :css="!appStore.disablePageAnimation"
+        :move-class="isMobileLike ? MOBILE_NO_MOVE_CLASS : undefined"
         name="node-row-switch"
         tag="div"
         class="flex flex-col gap-1"

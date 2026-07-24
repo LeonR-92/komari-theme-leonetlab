@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { onMounted, onUnmounted, ref, watch } from 'vue'
 import { useAppStore } from '@/stores/app'
+import { isMobileLike } from '@/utils/mobilePerf'
 
 const props = withDefaults(defineProps<{ paused?: boolean }>(), { paused: false })
 
@@ -198,7 +199,9 @@ onMounted(() => {
   configureCanvas()
   window.addEventListener('resize', handleResize, { passive: true })
   document.addEventListener('visibilitychange', handleVisibilityChange)
-  if (!reducedMotion && !saveData)
+  // 移动端（触屏/小视口）只绘制静态帧：全屏 50fps Canvas 是发热与掉帧的
+  // 主要来源之一；resize/主题变化仍会通过既有 watcher 重绘单帧。
+  if (!reducedMotion && !saveData && !isMobileLike)
     animationFrame = window.requestAnimationFrame(animate)
 })
 
