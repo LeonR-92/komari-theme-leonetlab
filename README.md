@@ -4,7 +4,7 @@ A theme for Komari, based on Komari Emerald.
 
 ![LeoNetLab Observatory preview](docs/preview.png)
 
-A cinematic global network observatory for Komari Monitor: a live dot-matrix data ocean, an instrument-grade interface, and a single continuous 3D globe from first visit to dashboard.
+A cinematic global network observatory for Komari Monitor: a live dot-matrix data ocean, an instrument-grade interface, and a single continuous 3D globe from first visit to dashboard. Theme version numbers track Komari's own — future upgrades ship alongside Komari releases.
 
 ## Highlights
 
@@ -59,4 +59,4 @@ The build emits `dist/` and `komari-theme-leonetlab-build-v1.3.0.zip` with a roo
 
 Based on [Komari Emerald](https://github.com/Tokinx/komari-theme-emerald) by Tokinx (MIT License). Released under the MIT License, © 2026 LeoNetLab ([LeonR-92](https://github.com/LeonR-92)).
 
-`CHANGELOG.md` is a historical archive through v1.2.9. Later changes are published in [GitHub Releases](https://github.com/LeonR-92/komari-theme-leonetlab/releases).
+`CHANGELOG.md` starts at v1.3.0 — theme versions now track Komari's own version numbers, and earlier releases were retired. Later changes are published in [GitHub Releases](https://github.com/LeonR-92/komari-theme-leonetlab/releases).
