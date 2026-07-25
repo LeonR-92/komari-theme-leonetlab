@@ -1,5 +1,15 @@
 # 更新日志
 
+## 1.2.9 — 2026-07-25
+
+- 修复首访 HUD 被球体辉光压住：定位移到球体槽位正右下角（球面外），背景不透明度 82%→92% 并提升层级。
+- 修复 Ping「平滑」ⓘ 被压成竖条：`width="272"` 字符串绑定改为 `:width="272"` 数字绑定（自动补 px），气泡右对齐防出视口；探测线路 ⓘ 删除重复数值网格，改为算法语义说明。
+- 统一全站 tooltip 为仪器风：`DataTooltip` 默认气泡改为 `bg-background/95` + `--lnl-line` 发丝边 + `backdrop-blur`，明暗主题同构；清理 Header、首页状态条与节点卡片 Ping 面板的浏览器原生 `title` 提示。
+- 修复节点卡片系统图标/国旗上方的多余横线：全局分隔线选择器收窄，不再命中 CardX header-extra。
+- 修复财务汇率原生 `<select>` 系统弹层溢出：换为主题自制 listbox 下拉（点外/Escape 关闭），并允许弹出层溢出财务卡片可视区。
+- 六张汇总卡片角标由半透明图标改为等宽微标签 MEM/DSK/VAL/SUM/UP/DLN，降低视觉噪声。
+- 刷新主题市场预览图 `docs/preview.png`；Service Worker 缓存升级为 1.2.9，首访会话标记同步升级（`leonetlab:intro:1.2.9`）。
+
 ## 1.2.8 — 2026-07-25
 
 - 首访交接重构为**单 cobe 实例**架构：1.2.7 及以前是 intro 与 dashboard 各持一个 cobe 引擎、靠测量对齐与计时交接，慢主线程下本质脆弱（用户实测仍闪跳）。现在全程只有一个引擎，其 DOM（含 canvas 与 WebGL 上下文）由 Vue Teleport 在 intro 槽位 → 飞行壳（fixed + transform 过渡）→ dashboard 槽位之间迁移，旋转相位、拖拽状态天然连续，交接不再依赖双实例对齐。

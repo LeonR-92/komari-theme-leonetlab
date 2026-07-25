@@ -391,7 +391,7 @@ function getCustomTags(node: NodeData): Array<string> {
                   </div>
                   <template #content>
                     <div class="flex items-center justify-between gap-3 whitespace-nowrap">
-                      <span class="text-background/70">Swap</span>
+                      <span class="text-muted-foreground">Swap</span>
                       <span>{{ formatBytes(node.swap ?? 0) }}</span>
                     </div>
                   </template>

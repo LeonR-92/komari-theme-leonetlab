@@ -7,6 +7,7 @@ import { useRouter } from 'vue-router'
 import MarkdownRenderer from '@/components/MarkdownRenderer.vue'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
+import { DataTooltip } from '@/components/ui/data-tooltip'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Empty } from '@/components/ui/empty'
 import { Input } from '@/components/ui/input'
@@ -244,10 +245,10 @@ function getNodeItemTransitionStyle(index: number): Record<string, string> {
             :class="{ 'is-urgent': auxiliaryStatus.urgent }"
           >
             <dt>{{ auxiliaryStatus.label }}</dt>
-            <dd :title="auxiliaryStatus.value">
+            <DataTooltip as="dd" placement="bottom" :content="auxiliaryStatus.value" class="block" content-class="whitespace-nowrap px-2 py-1 text-[11px]">
               <span class="lnl-dashboard-status-value">{{ auxiliaryStatus.value }}</span>
               <small>{{ auxiliaryStatus.meta }}</small>
-            </dd>
+            </DataTooltip>
           </div>
         </Transition>
       </dl>

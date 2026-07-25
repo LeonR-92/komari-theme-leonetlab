@@ -96,16 +96,18 @@ function handleLogoError(event: Event) {
 <template>
   <header class="lnl-header" :class="{ 'is-scrolled': isScrolled }">
     <div class="lnl-header-inner max-w-[1680px] mx-auto">
-      <button class="lnl-identity" type="button" title="返回监控总览" @click="router.push('/')">
-        <span class="lnl-identity-mark">
-          <img v-if="logoVisible" :src="appStore.brandLogoUrl" alt="" @error="handleLogoError">
-          <span v-else aria-hidden="true">{{ appStore.brandShortName.slice(0, 1).toUpperCase() }}</span>
-        </span>
-        <span class="lnl-identity-copy">
-          <b>{{ appStore.brandName }}</b>
-          <small>{{ appStore.brandShortName.toUpperCase() }} / {{ appStore.brandHeaderSubtitle }}</small>
-        </span>
-      </button>
+      <DataTooltip content="返回监控总览" placement="bottom" content-class="whitespace-nowrap px-2 py-1 text-[11px]">
+        <button class="lnl-identity" type="button" @click="router.push('/')">
+          <span class="lnl-identity-mark">
+            <img v-if="logoVisible" :src="appStore.brandLogoUrl" alt="" @error="handleLogoError">
+            <span v-else aria-hidden="true">{{ appStore.brandShortName.slice(0, 1).toUpperCase() }}</span>
+          </span>
+          <span class="lnl-identity-copy">
+            <b>{{ appStore.brandName }}</b>
+            <small>{{ appStore.brandShortName.toUpperCase() }} / {{ appStore.brandHeaderSubtitle }}</small>
+          </span>
+        </button>
+      </DataTooltip>
       <div class="lnl-header-state" aria-hidden="true">
         <i /> {{ appStore.brandStatusLabel }}
       </div>

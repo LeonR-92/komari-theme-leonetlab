@@ -75,7 +75,7 @@ assert.match(dataOcean, /saveData/)
 assert.doesNotMatch(dataOcean, /NODE:|TELEMETRY|DATA STREAM/)
 // The intro session key changes only when the intro itself is intentionally
 // redesigned; ordinary patch releases must not replay it for every visitor.
-assert.match(app, /leonetlab:intro:1\.2\.8/)
+assert.match(app, /leonetlab:intro:1\.2\.9/)
 assert.match(app, /appShellMounted/)
 // 交接离场改用手动 leave 类切换（组件飞行期间保持存活，地球持续旋转）。
 assert.match(app, /introLeaving/)

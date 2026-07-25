@@ -536,7 +536,7 @@ textarea {
 .node-card > div > div {
   position: relative;
 }
-.node-card > div > div + div {
+.node-card > div:not(:first-child) > div + div {
   border-top: 1px solid color-mix(in srgb, var(--lnl-line) 58%, transparent);
 }
 .node-info input {

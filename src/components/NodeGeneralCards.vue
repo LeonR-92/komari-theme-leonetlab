@@ -1,8 +1,7 @@
 <script setup lang="ts">
 import type { NodeData } from '@/stores/nodes'
 import type { CurrencyCode } from '@/utils/financeHelper'
-import { Icon } from '@iconify/vue'
-import { computed, defineAsyncComponent, onMounted, ref } from 'vue'
+import { computed, defineAsyncComponent, onBeforeUnmount, onMounted, ref } from 'vue'
 import { CardX } from '@/components/ui/card-x'
 import { DataTooltip } from '@/components/ui/data-tooltip'
 import { useBackgroundSurface } from '@/composables/useBackgroundSurface'
@@ -35,6 +34,8 @@ const metricSwitchTransitionProps = computed(() => ({
 }))
 
 const openFinanceCard = ref(false)
+const financeCurrencyMenuOpen = ref(false)
+const financeCurrencyMenuRef = ref<HTMLElement | null>(null)
 
 function getMetricSwitchStyle(index: number): Record<string, string> {
   return {
@@ -42,10 +43,30 @@ function getMetricSwitchStyle(index: number): Record<string, string> {
   }
 }
 
-function setExchangeRateBaseCurrency(event: Event): void {
-  const target = event.target as HTMLSelectElement
-  exchangeRateBaseCurrency.value = financeHelper.normalizeCurrency(target.value)
+function closeFinanceCurrencyMenu(): void {
+  financeCurrencyMenuOpen.value = false
+}
+
+function toggleFinanceCurrencyMenu(): void {
+  financeCurrencyMenuOpen.value = !financeCurrencyMenuOpen.value
+}
+
+function setExchangeRateBaseCurrency(currency: CurrencyCode): void {
+  exchangeRateBaseCurrency.value = financeHelper.normalizeCurrency(currency)
   financeHelper.setStoredFinanceCurrency(exchangeRateBaseCurrency.value)
+  closeFinanceCurrencyMenu()
+}
+
+function handleFinanceCurrencyDocumentPointerDown(event: PointerEvent): void {
+  const root = financeCurrencyMenuRef.value
+  if (!root || !event.target || root.contains(event.target as Node))
+    return
+  closeFinanceCurrencyMenu()
+}
+
+function handleFinanceCurrencyKeydown(event: KeyboardEvent): void {
+  if (event.key === 'Escape')
+    closeFinanceCurrencyMenu()
 }
 
 const totalSpeed = computed(() => {
@@ -173,11 +194,18 @@ const cardGridClass = computed(() => showVisualPanel.value
   : 'col-span-1 grid grid-cols-3 lg:grid-cols-6 gap-2')
 
 onMounted(async () => {
+  document.addEventListener('pointerdown', handleFinanceCurrencyDocumentPointerDown, true)
+  document.addEventListener('keydown', handleFinanceCurrencyKeydown)
   exchangeRateBaseCurrency.value = financeHelper.getStoredFinanceCurrency()
   excludeFreeNodes.value = financeHelper.shouldExcludeFreeNodes()
 
   const { rates } = await financeHelper.getDailyExchangeRates()
   exchangeRates.value = rates
+})
+
+onBeforeUnmount(() => {
+  document.removeEventListener('pointerdown', handleFinanceCurrencyDocumentPointerDown, true)
+  document.removeEventListener('keydown', handleFinanceCurrencyKeydown)
 })
 </script>
 
@@ -199,10 +227,7 @@ onMounted(async () => {
         <div class="flex h-full flex-col justify-between gap-1">
           <div class="flex items-start justify-between">
             <span class="text-xs font-medium tracking-wider text-muted-foreground">内存用量</span>
-            <Icon
-              icon="icon-park-outline:memory" :width="20" :height="20"
-              class="text-slate-500/20 group-hover:text-slate-500 transition-colors"
-            />
+            <span class="lnl-metric-tag" aria-hidden="true">MEM</span>
           </div>
           <Transition v-bind="metricSwitchTransitionProps">
             <div
@@ -231,10 +256,7 @@ onMounted(async () => {
         <div class="flex h-full flex-col justify-between gap-1">
           <div class="flex items-start justify-between">
             <span class="text-xs font-medium tracking-wider text-muted-foreground">硬盘用量</span>
-            <Icon
-              icon="tabler:server-2" :width="20" :height="20"
-              class="text-slate-500/20 group-hover:text-slate-500 transition-colors"
-            />
+            <span class="lnl-metric-tag" aria-hidden="true">DSK</span>
           </div>
           <Transition v-bind="metricSwitchTransitionProps">
             <div
@@ -268,10 +290,7 @@ onMounted(async () => {
             <span class="sr-only">按下查看财务汇率详情</span>
             <div class="flex items-start justify-between">
               <span class="text-xs font-medium tracking-wider text-muted-foreground">剩余价值</span>
-              <Icon
-                icon="tabler:cash" :width="20" :height="20"
-                class="text-slate-500/20 group-hover:text-slate-500 transition-colors"
-              />
+              <span class="lnl-metric-tag" aria-hidden="true">VAL</span>
             </div>
             <Transition v-bind="metricSwitchTransitionProps">
               <div
@@ -298,7 +317,7 @@ onMounted(async () => {
           ]"
           content-class="h-full !p-4" @click="openFinanceCard = false"
         >
-          <div class="flex h-full min-w-0 flex-col overflow-hidden">
+          <div class="flex h-full min-w-0 flex-col overflow-visible">
             <div class="shrink-0 grid grid-cols-3 gap-1.5">
               <div v-for="(item, index) in financeSummaryItems" :key="item.label" class="min-w-0">
                 <div class="flex mb-1.5 items-center text-xs font-medium text-muted-foreground">
@@ -325,15 +344,32 @@ onMounted(async () => {
                 <div class="flex items-center gap-1 text-xs font-medium tracking-wider text-muted-foreground">
                   今日汇率
                 </div>
-                <select
-                  id="exchange-rate-base"
-                  :value="exchangeRateBaseCurrency"
-                  class="shrink-0 rounded-sm border border-border/70 bg-background/70 px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground outline-none transition-colors hover:text-foreground focus:text-foreground" name="exchange-rate-base" aria-label="切换汇率基准币种" @click.stop @change.stop="setExchangeRateBaseCurrency"
-                >
-                  <option v-for="currency in financeRateCurrencies" :key="currency" :value="currency">
-                    {{ currency }}
-                  </option>
-                </select>
+                <div ref="financeCurrencyMenuRef" class="relative shrink-0" @click.stop>
+                  <button
+                    id="exchange-rate-base" type="button"
+                    class="flex items-center gap-1 rounded-sm border border-border/70 bg-background/70 px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground outline-none transition-colors hover:text-foreground focus:text-foreground"
+                    name="exchange-rate-base" aria-label="切换汇率基准币种" aria-haspopup="listbox"
+                    :aria-expanded="financeCurrencyMenuOpen" @click.stop="toggleFinanceCurrencyMenu"
+                    @keydown.down.prevent="financeCurrencyMenuOpen = true"
+                  >
+                    <span>{{ exchangeRateBaseCurrency }}</span>
+                    <span aria-hidden="true" class="text-[8px] leading-none">▾</span>
+                  </button>
+                  <div
+                    v-if="financeCurrencyMenuOpen" role="listbox" aria-label="汇率基准币种"
+                    class="absolute right-0 top-full z-30 mt-1 min-w-[76px] border border-[color:var(--lnl-line)] bg-background/95 p-0.5 shadow-lg backdrop-blur-md"
+                  >
+                    <button
+                      v-for="currency in financeRateCurrencies" :key="currency" type="button" role="option"
+                      :aria-selected="currency === exchangeRateBaseCurrency"
+                      class="flex w-full items-center justify-between gap-2 px-2 py-1 text-left text-[10px] font-medium text-muted-foreground transition-colors hover:bg-foreground/5 hover:text-foreground"
+                      :class="currency === exchangeRateBaseCurrency && 'bg-foreground/5 text-foreground'"
+                      @click.stop="setExchangeRateBaseCurrency(currency)"
+                    >
+                      {{ currency }}
+                    </button>
+                  </div>
+                </div>
               </div>
               <div class="flex-1" />
               <div class="grid grid-cols-2 gap-y-1 gap-x-4">
@@ -369,10 +405,7 @@ onMounted(async () => {
         <div class="flex h-full flex-col justify-between gap-1">
           <div class="flex items-start justify-between">
             <span class="text-xs font-medium tracking-wider text-muted-foreground">累计流量</span>
-            <Icon
-              icon="tabler:download" :width="20" :height="20"
-              class="text-slate-500/20 group-hover:text-slate-500 transition-colors"
-            />
+            <span class="lnl-metric-tag" aria-hidden="true">SUM</span>
           </div>
           <DataTooltip
             as="span" placement="top"
@@ -408,10 +441,7 @@ onMounted(async () => {
         <div class="flex h-full flex-col justify-between gap-1">
           <div class="flex items-start justify-between">
             <span class="text-xs font-medium tracking-wider text-muted-foreground">实时上行</span>
-            <Icon
-              icon="tabler:chevrons-up" :width="20" :height="20"
-              class="text-slate-500/20 group-hover:text-slate-500 transition-colors"
-            />
+            <span class="lnl-metric-tag" aria-hidden="true">UP</span>
           </div>
           <Transition v-bind="metricSwitchTransitionProps">
             <div
@@ -437,10 +467,7 @@ onMounted(async () => {
         <div class="flex h-full flex-col justify-between gap-1">
           <div class="flex items-start justify-between">
             <span class="text-xs font-medium tracking-wider text-muted-foreground">实时下行</span>
-            <Icon
-              icon="tabler:chevrons-down" :width="20" :height="20"
-              class="text-slate-500/20 group-hover:text-slate-500 transition-colors"
-            />
+            <span class="lnl-metric-tag" aria-hidden="true">DLN</span>
           </div>
           <Transition v-bind="metricSwitchTransitionProps">
             <div
@@ -461,6 +488,27 @@ onMounted(async () => {
 </template>
 
 <style scoped>
+.lnl-metric-tag {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 3px;
+  border: 1px solid color-mix(in srgb, var(--lnl-line) 70%, transparent);
+  color: color-mix(in srgb, var(--muted-foreground) 55%, transparent);
+  font: 500 8px/1 var(--font-mono);
+  letter-spacing: 0.14em;
+  opacity: 0.85;
+  transition:
+    color 180ms ease,
+    border-color 180ms ease,
+    opacity 180ms ease;
+}
+
+.group:hover .lnl-metric-tag {
+  border-color: color-mix(in srgb, var(--lnl-line) 92%, var(--foreground) 8%);
+  color: var(--muted-foreground);
+  opacity: 1;
+}
+
 .lnl-finance-popover {
   left: 50%;
   width: 260%;

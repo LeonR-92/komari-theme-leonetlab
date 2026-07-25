@@ -41,8 +41,6 @@ const {
   lossRenderBars,
   latencyDisplay,
   lossDisplay,
-  latencyPanelTooltip,
-  lossPanelTooltip,
 } = useNodePingDisplay(() => props.node.uuid)
 
 function showTrafficProgress(node: NodeData): boolean {
@@ -203,7 +201,7 @@ function openPingDialog() {
               </div>
               <template #content>
                 <div class="flex items-center justify-between gap-3 whitespace-nowrap">
-                  <span class="text-background/70">Swap</span>
+                  <span class="text-muted-foreground">Swap</span>
                   <span>{{ formatBytes(props.node.swap ?? 0) }}</span>
                 </div>
               </template>
@@ -323,7 +321,7 @@ function openPingDialog() {
                 role="button" tabindex="0"
                 data-node-ping-panel="latency"
                 class="group/panel relative col-span-3 flex h-8 cursor-pointer flex-col gap-1 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                :title="latencyPanelTooltip" :aria-label="`${props.node.name} 延迟`" @click.stop="openPingDialog"
+                :aria-label="`${props.node.name} 延迟`" @click.stop="openPingDialog"
                 @keydown.enter.stop.prevent="openPingDialog" @keydown.space.stop.prevent="openPingDialog"
               >
                 <div class="flex items-center justify-between text-[11px] leading-none relative">
@@ -352,7 +350,7 @@ function openPingDialog() {
                 role="button" tabindex="0"
                 data-node-ping-panel="loss"
                 class="group/panel relative col-span-3 flex h-8 cursor-pointer flex-col gap-1 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                :title="lossPanelTooltip" :aria-label="`${props.node.name} 丢包`" @click.stop="openPingDialog"
+                :aria-label="`${props.node.name} 丢包`" @click.stop="openPingDialog"
                 @keydown.enter.stop.prevent="openPingDialog" @keydown.space.stop.prevent="openPingDialog"
               >
                 <div class="flex items-center justify-between text-[11px] leading-none">

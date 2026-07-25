@@ -212,14 +212,16 @@ onUnmounted(() => timers.forEach(timer => window.clearTimeout(timer)))
 
 .lnl-intro-globe-hud {
   position: absolute;
-  right: 7%;
-  bottom: 10%;
+  z-index: 4;
+  right: 0;
+  bottom: 0;
   display: flex;
   align-items: center;
   gap: 9px;
   padding: 5px 7px;
   border: 1px solid color-mix(in srgb, var(--intro-accent) 24%, transparent);
-  background: color-mix(in srgb, var(--intro-bg) 82%, transparent);
+  background: color-mix(in srgb, var(--intro-bg) 92%, transparent);
+  box-shadow: 0 12px 32px color-mix(in srgb, var(--intro-bg) 55%, transparent);
   color: var(--intro-muted);
   font: 7px/1 var(--font-mono);
   letter-spacing: 0.11em;

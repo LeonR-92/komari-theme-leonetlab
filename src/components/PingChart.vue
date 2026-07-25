@@ -885,30 +885,16 @@ onUnmounted(() => {
                   <span>LOSS {{ Number.isFinite(task.loss) ? task.loss.toFixed(2) : '0.00' }}%</span>
                   <span v-if="task.p99_p50_ratio !== undefined">JIT {{ task.p99_p50_ratio.toFixed(2) }}</span>
                 </div>
-                <DataTooltip placement="top" content-class="!rounded-none p-3 w-60 backdrop-blur">
+                <DataTooltip placement="top" content-class="!rounded-none !left-auto right-0 translate-x-0 p-3 w-64">
                   <Button variant="ghost" size="icon-xs" class="lnl-ping-probe-info" @click.stop>
                     <Icon icon="carbon:information" :width="14" :height="14" />
                   </Button>
                   <template #content>
-                    <div class="grid grid-cols-2 gap-x-4 gap-y-1.5 text-xs">
-                      <template v-if="task.min !== undefined">
-                        <span class="text-muted-foreground">最小</span><span>{{ Math.round(task.min) }} ms</span>
-                      </template>
-                      <template v-if="task.max !== undefined">
-                        <span class="text-muted-foreground">最大</span><span>{{ Math.round(task.max) }} ms</span>
-                      </template>
-                      <template v-if="task.avg !== undefined">
-                        <span class="text-muted-foreground">平均</span><span>{{ Math.round(task.avg) }} ms</span>
-                      </template>
-                      <template v-if="task.p50 !== undefined">
-                        <span class="text-muted-foreground">P50</span><span>{{ Math.round(task.p50) }} ms</span>
-                      </template>
-                      <template v-if="task.p99 !== undefined">
-                        <span class="text-muted-foreground">P99</span><span>{{ Math.round(task.p99) }} ms</span>
-                      </template>
-                      <template v-if="task.total !== undefined">
-                        <span class="text-muted-foreground">样本</span><span>{{ task.total }}</span>
-                      </template>
+                    <div class="space-y-1.5 text-xs leading-relaxed">
+                      <p>每条探测线路按任务周期上报时延与丢包；行内 LOSS 为统计窗口丢包率，JIT 为 P99/P50 抖动比值。</p>
+                      <p class="text-muted-foreground">
+                        数值随最近统计窗口滚动更新，点按该行可启停此线路。
+                      </p>
                     </div>
                   </template>
                 </DataTooltip>
@@ -932,7 +918,7 @@ onUnmounted(() => {
                 <Button variant="ghost" size="xs" class="h-7 rounded-none" :class="[cutPeak && '!text-emerald-600']" @click="cutPeak = !cutPeak">
                   平滑
                 </Button>
-                <DataTooltip placement="bottom" width="272" :content-class="pickSurfaceClass('text-[11px] leading-relaxed', 'text-[11px] leading-relaxed backdrop-blur-xl')">
+                <DataTooltip placement="bottom" :width="272" :content-class="pickSurfaceClass('text-[11px] leading-relaxed !left-auto right-0 translate-x-0', 'text-[11px] leading-relaxed backdrop-blur-xl !left-auto right-0 translate-x-0')">
                   <Button variant="ghost" size="icon-xs" class="text-slate-500" aria-label="查看 Ping 平滑算法说明">
                     <Icon icon="carbon:information" :width="14" :height="14" />
                   </Button>

@@ -17,7 +17,7 @@ const isReady = ref(false)
 // again. The value still keeps the animation to once per browser session.
 // 1.2.8 重构为单 cobe 实例交接（Teleport 迁移同一 DOM，WebGL 上下文不重建），
 // 让老用户重放重构后的 intro。
-const INTRO_SESSION_KEY = 'leonetlab:intro:1.2.8'
+const INTRO_SESSION_KEY = 'leonetlab:intro:1.2.9'
 // 飞行壳的 transform 过渡时长；交接收尾以 transitionend 为准，固定计时器只作
 // 兜底：主线程长任务会推迟 CSS 过渡起点，按点击时刻计时会提前撤壳闪跳。
 const INTRO_HANDOFF_DURATION_MS = 1080
