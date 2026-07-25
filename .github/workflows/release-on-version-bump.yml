@@ -59,7 +59,9 @@ jobs:
         run: npm run build
 
       - name: Audit production dependencies
-        run: npm audit --audit-level=high
+        # 只审计随主题分发的生产依赖（--omit=dev）：构建/lint 工具链的漏洞
+        # 不进入安装包，且 dev 链的修复常要求 eslint 等大版本跳跃，不应阻塞发布。
+        run: npm audit --omit=dev --audit-level=high
 
       - name: Detect version release
         if: github.event_name == 'push'
