@@ -182,7 +182,9 @@ onUnmounted(() => {
 <style scoped>
 .background-container {
   position: fixed;
-  inset: 0;
+  inset: 0 0 auto 0;
+  height: 100vh;
+  height: 100lvh;
   z-index: 0;
   overflow: hidden;
   pointer-events: none;

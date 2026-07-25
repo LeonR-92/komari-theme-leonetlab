@@ -1,171 +1,62 @@
-# LeoNetLab Observatory for Komari
+# LeoNetLab Observatory
 
-面向 Komari Monitor 的可换品牌网络观测主题。默认保留 LeoNetLab 的观测站视觉，同时允许站长在 Komari 后台替换站点名、主副标题、状态词、首访文案和 Logo。主题保留 Komari Emerald 的数据、图表、节点详情、WebSocket/HTTP 回退与响应式地球实现，并重新设计站点外壳、颜色、排版、节点卡片、首访动画、纯点阵数字海洋和移动端布局。
+A theme for Komari, based on Komari Emerald.
 
-1.1.2 起提供 PWA Manifest、192/512 图标、动态浏览器主题色与保守的离线链路页。Service Worker 只缓存主题静态资源，不缓存 Komari API、后台页面或实时节点响应；PWA 安装需要通过 HTTPS（本地开发可使用 localhost）访问。
+![LeoNetLab Observatory preview](docs/preview.png)
 
-## 兼容范围
+A cinematic global network observatory for Komari Monitor: a live dot-matrix data ocean, an instrument-grade interface, and a single continuous 3D globe from first visit to dashboard.
 
-- 已按 Komari `1.2.5-fix1` 的公开主题与 RPC 结构开发，并兼容该版本 `common:getNodes` 返回的节点数组。
-- Komari `1.2.5-fix2` 已把 `common:getNodes` 修正为 UUID 键控对象；主题继续通过同一兼容层同时接受 fix1 数组与 fix2/1.2.7 对象。
-- 对 Komari `1.2.7` 保持兼容；其新增指标 RPC 可用时用于详情图表，不可用时回退到 `common:getRecords`。访客审计 RPC 是可选能力，本主题不依赖它。
-- 官方 `1.2.6` 与 `1.3.0` 稳定版已发布；经接口比对，主题使用的 `common:*` 与 `public:queryMetrics`/`public:getPingMetricStats` 在 `1.2.6`/`1.3.x` 均无变化，实际兼容。指标存储未初始化返回的 `-32603` 也会安全回退到 `common:getRecords`。
-- 主题配置使用 `managed` 类型；服务器 1.0.5 及以上可用。
+## Highlights
 
-## 构建
+- **Single-instance globe handoff** — one cobe engine travels from the intro cover to the dashboard via Vue Teleport; canvas, WebGL context, rotation phase and drag state never reset.
+- **Dual color modes** — dark green academic instrument palette and a calm light mode, with system (Beijing time), light, or dark defaults.
+- **PWA support** — runtime manifest, offline fallback page, and a conservative Service Worker that never caches Komari APIs or live node responses.
+- **Mobile performance** — static background frame, capped globe DPR and frame rate, deferred chart animation, and scroll-fixed background layers.
+- **Broad compatibility** — Komari `1.2.5-fix1`, `1.2.5-fix2`, `1.2.6`, `1.2.7`, and `1.3.x`, with metric-RPC fallback to `common:getRecords`.
 
-需要 Node.js 20.19+ 或 22.12+。项目沿用上游 Bun 工作流，也可使用兼容的 npm 安装依赖后构建。
+## Install
+
+**From GitHub Release (recommended)**
+
+1. In Komari, open **Settings → Theme management**.
+2. Add or update the theme from the repository: `https://github.com/LeonR-92/komari-theme-leonetlab`.
+3. Komari resolves the latest GitHub Release and imports its first ZIP asset.
+
+**Manual ZIP upload**
+
+1. Download `komari-theme-leonetlab-build-v1.3.0.zip` from the [latest Release](https://github.com/LeonR-92/komari-theme-leonetlab/releases/latest).
+2. Upload the ZIP in Komari theme management and select **LeoNetLab Observatory**.
+
+## Configuration
+
+All settings are optional managed theme settings; blank brand fields fall back to the Komari site configuration.
+
+- Branding: display name, short name, logo URL, header subtitle, live-status label.
+- Copy: home eyebrow/title/description, intro eyebrow/subtitle, footer eyebrow.
+- Data: refresh interval, WebSocket/HTTP realtime transport.
+- Home: default card/list view, default color mode, globe mode, visitor info card.
+
+## Compatibility
+
+- Node responses are normalized for both `1.2.5-fix1` arrays and `1.2.5-fix2`/`1.2.7` UUID-keyed objects.
+- Ping charts prefer `public:queryMetrics` / `public:getPingMetricStats` when available and fall back to `common:getRecords` on method-not-found or uninitialized metric store errors.
+- Theme configuration uses the managed settings type; Komari server 1.0.5 or newer is required.
+
+## Development
 
 ```powershell
-bun install
-bun run build
-```
-
-构建完成后会生成：
-
-- `dist/`
-- `komari-theme-leonetlab-build-v1.2.9.zip`
-
-兼容性与构建检查：
-
-```powershell
+npm install
+npm run lint
+npm run type-check
 npm run validate
 npm run smoke:1.2.5
+npm run build
 ```
 
-`smoke:1.2.5` 会启动本地模拟接口并用无界面 Chrome/Edge 验证 1.2.5-fix1 数组节点响应、fix2/1.2.7 对象兼容、历史记录 RPC 回退、详情分区和 Ping 数据能够实际渲染；同时检查动态/静态地球模式、首访地球真实移动轨迹、国旗在明暗切换与拖动期间不丢失、Ping 内容动效、移动端 Logo 与访客卡片边界。
+The build emits `dist/` and `komari-theme-leonetlab-build-v1.3.0.zip` with a root `komari-theme.json` and `preview.png`.
 
-## 1.2.9 更新摘要
+## Acknowledgments & License
 
-- 修复线上实测 6 处 UI 回归：首访 HUD 移出球面右下弧并提高底色不透明度；Ping「平滑」说明按数字宽度绑定并右对齐，不再被压成竖条；探测线路 ⓘ 改为算法说明；节点卡片图标上方多余发丝线移除；汇率基准改为主题自制下拉，原生系统弹层不再溢出卡片；六张汇总卡片角标改为等宽微标签（MEM/DSK/VAL/SUM/UP/DLN）。
-- 统一全站 DataTooltip 为仪器风浅色气泡（明暗主题同构），清理残留的浏览器原生 `title` 提示。
-- 刷新 `docs/preview.png` 主题市场预览图；Service Worker 缓存与首访会话标记升级为 1.2.9。
+Based on [Komari Emerald](https://github.com/Tokinx/komari-theme-emerald) by Tokinx (MIT License). Released under the MIT License, © 2026 LeoNetLab ([LeonR-92](https://github.com/LeonR-92)).
 
-## 1.2.8 更新摘要
-
-- 首访交接重构为单 cobe 实例架构：全程只有一个地球引擎，其 DOM（含 canvas 与 WebGL 上下文）由 Vue Teleport 在 intro 槽位、飞行壳与 dashboard 槽位之间迁移，取代 1.2.7 的双实例测量对齐方案；旋转相位与拖拽状态天然连续，慢主线程下不再依赖计时交接。
-- 回归探针升级：飞行全程跟踪同一 canvas 元素引用，断言距离单调收敛无瞬移、落点与槽位误差 <2px、canvas 身份不变、自转继续、拖拽可用；新增 40 节点 + CPU 4x 节流取证脚本（`node scripts/capture-intro-v3.mjs`）。
-- Service Worker 缓存升级为 1.2.8，首访会话标记同步升级，老用户更新后重放一次重构后的交接动画。
-
-## 1.2.7 更新摘要
-
-- 修复多节点真实环境下首访交接闪跳：封面卸载改为由地球飞行过渡的 `transitionend` 真实结束事件驱动（固定计时器仅作兜底），飞行前还会等待 dashboard 地球仪挂载完成（仅 earth/earth-stop 模式），主线程繁忙时过渡只会推迟、不再被提前撤掉。
-- 移动端发热/掉帧治理：背景数据海在移动端只绘制静态帧；地球仪移动端 DPR 上限降到 1.5、点阵采样与帧率上限（30fps）同步下调；节点卡片/列表在移动端跳过 TransitionGroup 的逐子节点位置测量（enter/leave 动画保留）；实时轮询在后台标签页真实暂停、移动端间隔提高到 5 秒下限；ECharts 图表动画在移动端关闭。桌面行为不变。
-- Service Worker 缓存升级为 1.2.7，首访会话标记同步升级，老用户更新后重放一次修复后的交接动画。
-
-## 1.2.6 更新摘要
-
-- 重做首访 intro → 首页地球仪交接的朝向连续性：共享朝向从组件实例作用域移入模块作用域，dashboard 地球仪在交接完成瞬间精确继承 intro 最后一帧的 phi/theta（回归断言误差 < 0.01 rad）并继续自转，不再瞬跳回默认角度。
-- 首访交接飞行期间监听窗口 resize，按 rAF 节流重新测量 FLIP 目标位置；跳过按钮仍会立即触发并完成交接。
-- 减少动态效果偏好补全：地球仪在该偏好下不再自动旋转（保留拖拽），节点卡片/列表的 ping 波纹、地球与地图的状态脉冲点、页头状态轮换等无限动画全部静止。
-- Ping 图表在官方指标存储未初始化（`-32603` "metric store not initialized"）时回退到 `common:getRecords`，其它内部错误仍原样上抛。
-- 兼容范围扩展到官方 `1.2.6` 与 `1.3.x` 稳定版；首访会话标记升级为 1.2.6，老用户更新后会看到一次新 intro。
-
-## 1.2.5 更新摘要
-
-- 首访地球恢复与首页一致的自动旋转，并在交接时继承旋转角度；节点标记改为独立的模糊聚焦入场，避免与地球逐帧变换争用合成属性。首访总时长增加约一秒，背景、文案与地球采用分层淡出和延迟透明度过渡。
-- 修复历史时间格在宽容差下重复使用同一原始样本的问题；资源图表保留真实空值，不再把缺测画成 0，也不跨越缺测点制造平滑数据。
-- Ping 指标按 Komari 官方指标语义分别聚合：延迟使用桶内最后有效值，丢包使用桶内平均值，并保持丢包序列独立，避免 `-1` 丢包哨兵污染延迟。全丢包线路仍会显示为 100% 丢包，色块阈值由单一、可测试的数据源生成。
-- Ping 平滑仅用于折线的视觉降噪，原始统计、丢包与质量色块不受影响；信息按钮补充可悬停说明，并调整移动端工具栏以免提示层被裁切。
-- 统一财务计算中的免费节点规则；未知币种和无效汇率不再静默按 CNY 计算。补充时间填充、缺测平滑、全丢包、色块边界和汇率换算的确定性回归测试。
-
-## 1.2.2 更新摘要
-
-- 恢复 Emerald 原始模式语义：`earth` 自动旋转且可拖动，`earth-stop` 可拖动但松手后静止；浏览器回归分别验证两种行为。
-- 修复首访层被提前卸载导致地球交接动画实际未播放的问题；首访地球按真实目标位置平移与缩放，完成后再依次释放主页内容。
-- 首访地球和节点标记增加模糊到清晰的聚焦入场，并为 Ping 工具栏、探针矩阵和图表增加统一的分层过渡；减少动态偏好的系统会自动关闭这些效果。
-- PWA 缓存按资源性质分流：导航优先获取最新页面，版本化主题资源缓存优先，Manifest 与 Favicon 网络优先；可选图标预缓存失败不再阻塞 Service Worker 安装，更新发生在首访期间时会等交接完成再刷新。
-
-## 1.2.1 更新摘要
-
-- 修复财务卡片误把无障碍提示渲染为可见标题、挤压数值并造成文字越界的问题。
-- 首访地球按主页地球的实际位置和尺寸完成 FLIP 交接；交接完成后，标题、汇总卡片和节点区再依次浮出。
-- 首访期间不再被 Service Worker 更新强制刷新打断，避免出现二次加载跳变。
-- 地球拖动事件改由稳定的外层容器承接，避免 cobe 画布包装层造成拖动失效。
-- Ping 工作区保留关闭阶段节点数据并补充退出动效，不再瞬间卸载。
-- 顶部状态区增加三天内即将过期节点轮播；没有临期节点时，按官方节点价格、币种和计费周期显示当日摊销支出。
-- 管理后台交接画面随当前明暗模式同步配色。
-
-## 1.2.0 更新摘要
-
-- 地球明暗切换改为在同一 WebGL 实例上原地更新配色，不再销毁和重建 Canvas；新增逐帧回归，验证切换和拖动期间国旗 DOM、图片加载与显示状态持续稳定。
-- 首访动画直接复用首页的 cobe 点阵地球和真实节点区域数据，展示在线、离线与传输模式；退场时地球向首页位置收束，页头、摘要和节点卡片按层级浮现，并暂停被遮挡的首页地球以降低双 WebGL 动画负担。
-- 后台新增完整的“品牌与文案”配置：显示名、短名、Logo、页头副标题/状态词、首页眉题/主标题/说明、首访文案和页脚观测词均可替换。默认 Logo 走 Komari 官方 `/favicon.ico`，运行时 PWA Manifest 与 Apple Touch Icon 也跟随品牌设置。
-- 修复手机端访客扫描与返回顶部按钮重叠；返回顶部按钮会按访客卡片的紧凑/展开状态自动避让。手机页头 Logo 框固定为严格正方形，并对长品牌名保持安全截断。
-- Service Worker 升级到 1.2.0 缓存命名；静态 PWA 清单使用通用 Komari 名称，实时 API、后台与用户数据仍不进入缓存。
-- 对照 Komari 1.2.5-fix1、1.2.5-fix2、1.2.7 官方接口以及官方主题市场校验规则完成兼容审计。安装 ZIP 保持根目录清单、版本/short 一致和单 Release 单 ZIP，便于 Komari 后台与主题市场更新器直接拉取。
-
-## 1.1.9 更新摘要
-
-- 修复后台“默认明暗模式”被自动创建的本地缓存误判为用户选择的问题；后台默认现在会作用于未手动切换过的访客，真实的个人选择仍会持久保留。
-- Service Worker 使用 1.1.9 独立缓存并主动检查更新；后续主题资源更新完成后，已安装 PWA 或普通受控页面会执行一次防循环刷新，不缓存 Komari API、后台页面和实时数据。
-- 访客身份扫描改为“内容淡出—容器收束—摘要显现”的分阶段动画，固定收束高度轨迹并限制动画期合成提示，减少结束时的跳变和主线程抖动。
-- 手机端 Ping 窗口把探针线路改成自适应矩阵；三条常见线路可在 390 px 视口同屏点击，无需横向滑动，并保留丢包率与详情提示。
-- 浏览器回归新增后台 light/dark/手动覆盖、Service Worker 更新标记、三探针移动端边界和访客收束帧稳定性断言。
-- Chrome DevTools 生产构建追踪补齐节点搜索与汇率币种控件的表单标识，减少浏览器可访问性告警。
-
-## 1.1.8 更新摘要
-
-- 修复节点卡片延迟与丢包色块被固定高度和卡片裁切隐藏的问题，恢复稳定可见的十格质量轨道，并继续采用 Emerald 的原始颜色阈值。
-- 冒烟测试新增色块实际宽高、非透明背景和卡片边界检查，避免再次出现“数据和颜色类存在、页面却看不到”的假通过。
-- 首访动画在 1.1.8 更新后首次进入时重新播放，同一会话刷新仍只播放一次。
-- Ping 弹窗优化为顶部探针矩阵与下方全宽时间线，减少单线路场景的无效留白，并适配桌面与手机视口。
-
-## 1.1.7 更新摘要
-
-- 修复手机端点开“剩余价值”后汇率面板以桌面比例向右展开、撑大整个页面的问题。
-- 移动端汇率面板现在严格占据两列统计卡片的总宽并右侧对齐，同时为根页面增加横向溢出保护。
-- 浏览器冒烟测试新增 320/390 px 真实设备视口、交互点击和页面 `scrollWidth` 回归，验证面板左右边界都留在视口内。
-
-## 1.1.6 更新摘要
-
-- 明确兼容 Komari `1.2.5-fix2` 的 UUID 键控节点响应，保持 fix1 数组和 1.2.7 对象三种目标边界。
-- 节点卡片继续采用 Emerald 原版模板、十格色块和原版颜色阈值，并增加浏览器渲染断言，验证真实卡片出现延迟/丢包颜色块。
-- 重构延迟弹窗为“探测线路＋网络质量时间线”工作台，纵轴按真实数据范围缩放，桌面和移动端分别采用侧栏与横向线路列表。
-- 弹窗数据每 30 秒自动刷新，切回前台时立即刷新；首访期间预加载首页组件，退场后按页面层级自上而下浮出，并错开背景动画启动。
-
-## 1.1.5 更新摘要
-
-- 修复地球国旗被裁切及拖动时短暂消失的问题，国旗保持完整比例，拖动期间关闭覆盖层淡入淡出竞争。
-- 节点卡片恢复 Emerald 的紧凑间距与延迟/丢包色块布局，移除强制最小高度；数值与十格趋势统一取自同一批 Ping 历史记录。
-- 首页 Ping 记录改为全部卡片共享一次请求、每 30 秒刷新且后台标签页暂停，避免逐节点请求和“实时值/历史色块”口径混用。
-- 首访页退场后再挂载主界面与 WebGL 地球；访客认证收束改为分阶段合成动画，减少大面积重绘和布局抖动。
-
-## 1.1.4 更新摘要
-
-- 恢复 Komari Emerald 原版首页摘要骨架：桌面端三列两行，地球允许在摘要区内自然重叠，仅放大并保留自适应边界。
-- 统一节点详情页标题、在线状态徽标和延迟弹窗的字号与垂直节奏，减少无效留白。
-- 节点卡片标题数值优先采用 Komari 最新 Ping 状态；十格状态块继续按近 1 小时记录分段展示，并明确实时值与历史趋势的口径。
-- 增加负值丢包语义和颜色阈值的确定性测试，覆盖 `150 ms` 延迟与 `0%` 丢包的对应色块。
-
-## 1.1.3 更新摘要
-
-- 修正资源历史页误用旧 REST 路径的问题，统一通过 Komari `common:getRecords` 获取 4 小时、1 天、7 天和 30 天数据，并兼容 UUID 分组与平铺记录。
-- 首访动画跟随当前明暗模式；首页地球回归 Emerald 原版点阵观感并按容器、视口自适应，取消与节点卡片重叠的负位移。
-- 强化节点卡片的延迟与丢包红绿状态块，历史数据不可用时可回退到最新 Ping 汇总。
-- 详情页增加资源、系统、网络和图表区的明确边界；本地冒烟测试加入真实负载与 Ping 样本及 1.2.5 RPC 回退验证。
-
-## 安装
-
-1. 登录 Komari 管理后台。
-2. 打开“设置”→“主题管理”。
-3. 上传构建生成的 zip。
-4. 选择 `LeoNetLab Observatory` 并刷新公开监控页。
-
-也可以在 Komari 主题管理中使用仓库地址导入：
-
-```text
-https://github.com/LeonR-92/komari-theme-leonetlab
-```
-
-主题清单会保留该仓库地址。后续版本发布到 GitHub Releases 后，可在 Komari 后台直接检查并拉取最新版本。
-
-## 发布
-
-推送到 `main` 时，GitHub Actions 会运行 lint、类型检查、双版本兼容验证、Komari 1.2.5 浏览器冒烟测试、生产构建和高危依赖审计。当 `package.json` 版本发生变化，或当前版本尚无对应标签时，工作流会创建 `vX.Y.Z` 标签和 GitHub Release，并上传唯一的 Komari 安装 ZIP。
-
-请勿把 Token、密码、私密地址或其他秘密写进主题设置；Komari 的 `theme_settings` 属于公开数据。
-
-## 致谢与许可
-
-本项目基于 [Komari Emerald](https://github.com/Tokinx/komari-theme-emerald) 开发，原作者 Tokinx；底层监控系统为 [Komari Monitor](https://github.com/komari-monitor/komari)。代码继续遵循 MIT License，页脚保留 `Powered by Komari Monitor.` 与上游主题署名。
+`CHANGELOG.md` is a historical archive through v1.2.9. Later changes are published in [GitHub Releases](https://github.com/LeonR-92/komari-theme-leonetlab/releases).

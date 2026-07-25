@@ -37,22 +37,29 @@ let width = 0
 let height = 0
 let dpr = 1
 let animationFrame = 0
-let resizeFrame = 0
+let resizeTimer = 0
 let lastPaint = 0
+
+function measureHost() {
+  const rect = canvasRef.value?.parentElement?.getBoundingClientRect()
+  return {
+    width: Math.max(320, Math.round(rect?.width || window.innerWidth)),
+    height: Math.max(480, Math.round(rect?.height || window.innerHeight)),
+  }
+}
 
 function configureCanvas() {
   const canvas = canvasRef.value
   if (!canvas)
     return
 
-  width = Math.max(320, window.innerWidth)
-  height = Math.max(480, window.innerHeight)
+  const size = measureHost()
+  width = size.width
+  height = size.height
   const mobile = width < 760
   dpr = Math.min(window.devicePixelRatio || 1, mobile ? 1.15 : 1.3)
   canvas.width = Math.round(width * dpr)
   canvas.height = Math.round(height * dpr)
-  canvas.style.width = `${width}px`
-  canvas.style.height = `${height}px`
   context = canvas.getContext('2d', { alpha: true })
   context?.setTransform(dpr, 0, 0, dpr, 0, 0)
 
@@ -183,8 +190,16 @@ function animate(time: number) {
 }
 
 function handleResize() {
-  window.cancelAnimationFrame(resizeFrame)
-  resizeFrame = window.requestAnimationFrame(configureCanvas)
+  window.clearTimeout(resizeTimer)
+  resizeTimer = window.setTimeout(() => {
+    // 移动端地址栏收起/展开只改高度（通常 <150px）。此时父容器已按 100lvh
+    // 固定，跳过 canvas 重建，避免滚动中背景重绘抖动；宽度变化（旋转/分屏）
+    // 或大幅高度变化仍正常重建。
+    const next = measureHost()
+    if (next.width === width && Math.abs(next.height - height) < 150)
+      return
+    configureCanvas()
+  }, 160)
 }
 
 function handleVisibilityChange() {
@@ -207,7 +222,7 @@ onMounted(() => {
 
 onUnmounted(() => {
   window.cancelAnimationFrame(animationFrame)
-  window.cancelAnimationFrame(resizeFrame)
+  window.clearTimeout(resizeTimer)
   window.removeEventListener('resize', handleResize)
   document.removeEventListener('visibilitychange', handleVisibilityChange)
 })
