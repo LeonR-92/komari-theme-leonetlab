@@ -720,20 +720,25 @@ const pingDialogCloseAuditExpression = `new Promise((resolve) => {
   }, 80);
 })`
 
+// v1.2.8 单实例交接审计：点击 skip 前抓住 intro 槽位内的 canvas 元素引用，
+// 飞行全程以该引用采样位置（Teleport 迁移同一 DOM 节点，引用始终有效），
+// 断言距离单调收敛、落点与槽位误差 <2px、canvas 身份不变、自转与拖拽存活。
 const introHandoffAuditExpression = `new Promise((resolve) => {
   const deadline = Date.now() + 10000;
   const timer = setInterval(() => {
     const root = document.querySelector('.lnl-intro');
-    const source = document.querySelector('.lnl-intro-globe');
-    const target = document.querySelector('.lnl-summary .node-earth-globe:not(.is-intro)');
+    const slot = document.querySelector('#lnl-globe-dashboard-slot');
     const skip = document.querySelector('.lnl-intro-skip');
-    if (root && source && target && skip) {
+    const engine = document.querySelector('.lnl-intro-globe > .node-earth-globe');
+    if (root && slot && skip && engine) {
       clearInterval(timer);
-      const sourceRect = source.getBoundingClientRect();
-      const targetRect = target.getBoundingClientRect();
+      const engineCanvas = engine.querySelector('canvas');
+      window.__engineCanvas = engineCanvas;
+      const targetRect = slot.getBoundingClientRect();
+      const sourceRect = engine.getBoundingClientRect();
       const staged = Boolean(document.querySelector('.lnl-intro-staged'));
-      const markerAnimation = getComputedStyle(source.querySelector('.lnl-earth-overlay > *')).animationName;
-      const introOverlay = source.querySelector('.lnl-earth-overlay');
+      const markerAnimation = getComputedStyle(engine.querySelector('.lnl-earth-overlay > *')).animationName;
+      const introOverlay = engine.querySelector('.lnl-earth-overlay');
       const orientationBefore = introOverlay?.style.transform || '';
       const frameDeltas = [];
       const longTasks = [];
@@ -751,79 +756,94 @@ const introHandoffAuditExpression = `new Promise((resolve) => {
         : null;
       try { longTaskObserver?.observe({ type: 'longtask', buffered: false }); } catch {}
       const distance = (rect) => Math.hypot(rect.left - targetRect.left, rect.top - targetRect.top) + Math.abs(rect.width - targetRect.width);
-      const sample = () => {
-        const currentRoot = document.querySelector('.lnl-intro');
-        const currentSource = document.querySelector('.lnl-intro-globe');
-        const rect = currentSource?.getBoundingClientRect();
-        return {
-          rootMounted: Boolean(currentRoot),
-          sourceMounted: Boolean(currentSource),
-          distance: rect ? distance(rect) : null,
-          rect: rect?.toJSON() || null,
-          transform: currentSource ? getComputedStyle(currentSource).transform : null,
-          rootClass: currentRoot?.className || null,
-          staged: Boolean(document.querySelector('.lnl-intro-staged')),
-        };
-      };
+      const flightSamples = [];
       skip.click();
+      // 飞行期间每 ~90ms 采样同一 canvas 引用的矩形；任何一次正向大跳变都是
+      // 瞬移回归（v1.2.7 双实例架构的失败模式）。
+      const flightTimer = setInterval(() => {
+        const rect = engineCanvas.getBoundingClientRect();
+        flightSamples.push({
+          t: Math.round(performance.now()),
+          distance: Math.round(distance(rect) * 100) / 100,
+          inShell: Boolean(engineCanvas.closest('#lnl-globe-flight-shell')),
+          inSlot: Boolean(engineCanvas.closest('#lnl-globe-dashboard-slot')),
+          rootMounted: Boolean(document.querySelector('.lnl-intro')),
+        });
+      }, 90);
       setTimeout(async () => {
-        const style = root.style;
-        const handoffX = Number.parseFloat(style.getPropertyValue('--intro-handoff-x'));
-        const handoffY = Number.parseFloat(style.getPropertyValue('--intro-handoff-y'));
-        const handoffScale = Number.parseFloat(style.getPropertyValue('--intro-handoff-scale'));
         const orientationAfter = introOverlay?.style.transform || '';
-        const early = sample();
-        await new Promise(done => setTimeout(done, 350));
-        const middle = sample();
-        await new Promise(done => setTimeout(done, 400));
-        const late = sample();
-        // 封面现在由交接计时器在 1080+120ms 后卸载（旧设计为 Vue Transition
-        // 的 1080ms 卸载），settle 采样需越过该时点。
-        await new Promise(done => setTimeout(done, 620));
-        const settled = sample();
+        // 越过 1080ms 飞行 + transitionend 收尾后再验证落点与 canvas 身份。
+        await new Promise(done => setTimeout(done, 2400));
+        clearInterval(flightTimer);
         samplingFrames = false;
         longTaskObserver?.disconnect();
+        const slotCanvas = document.querySelector('#lnl-globe-dashboard-slot canvas');
+        const landedRect = engineCanvas.getBoundingClientRect();
+        const settledSlotRect = slot.getBoundingClientRect();
         const probe = window.__lnlGlobeProbe || {};
-        const handoffPhiError = probe.handoff && probe.intro ? Math.abs(probe.handoff.phi - probe.intro.phi) : null;
-        const handoffThetaError = probe.handoff && probe.intro ? Math.abs(probe.handoff.theta - probe.intro.theta) : null;
-        const dashboardNoBackwardJump = Boolean(probe.dashboard && probe.handoff && probe.dashboard.phi >= probe.handoff.phi - 1e-9);
-        const centerErrorX = late.rect ? Math.abs((late.rect.left + late.rect.width / 2) - (targetRect.left + targetRect.width / 2)) : null;
-        const centerErrorY = late.rect ? Math.abs((late.rect.top + late.rect.height / 2) - (targetRect.top + targetRect.height / 2)) : null;
-        const widthError = late.rect ? Math.abs(late.rect.width - targetRect.width) : null;
+        const phiAfterSettle = probe.dashboard?.phi ?? null;
+        // 单调性：相邻采样距离的最大正向增量。
+        let maxDistanceJump = 0;
+        for (let index = 1; index < flightSamples.length; index += 1)
+          maxDistanceJump = Math.max(maxDistanceJump, flightSamples[index].distance - flightSamples[index - 1].distance);
+        const firstShellIndex = flightSamples.findIndex(sample => sample.inShell);
+        // 自转继续：dashboard 探针 phi 应持续前进。
+        await new Promise(done => setTimeout(done, 420));
+        const phiLater = (window.__lnlGlobeProbe || {}).dashboard?.phi ?? null;
+        // 拖拽验证：对落入槽位的引擎根派发 pointer 事件，240px 拖动应产生
+        // 约 1.2rad 的 phi 变化（远大于同期自转的 ~0.04rad）。
+        const dragTarget = engineCanvas.closest('#lnl-globe-dashboard-slot .node-earth-globe') || engine;
+        const dragRect = dragTarget.getBoundingClientRect();
+        const cx = dragRect.left + dragRect.width / 2;
+        const cy = dragRect.top + dragRect.height / 2;
+        const phiBeforeDrag = (window.__lnlGlobeProbe || {}).dashboard?.phi ?? null;
+        const eventInit = { bubbles: true, cancelable: true, pointerId: 7, isPrimary: true, clientX: cx, clientY: cy };
+        dragTarget.dispatchEvent(new PointerEvent('pointerdown', { ...eventInit, buttons: 1, button: 0 }));
+        dragTarget.dispatchEvent(new PointerEvent('pointermove', { ...eventInit, buttons: 1, clientX: cx + 240 }));
+        dragTarget.dispatchEvent(new PointerEvent('pointerup', { ...eventInit, clientX: cx + 240 }));
+        await new Promise(done => setTimeout(done, 240));
+        const phiAfterDrag = (window.__lnlGlobeProbe || {}).dashboard?.phi ?? null;
         resolve({
-          handoffReady: root.classList.contains('is-handoff-ready'),
           staged,
           markerAnimation,
           introRotated: orientationBefore !== orientationAfter,
           sourceRect: sourceRect.toJSON(),
           targetRect: targetRect.toJSON(),
           initialDistance: distance(sourceRect),
-          early,
-          middle,
-          late,
-          settled,
+          flightSamples,
+          maxDistanceJump: Math.round(maxDistanceJump * 100) / 100,
+          sawFlightShell: firstShellIndex >= 0,
+          coverSurvivedMidFlight: flightSamples.some(sample => sample.inShell && sample.rootMounted),
+          engineInSlotBeforeShellLeft: firstShellIndex >= 0 && flightSamples.some((sample, index) => index > firstShellIndex && sample.inSlot),
+          settled: {
+            rootMounted: Boolean(document.querySelector('.lnl-intro')),
+            staged: Boolean(document.querySelector('.lnl-intro-staged')),
+            canvasIdentity: slotCanvas === engineCanvas && slotCanvas === window.__engineCanvas,
+            shellRemoved: !document.querySelector('#lnl-globe-flight-shell'),
+          },
+          landedRect: landedRect.toJSON(),
+          settledSlotRect: settledSlotRect.toJSON(),
+          landErrorX: Math.abs(landedRect.left - settledSlotRect.left),
+          landErrorY: Math.abs(landedRect.top - settledSlotRect.top),
+          landWidthError: Math.abs(landedRect.width - settledSlotRect.width),
           frames: frameDeltas.length,
           maxFrame: Math.max(0, ...frameDeltas),
           maxLongTask: Math.max(0, ...longTasks),
           longTaskDurations: longTasks.map(duration => Math.round(duration)).sort((a, b) => b - a).slice(0, 5),
-          xError: Math.abs(handoffX - (targetRect.left - sourceRect.left)),
-          yError: Math.abs(handoffY - (targetRect.top - sourceRect.top)),
-          scaleError: Math.abs(handoffScale - targetRect.width / sourceRect.width),
           probeIntro: probe.intro || null,
-          probeHandoff: probe.handoff || null,
-          probeDashboard: probe.dashboard || null,
-          handoffPhiError,
-          handoffThetaError,
-          dashboardNoBackwardJump,
-          centerErrorX,
-          centerErrorY,
-          widthError,
+          probeDashboard: (window.__lnlGlobeProbe || {}).dashboard || null,
+          phiAfterSettle,
+          phiLater,
+          phiKeepsAdvancing: phiAfterSettle !== null && phiLater !== null && phiLater > phiAfterSettle,
+          phiBeforeDrag,
+          phiAfterDrag,
+          dragDelta: phiBeforeDrag !== null && phiAfterDrag !== null ? phiAfterDrag - phiBeforeDrag : null,
         });
       }, 70);
     }
     else if (Date.now() >= deadline) {
       clearInterval(timer);
-      resolve({ state: 'timeout', hasRoot: Boolean(root), hasSource: Boolean(source), hasTarget: Boolean(target) });
+      resolve({ state: 'timeout', hasRoot: Boolean(root), hasSlot: Boolean(slot), hasEngine: Boolean(engine) });
     }
   }, 60);
 })`
@@ -1087,7 +1107,7 @@ const visitorFixtureInitScript = `(() => {
 })()`
 
 async function capturePingDialogScreenshot(name, width, height) {
-  const result = await runInteractivePage(name, width, height, pingDialogOpenExpression, name, `sessionStorage.setItem('leonetlab:intro:1.2.7', 'seen');`)
+  const result = await runInteractivePage(name, width, height, pingDialogOpenExpression, name, `sessionStorage.setItem('leonetlab:intro:1.2.8', 'seen');`)
   assert.equal(result?.state, 'opened')
   assert.ok(result?.left >= -0.5 && result?.right <= result?.viewportWidth + 0.5, `Ping dialog escaped viewport: ${JSON.stringify(result)}`)
   assert.ok(result?.centerError <= 1, `Ping dialog is not centered: ${JSON.stringify(result)}`)
@@ -1095,7 +1115,7 @@ async function capturePingDialogScreenshot(name, width, height) {
 
 async function auditMobileFinanceOverflow(width) {
   const screenshotName = process.env.SMOKE_SCREENSHOT_DIR && width === 390 ? 'mobile-finance-open' : undefined
-  const result = await runInteractivePage(`mobile-finance-audit-${width}`, width, 844, financeOverflowAuditExpression, screenshotName, `sessionStorage.setItem('leonetlab:intro:1.2.7', 'seen');`)
+  const result = await runInteractivePage(`mobile-finance-audit-${width}`, width, 844, financeOverflowAuditExpression, screenshotName, `sessionStorage.setItem('leonetlab:intro:1.2.8', 'seen');`)
   assert.equal(result?.state, 'opened')
   assert.doesNotMatch(result?.triggerText ?? '', financeDetailsLabelPattern)
   assert.equal(result?.assistiveHintHidden, true, `Finance assistive hint became visible: ${JSON.stringify(result)}`)
@@ -1149,7 +1169,7 @@ async function auditGlobeFlagsAcrossThemeChange() {
     780,
     globeFlagThemeAuditExpression,
     undefined,
-    `sessionStorage.setItem('leonetlab:intro:1.2.7', 'seen'); localStorage.setItem('appearance', 'light'); localStorage.setItem('leonetlab:appearance:user-override', '1');`,
+    `sessionStorage.setItem('leonetlab:intro:1.2.8', 'seen'); localStorage.setItem('appearance', 'light'); localStorage.setItem('leonetlab:appearance:user-override', '1');`,
   )
   reportBrowserAudit('globe-flags-theme-change', result)
   assert.equal(result?.initialCount, 2, `Expected two globe flag overlays: ${JSON.stringify(result)}`)
@@ -1168,7 +1188,7 @@ async function auditPingDialogCloseAnimation() {
     780,
     pingDialogCloseAuditExpression,
     undefined,
-    `sessionStorage.setItem('leonetlab:intro:1.2.7', 'seen');`,
+    `sessionStorage.setItem('leonetlab:intro:1.2.8', 'seen');`,
   )
   reportBrowserAudit('ping-dialog-close-animation', result)
   assert.equal(result?.closedSeen, true, `Ping dialog skipped its closed state: ${JSON.stringify(result)}`)
@@ -1178,18 +1198,20 @@ async function auditPingDialogCloseAnimation() {
 async function auditIntroGlobeHandoff() {
   const result = await runInteractivePage('intro-globe-handoff', 1100, 780, introHandoffAuditExpression, undefined, 'window.__lnlGlobeProbe = {};')
   reportBrowserAudit('intro-globe-handoff', result)
-  assert.equal(result?.handoffReady, true, `Intro globe did not prepare a dashboard handoff: ${JSON.stringify(result)}`)
   assert.equal(result?.staged, true, `Dashboard content was not staged behind the intro: ${JSON.stringify(result)}`)
-  assert.ok(result?.xError < 1 && result?.yError < 1 && result?.scaleError < 0.01, `Intro handoff geometry did not match the dashboard globe: ${JSON.stringify(result)}`)
   assert.match(result?.markerAnimation || '', introMarkerFocusPattern, `Intro node markers did not use the focus reveal: ${JSON.stringify(result)}`)
   assert.equal(result?.introRotated, true, `Intro globe did not rotate before handoff: ${JSON.stringify(result)}`)
-  assert.equal(result?.early?.rootMounted, true, `Intro cover was removed before the handoff could start: ${JSON.stringify(result)}`)
-  assert.equal(result?.middle?.rootMounted, true, `Intro cover did not survive the handoff midpoint: ${JSON.stringify(result)}`)
-  assert.ok(result?.early?.distance <= result?.initialDistance + 1, `Intro globe moved away before its handoff: ${JSON.stringify(result)}`)
-  assert.ok(result?.early?.rect?.left >= result?.sourceRect?.left - 2, `Intro globe snapped away from its target before moving: ${JSON.stringify(result)}`)
-  assert.ok(result?.middle?.distance < result?.early?.distance, `Intro globe did not progress through the handoff: ${JSON.stringify(result)}`)
-  assert.ok(result?.late?.distance < result?.middle?.distance, `Intro globe did not settle toward the dashboard target: ${JSON.stringify(result)}`)
-  assert.ok(result?.late?.distance < 28, `Intro globe missed the dashboard target before release: ${JSON.stringify(result)}`)
+  // 单实例交接：引擎必须真实经过飞行壳，且封面要活到飞行中段之后。
+  assert.equal(result?.sawFlightShell, true, `Engine never entered the flight shell: ${JSON.stringify(result)}`)
+  assert.equal(result?.coverSurvivedMidFlight, true, `Intro cover did not survive the flight: ${JSON.stringify(result)}`)
+  assert.equal(result?.engineInSlotBeforeShellLeft, true, `Engine did not land in the dashboard slot: ${JSON.stringify(result)}`)
+  // 平滑度：飞行期间同一 canvas 到目标的距离必须单调收敛，不允许瞬移跳变。
+  assert.ok(result?.maxDistanceJump < 24, `Engine teleported mid-flight (max distance jump ${result?.maxDistanceJump}px): ${JSON.stringify(result?.flightSamples)}`)
+  // 落点：引擎矩形与 dashboard 槽位矩形误差 <2px。
+  assert.ok(result?.landErrorX < 2 && result?.landErrorY < 2 && result?.landWidthError < 2, `Engine landed off the dashboard slot: ${JSON.stringify(result)}`)
+  // canvas 身份：槽位里的 canvas 必须就是 intro 里的那一个（同一 WebGL 上下文）。
+  assert.equal(result?.settled?.canvasIdentity, true, `Dashboard canvas is not the intro canvas (engine was recreated): ${JSON.stringify(result)}`)
+  assert.equal(result?.settled?.shellRemoved, true, `Flight shell was not removed after landing: ${JSON.stringify(result)}`)
   assert.equal(result?.settled?.rootMounted, false, `Intro cover remained after its handoff duration: ${JSON.stringify(result)}`)
   assert.equal(result?.settled?.staged, false, `Dashboard content stayed staged after the handoff: ${JSON.stringify(result)}`)
   assert.ok(result?.frames >= 20, `Intro handoff produced too few animation frames: ${JSON.stringify(result)}`)
@@ -1197,14 +1219,11 @@ async function auditIntroGlobeHandoff() {
   // 交接几何与帧推进由上面的断言保证；longtask 阈值见文件头说明，
   // 观测到的任务时长随审计报告输出以保留诊断价值。
   assert.ok(result?.maxLongTask < longTaskHardLimitMs, `Intro handoff produced a main-thread task over ${longTaskHardLimitMs}ms (observed: ${JSON.stringify(result?.longTaskDurations ?? [])}): ${JSON.stringify(result)}`)
-  // 交接相位连续性：dashboard 接管的 phi/theta 必须等于 intro 最后一帧，且之后不回跳。
+  // 相位连续性是"同一实例"的天然结果，仍用探针兜底：自转继续、拖拽可用。
   assert.ok(result?.probeIntro, `Intro globe orientation probe was not recorded: ${JSON.stringify(result)}`)
-  assert.ok(result?.probeHandoff, `Dashboard globe did not adopt the intro orientation: ${JSON.stringify(result)}`)
-  assert.ok(result?.handoffPhiError !== null && result?.handoffPhiError < 0.01, `Globe phi jumped across the handoff: ${JSON.stringify(result)}`)
-  assert.ok(result?.handoffThetaError !== null && result?.handoffThetaError < 0.01, `Globe theta jumped across the handoff: ${JSON.stringify(result)}`)
-  assert.equal(result?.dashboardNoBackwardJump, true, `Dashboard globe snapped back after the handoff: ${JSON.stringify(result)}`)
-  assert.ok(result?.centerErrorX !== null && result?.centerErrorX < 28 && result?.centerErrorY !== null && result?.centerErrorY < 28, `Intro globe canvas center missed the dashboard canvas center: ${JSON.stringify(result)}`)
-  assert.ok(result?.widthError !== null && result?.widthError < 28, `Intro globe canvas size missed the dashboard canvas size: ${JSON.stringify(result)}`)
+  assert.ok(result?.probeDashboard, `Dashboard globe orientation probe was not recorded: ${JSON.stringify(result)}`)
+  assert.equal(result?.phiKeepsAdvancing, true, `Globe auto-rotation stalled after landing: ${JSON.stringify(result)}`)
+  assert.ok(result?.dragDelta !== null && result?.dragDelta > 0.5, `Globe did not respond to drag after landing (delta=${result?.dragDelta}): ${JSON.stringify(result)}`)
 }
 
 async function auditMetricStoreFallback() {
@@ -1217,7 +1236,7 @@ async function auditMetricStoreFallback() {
       780,
       pingDialogOpenExpression,
       undefined,
-      `sessionStorage.setItem('leonetlab:intro:1.2.7', 'seen');`,
+      `sessionStorage.setItem('leonetlab:intro:1.2.8', 'seen');`,
     )
     reportBrowserAudit('metric-store-fallback', result)
     assert.equal(result?.state, 'opened', `Ping dialog did not open behind an uninitialized metric store: ${JSON.stringify(result)}`)
@@ -1242,7 +1261,7 @@ async function auditGlobeMotionMode(mode, expectedMoved) {
       780,
       globeMotionAuditExpression.replace('__EARTH_MODE__', mode),
       undefined,
-      `sessionStorage.setItem('leonetlab:intro:1.2.7', 'seen');`,
+      `sessionStorage.setItem('leonetlab:intro:1.2.8', 'seen');`,
     )
     reportBrowserAudit(`globe-motion-${mode}`, result)
     assert.equal(result?.moved, expectedMoved, `Unexpected ${mode} globe motion: ${JSON.stringify(result)}`)
@@ -1259,7 +1278,7 @@ async function auditPingContentMotion() {
     780,
     pingContentMotionAuditExpression,
     undefined,
-    `sessionStorage.setItem('leonetlab:intro:1.2.7', 'seen');`,
+    `sessionStorage.setItem('leonetlab:intro:1.2.8', 'seen');`,
   )
   reportBrowserAudit('ping-content-motion', result)
   assert.match(result?.toolbarAnimation || '', pingSectionInPattern, `Ping toolbar has no entrance transition: ${JSON.stringify(result)}`)
@@ -1302,7 +1321,7 @@ async function auditVisitorCollapse() {
 async function auditMobileChromeLayout() {
   visitorInfoEnabledFixture = true
   try {
-    const initScript = `${visitorFixtureInitScript}\nsessionStorage.setItem('leonetlab:intro:1.2.7', 'seen');`
+    const initScript = `${visitorFixtureInitScript}\nsessionStorage.setItem('leonetlab:intro:1.2.8', 'seen');`
     const result = await runInteractivePage('mobile-chrome-layout', 390, 844, mobileChromeLayoutAuditExpression, undefined, initScript)
     reportBrowserAudit('mobile-chrome-layout', result)
     assert.ok(Math.abs(result?.logoWidth - result?.logoHeight) < 0.5, `Mobile logo frame is not square: ${JSON.stringify(result)}`)

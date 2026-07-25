@@ -24,7 +24,7 @@ bun run build
 构建完成后会生成：
 
 - `dist/`
-- `komari-theme-leonetlab-build-v1.2.7.zip`
+- `komari-theme-leonetlab-build-v1.2.8.zip`
 
 兼容性与构建检查：
 
@@ -34,6 +34,12 @@ npm run smoke:1.2.5
 ```
 
 `smoke:1.2.5` 会启动本地模拟接口并用无界面 Chrome/Edge 验证 1.2.5-fix1 数组节点响应、fix2/1.2.7 对象兼容、历史记录 RPC 回退、详情分区和 Ping 数据能够实际渲染；同时检查动态/静态地球模式、首访地球真实移动轨迹、国旗在明暗切换与拖动期间不丢失、Ping 内容动效、移动端 Logo 与访客卡片边界。
+
+## 1.2.8 更新摘要
+
+- 首访交接重构为单 cobe 实例架构：全程只有一个地球引擎，其 DOM（含 canvas 与 WebGL 上下文）由 Vue Teleport 在 intro 槽位、飞行壳与 dashboard 槽位之间迁移，取代 1.2.7 的双实例测量对齐方案；旋转相位与拖拽状态天然连续，慢主线程下不再依赖计时交接。
+- 回归探针升级：飞行全程跟踪同一 canvas 元素引用，断言距离单调收敛无瞬移、落点与槽位误差 <2px、canvas 身份不变、自转继续、拖拽可用；新增 40 节点 + CPU 4x 节流取证脚本（`node scripts/capture-intro-v3.mjs`）。
+- Service Worker 缓存升级为 1.2.8，首访会话标记同步升级，老用户更新后重放一次重构后的交接动画。
 
 ## 1.2.7 更新摘要
 

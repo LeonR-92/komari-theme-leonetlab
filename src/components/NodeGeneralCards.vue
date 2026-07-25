@@ -3,7 +3,6 @@ import type { NodeData } from '@/stores/nodes'
 import type { CurrencyCode } from '@/utils/financeHelper'
 import { Icon } from '@iconify/vue'
 import { computed, defineAsyncComponent, onMounted, ref } from 'vue'
-import NodeEarthGlobe from '@/components/NodeEarthGlobe.vue'
 import { CardX } from '@/components/ui/card-x'
 import { DataTooltip } from '@/components/ui/data-tooltip'
 import { useBackgroundSurface } from '@/composables/useBackgroundSurface'
@@ -184,7 +183,7 @@ onMounted(async () => {
 
 <template>
   <div class="lnl-summary" :class="wrapperClass">
-    <NodeEarthGlobe v-if="showEarth" :nodes="globeNodes" :interactive="true" class="col-span-12 col-start-1 row-start-1 lg:col-span-6 lg:col-start-7" />
+    <div v-if="showEarth" id="lnl-globe-dashboard-slot" class="lnl-globe-slot col-span-12 col-start-1 row-start-1 lg:col-span-6 lg:col-start-7" />
     <NodeEarthMaps v-else-if="showMaps" :nodes="globeNodes" class="col-span-12 col-start-1 row-start-1 lg:col-span-6 lg:col-start-7" />
 
     <div class="lnl-summary-metrics" :class="cardGridClass">

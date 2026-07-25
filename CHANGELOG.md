@@ -1,5 +1,13 @@
 # 更新日志
 
+## 1.2.8 — 2026-07-25
+
+- 首访交接重构为**单 cobe 实例**架构：1.2.7 及以前是 intro 与 dashboard 各持一个 cobe 引擎、靠测量对齐与计时交接，慢主线程下本质脆弱（用户实测仍闪跳）。现在全程只有一个引擎，其 DOM（含 canvas 与 WebGL 上下文）由 Vue Teleport 在 intro 槽位 → 飞行壳（fixed + transform 过渡）→ dashboard 槽位之间迁移，旋转相位、拖拽状态天然连续，交接不再依赖双实例对齐。
+- 修复 Teleport 目标解析时序：非首访路径下 Teleport 挂载时 dashboard 槽位尚未渲染、目标解析失败不会自动重试，`v-if` 改为挂在 Teleport 自身（`none → slot` 时重新挂载实例）；修复 Vue Boolean prop 缺省转型导致 `interactive ?? variant !== 'intro'` 永远取到 `false` 的交互丢失问题（显式传递 `interactive`/`show-status`）。
+- 回归探针升级为单实例断言：点击 skip 前抓住 intro canvas 元素引用，飞行全程以该引用采样，断言飞行距离单调收敛（不允许任何正向瞬移跳变）、落点与槽位误差 <2px、到位后槽位 canvas 与 intro canvas 是同一元素（canvas identity）、自转继续、拖拽响应（240px 拖动 ≈1.2rad）；新增 40 节点 + CPU 4x 节流取证脚本 `scripts/capture-intro-v3.mjs`。
+- 实测（无节流）：飞行距离 431→0 全程单调、落点误差 0px、拖拽 Δphi=1.237rad、飞行窗口长任务 0ms；4x 节流下飞行窗口最大任务 363ms（与稳态基线 296ms 同级，无 init 级任务）。证据存于 `artifacts/audit-20260724/`。
+- Service Worker 缓存升级为 1.2.8，首访会话标记同步升级（`leonetlab:intro:1.2.8`），老用户更新后重放一次重构后的交接动画。
+
 ## 1.2.7 — 2026-07-24
 
 - 修复多节点真实环境下首访交接"地球无平移、直接闪现到位 + 页面卡顿"：封面卸载原按点击时刻的固定计时器（1080+120ms）驱动，主线程长任务推迟 CSS 过渡起点后，卸载与过渡起点几乎同时发生，飞行不可见；现改为由 `.lnl-intro-globe` transform 过渡的 `transitionend` 事件驱动卸载，固定计时器（1080+900ms）仅作兜底，主线程繁忙时交接只会推迟、不再闪跳。

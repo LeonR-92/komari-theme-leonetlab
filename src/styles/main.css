@@ -194,6 +194,36 @@ textarea {
   width: 100%;
 }
 
+/* v1.2.8 单实例地球：dashboard 槽位复刻 .node-earth-globe 非 intro 尺寸
+   （含 -translate-y-6 / md:-translate-y-12 的位移），从挂载起占住布局高度；
+   唯一引擎经 Teleport 落入后由内层规则抵消重复 sizing 与位移。 */
+.lnl-globe-slot {
+  width: min(100%, clamp(360px, 32vw, 500px));
+  max-width: 500px;
+  aspect-ratio: 1;
+  margin-inline: auto;
+  translate: 0 -1.5rem;
+}
+
+.lnl-globe-slot > .node-earth-globe {
+  width: 100%;
+  max-width: none;
+  translate: none;
+}
+
+@media (min-width: 768px) {
+  .lnl-globe-slot {
+    translate: 0 -3rem;
+  }
+}
+
+@media (max-width: 760px) {
+  .lnl-globe-slot {
+    width: calc(100vw - 32px);
+    max-width: calc(100vw - 32px);
+  }
+}
+
 .lnl-reveal-header,
 .lnl-intro-reveal .lnl-dashboard-head,
 .lnl-intro-reveal .lnl-summary-metrics,

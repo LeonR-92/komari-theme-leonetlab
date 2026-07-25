@@ -1,9 +1,7 @@
 <script lang="ts">
-// Intro and dashboard globes are separate WebGL instances during the FLIP
-// handoff. Share only the final orientation so the arriving globe does not
-// jump back to its default angle when the dashboard is revealed.
-// 共享朝向与回归探针位于独立模块 @/utils/globeIntroShared（模块级单例）；
-// 切勿移回 <script setup> 顶层，否则每个实例各持一份，交接会瞬跳回默认角度。
+// v1.2.8 起全程只有一个 cobe 实例：本组件的 DOM（含 canvas 与 WebGL 上下文）
+// 由 App.vue 的 Teleport 在 intro 槽位、飞行壳与 dashboard 槽位之间迁移，
+// 交接无需再共享朝向。回归探针位于 @/utils/globeIntroShared（模块级）。
 </script>
 
 <script setup lang="ts">
@@ -22,7 +20,7 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useAppStore } from '@/stores/app'
 import { useNodesStore } from '@/stores/nodes'
 import { getCoordByCode, getCountryCodeFromRegion } from '@/utils/geoHelper'
-import { getGlobeProbe, sharedIntroOrientation } from '@/utils/globeIntroShared'
+import { getGlobeProbe } from '@/utils/globeIntroShared'
 import { isMobileLike } from '@/utils/mobilePerf'
 
 const props = defineProps<{
@@ -49,9 +47,9 @@ const { width: containerWidth, height: containerHeight } = useElementSize(contai
 
 const documentVisibility = useDocumentVisibility()
 const elementVisible = useElementVisibility(containerRef)
+// 单一实例全程渲染：可见性只受文档与元素自身可见性门控（后台/屏外暂停）。
 const shouldRender = computed(() => documentVisibility.value === 'visible'
-  && elementVisible.value
-  && (props.variant === 'intro' || !appStore.introActive))
+  && elementVisible.value)
 // Emerald exposes five layout modes. Only `earth` rotates automatically;
 // `earth-stop` remains draggable but holds its orientation after release.
 // 系统开启"减少动态效果"时地球仪不自动旋转，但保留用户拖拽。
@@ -303,11 +301,6 @@ function buildInitialOptions(): COBEOptions {
 function updateGlobeFrame() {
   if (!globe)
     return
-  if (props.variant === 'intro') {
-    sharedIntroOrientation.phi = phi
-    sharedIntroOrientation.theta = theta
-    sharedIntroOrientation.valid = true
-  }
   if (globeProbe) {
     globeProbe[props.variant === 'intro' ? 'intro' : 'dashboard'] = {
       phi,
@@ -384,29 +377,9 @@ function syncRafState() {
     updateGlobeFrame()
 }
 
-// dashboard 实例接管 intro 的最终朝向，并记录交接快照供探针断言相位连续。
-function adoptSharedIntroOrientation() {
-  if (!sharedIntroOrientation.valid)
-    return
-  phi = sharedIntroOrientation.phi
-  targetPhi = phi
-  theta = sharedIntroOrientation.theta
-  targetTheta = theta
-  if (globeProbe) {
-    globeProbe.handoff = {
-      phi: sharedIntroOrientation.phi,
-      theta: sharedIntroOrientation.theta,
-      t: performance.now(),
-    }
-  }
-}
-
 function startGlobe() {
   if (!canvasRef.value)
     return
-  if (props.variant !== 'intro' && appStore.introActive) {
-    adoptSharedIntroOrientation()
-  }
   if (appStore.earthViewMode === 'earth-stop') {
     resetStoppedView()
     triggerStaticRedrawWindow()
@@ -513,22 +486,9 @@ watch(shouldRender, () => {
   syncRafState()
 })
 
-// The dashboard globe is mounted behind the intro. IntersectionObserver may
-// have reported its state before the cover leaves, so explicitly re-sample the
-// RAF state once the handoff releases the dashboard.
-watch(
-  () => appStore.introActive,
-  async (active) => {
-    if (active || props.variant === 'intro' || !globe)
-      return
-    await nextTick()
-    requestAnimationFrame(() => {
-      adoptSharedIntroOrientation()
-      updateGlobeFrame()
-      syncRafState()
-    })
-  },
-)
+// 槽位迁移（Teleport 移动 DOM）后容器尺寸变化由 useElementSize 的 watch
+// 触发 updateGlobeFrame；元素可见性变化由 shouldRender 的 watch 恢复/暂停，
+// 无需额外的交接期朝向接管逻辑。
 
 function onPointerDown(e: PointerEvent) {
   if (!interactive.value)
