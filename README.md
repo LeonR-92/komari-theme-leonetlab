@@ -58,20 +58,20 @@ The build emits `dist/` and `komari-theme-leonetlab-build-v1.3.0.zip` with a roo
 
 ## Tech Stack
 
-| Category | Technology |
-| --- | --- |
-| Framework | Vue 3 + TypeScript |
-| Build tool | Vite 7 |
-| UI components | reka-ui (shadcn-vue style) |
-| Styling | Tailwind CSS v4 + tw-animate-css |
-| State management | Pinia 3 |
-| Router | Vue Router 5 |
-| Charts | ECharts 6 (vue-echarts) |
-| 3D globe | cobe |
-| Toasts | vue-sonner |
-| Icons | @iconify/vue |
-| Utilities | @vueuse/core, dayjs |
-| Linting | ESLint (@antfu/eslint-config) |
+| Category         | Technology                       |
+| ---------------- | -------------------------------- |
+| Framework        | Vue 3 + TypeScript               |
+| Build tool       | Vite 7                           |
+| UI components    | reka-ui (shadcn-vue style)       |
+| Styling          | Tailwind CSS v4 + tw-animate-css |
+| State management | Pinia 3                          |
+| Router           | Vue Router 5                     |
+| Charts           | ECharts 6 (vue-echarts)          |
+| 3D globe         | cobe                             |
+| Toasts           | vue-sonner                       |
+| Icons            | @iconify/vue                     |
+| Utilities        | @vueuse/core, dayjs              |
+| Linting          | ESLint (@antfu/eslint-config)    |
 
 ## Acknowledgments & License
 
