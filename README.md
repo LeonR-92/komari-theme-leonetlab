@@ -39,6 +39,7 @@ All settings are optional managed theme settings; blank brand fields fall back t
 
 ## Compatibility
 
+- **Supported Komari servers**: `1.2.5-fix1`, `1.2.5-fix2`, `1.2.6`, `1.2.7`, and `1.3.x` — interface usage verified against the official Komari 1.3.0 source.
 - Node responses are normalized for both `1.2.5-fix1` arrays and `1.2.5-fix2`/`1.2.7` UUID-keyed objects.
 - Ping charts prefer `public:queryMetrics` / `public:getPingMetricStats` when available and fall back to `common:getRecords` on method-not-found or uninitialized metric store errors.
 - Theme configuration uses the managed settings type; Komari server 1.0.5 or newer is required.
