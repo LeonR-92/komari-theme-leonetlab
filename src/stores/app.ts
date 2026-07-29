@@ -5,6 +5,7 @@ import { defineStore } from 'pinia'
 import { computed, ref, watch } from 'vue'
 
 export type ThemeMode = 'system' | 'light' | 'dark'
+export type NodeCardDensity = 'comfortable' | 'compact'
 type Lang = 'zh-CN' | 'en-US'
 type NodeViewMode = 'card' | 'list'
 type RpcTransportMode = 'websocket' | 'http'
@@ -184,6 +185,27 @@ const useAppStore = defineStore('app', () => {
       return settings.disablePageAnimation
     }
     return false
+  })
+
+  const introAnimationEnabled = computed<boolean>(() => {
+    const settings = publicSettings.value?.theme_settings
+    if (settings && typeof settings.introAnimationEnabled === 'boolean') {
+      return settings.introAnimationEnabled
+    }
+    return true
+  })
+
+  const regionalTelemetryEnabled = computed<boolean>(() => {
+    const settings = publicSettings.value?.theme_settings
+    if (settings && typeof settings.regionalTelemetryEnabled === 'boolean') {
+      return settings.regionalTelemetryEnabled
+    }
+    return true
+  })
+
+  const nodeCardDensity = computed<NodeCardDensity>(() => {
+    const density = publicSettings.value?.theme_settings?.nodeCardDensity
+    return density === 'compact' ? 'compact' : 'comfortable'
   })
 
   // 计算属性：ICP 备案配置
@@ -388,6 +410,9 @@ const useAppStore = defineStore('app', () => {
     visitorInfoCardEnabled,
     hideAdminEntryWhenLoggedOut,
     disablePageAnimation,
+    introAnimationEnabled,
+    regionalTelemetryEnabled,
+    nodeCardDensity,
     icpEnabled,
     icpNumber,
     icpUrl,

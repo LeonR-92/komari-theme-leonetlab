@@ -44,6 +44,57 @@ export interface RecordFormat {
 type AnyRecord = Record<string, any>
 
 /**
+ * 仅供图表展示的短缺口桥接。
+ *
+ * 连续缺失点不超过 maxMissingSamples，且缺口两端都有有效数值时，
+ * 使用线性插值生成一份新的数组。原始数组不会被修改；较长断线、
+ * 首尾缺失和非有限数值会继续保持断开。
+ */
+export function bridgeShortDisplayGaps(
+  values: Array<number | null>,
+  maxMissingSamples = 2,
+): Array<number | null> {
+  const output = [...values]
+  const limit = Math.max(0, Math.floor(maxMissingSamples))
+
+  if (limit === 0 || output.length < 3)
+    return output
+
+  let index = 0
+  while (index < values.length) {
+    if (values[index] !== null) {
+      index++
+      continue
+    }
+
+    const gapStart = index
+    while (index < values.length && values[index] === null)
+      index++
+
+    const gapEnd = index - 1
+    const gapLength = gapEnd - gapStart + 1
+    const left = values[gapStart - 1]
+    const right = values[index]
+
+    if (
+      gapLength > limit
+      || typeof left !== 'number'
+      || !Number.isFinite(left)
+      || typeof right !== 'number'
+      || !Number.isFinite(right)
+    ) {
+      continue
+    }
+
+    const step = (right - left) / (gapLength + 1)
+    for (let offset = 1; offset <= gapLength; offset++)
+      output[gapStart + offset - 1] = left + step * offset
+  }
+
+  return output
+}
+
+/**
  * 创建空值模板
  * 递归设置所有数值属性为 null，用于填充缺失的时间点
  */
@@ -316,6 +367,16 @@ export function cutPeakValues(
 
   for (const key of keys) {
     const sourceValues = data.map(row => row?.[key])
+    const segmentIds: number[] = []
+    let segmentId = 0
+    let previousWasGap = true
+    for (const value of sourceValues) {
+      const isGap = typeof value !== 'number' || !Number.isFinite(value)
+      if (!isGap && previousWasGap)
+        segmentId += 1
+      segmentIds.push(isGap ? -1 : segmentId)
+      previousWasGap = isGap
+    }
     let ewma: number | null = null
 
     for (let i = 0; i < result.length; i++) {
@@ -325,6 +386,8 @@ export function cutPeakValues(
       const rawValue = sourceValues[i]
       if (typeof rawValue !== 'number' || !Number.isFinite(rawValue)) {
         row[key] = null
+        // Never carry the pre-loss EWMA state into a new continuous segment.
+        ewma = null
         continue
       }
 
@@ -332,7 +395,10 @@ export function cutPeakValues(
         .slice(Math.max(0, i - halfWindow), Math.min(sourceValues.length, i + halfWindow + 1))
         .filter((value, neighborIndex): value is number => {
           const absoluteIndex = Math.max(0, i - halfWindow) + neighborIndex
-          return absoluteIndex !== i && typeof value === 'number' && Number.isFinite(value)
+          return absoluteIndex !== i
+            && segmentIds[absoluteIndex] === segmentIds[i]
+            && typeof value === 'number'
+            && Number.isFinite(value)
         })
 
       let filteredValue = rawValue

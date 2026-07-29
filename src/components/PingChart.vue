@@ -11,7 +11,7 @@ import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { useBackgroundSurface } from '@/composables/useBackgroundSurface'
 import { useAppStore } from '@/stores/app'
 import { isMobileLike } from '@/utils/mobilePerf'
-import { cutPeakValues } from '@/utils/recordHelper'
+import { bridgeShortDisplayGaps, cutPeakValues } from '@/utils/recordHelper'
 import { getSharedRpc, RpcError } from '@/utils/rpc'
 import '@/utils/echarts' // 共享 ECharts 配置
 
@@ -125,6 +125,7 @@ interface PingLossPoint {
 
 interface TaskInfo {
   id: number
+  weight?: number
   name: string
   interval: number
   loss: number
@@ -188,16 +189,28 @@ interface PingChartData {
   tasks: TaskInfo[]
 }
 
+interface PublicPingTask {
+  id: number
+  weight?: number
+}
+
 // 数据状态
 const remoteData = shallowRef<PingRecord[]>([])
 const remoteLossData = shallowRef<PingLossPoint[]>([])
 const tasks = shallowRef<TaskInfo[]>([])
 const loading = ref(false)
+const fetching = ref(false)
+const backgroundRefreshing = ref(false)
 const error = ref<string | null>(null)
+const refreshError = ref(false)
+const lastUpdatedAt = ref<number | null>(null)
 let fetchRequestId = 0
 let metricRpcSupported: boolean | null = null
+let metricRpcRetryAt = 0
 let refreshTimer: ReturnType<typeof window.setInterval> | null = null
-const PING_DIALOG_REFRESH_INTERVAL_MS = 30_000
+const PING_DIALOG_REFRESH_INTERVAL_MS = 15_000
+let pingTaskWeightCache = new Map<number, number>()
+let pingTaskWeightCacheExpiresAt = 0
 
 // 任务选择
 const selectedTaskIds = ref<number[]>([])
@@ -254,12 +267,11 @@ function getMetricTaskId(series: MetricSeries, point: MetricPoint): number | nul
 }
 
 async function fetchMetricRecords(uuid: string, hours: number): Promise<PingChartData> {
-  const [metricResult, statsResult] = await Promise.all([
+  const [metricResult, statsResult, taskWeights] = await Promise.all([
     rpc.getClient().call<MetricQueryResponse>('public:queryMetrics', {
       metric_keys: ['ping.latency_ms', 'ping.loss'],
       entity_id: uuid,
       hours,
-      downsample: true,
       max_points: 500,
       fill_empty: true,
       aggregation_by_metric: {
@@ -274,6 +286,7 @@ async function fetchMetricRecords(uuid: string, hours: number): Promise<PingChar
       hours,
       max_points: 500,
     }),
+    fetchPublicPingTaskWeights(),
   ])
 
   const records: PingRecord[] = []
@@ -307,6 +320,7 @@ async function fetchMetricRecords(uuid: string, hours: number): Promise<PingChar
 
   const metricTasks = (statsResult?.stats ?? []).map(task => ({
     id: Number(task.task_id),
+    weight: taskWeights.get(Number(task.task_id)),
     name: task.name || `Ping ${task.task_id}`,
     interval: task.interval ?? 60,
     loss: Number.isFinite(task.loss) ? task.loss : 0,
@@ -319,54 +333,100 @@ async function fetchMetricRecords(uuid: string, hours: number): Promise<PingChar
     latest: task.latest,
     total: task.total,
     type: task.type,
-  })).filter(task => Number.isInteger(task.id))
+  })).filter(task => Number.isInteger(task.id)).sort(compareTasks)
 
   return { records, lossPoints, tasks: metricTasks }
 }
 
 async function fetchLegacyRecords(uuid: string, hours: number): Promise<PingChartData> {
-  const result = await rpc.getClient().call<PingRecordsResponse>('common:getRecords', {
-    type: 'ping',
-    uuid,
-    hours,
-    maxCount: 4000,
-  })
+  const [result, taskWeights] = await Promise.all([
+    rpc.getClient().call<PingRecordsResponse>('common:getRecords', {
+      type: 'ping',
+      uuid,
+      hours,
+      maxCount: 4000,
+    }),
+    fetchPublicPingTaskWeights(),
+  ])
 
   return {
     records: result?.records ?? [],
     lossPoints: (result?.records ?? [])
       .filter(record => record.value < 0)
       .map(record => ({ task_id: record.task_id, time: record.time, loss: 1 })),
-    tasks: result?.tasks ?? [],
+    tasks: (result?.tasks ?? [])
+      .map(task => ({ ...task, weight: task.weight ?? taskWeights.get(task.id) }))
+      .sort(compareTasks),
   }
 }
 
-async function fetchRecords() {
+function compareTasks(a: TaskInfo, b: TaskInfo): number {
+  const weightA = Number.isFinite(a.weight) ? a.weight! : Number.MAX_SAFE_INTEGER
+  const weightB = Number.isFinite(b.weight) ? b.weight! : Number.MAX_SAFE_INTEGER
+  return weightA - weightB || a.id - b.id
+}
+
+async function fetchPublicPingTaskWeights(): Promise<Map<number, number>> {
+  if (Date.now() < pingTaskWeightCacheExpiresAt)
+    return new Map(pingTaskWeightCache)
+
+  try {
+    const publicTasks = await rpc.getClient().call<PublicPingTask[]>('public:getPublicPingTasks')
+    pingTaskWeightCache = new Map((publicTasks ?? [])
+      .filter(task => Number.isInteger(task.id) && Number.isFinite(task.weight))
+      .map(task => [task.id, task.weight!] as const))
+    pingTaskWeightCacheExpiresAt = Date.now() + 5 * 60_000
+    return new Map(pingTaskWeightCache)
+  }
+  catch {
+    // 1.2.5-compatible servers may omit this public method or the weight field.
+    pingTaskWeightCache = new Map()
+    pingTaskWeightCacheExpiresAt = Date.now() + 5 * 60_000
+    return new Map()
+  }
+}
+
+async function fetchRecords(options: { background?: boolean } = {}) {
   if (!props.uuid)
+    return
+  const background = options.background === true
+  if (background && fetching.value)
     return
 
   const requestId = ++fetchRequestId
   const uuid = props.uuid
   const hours = selectedHours.value
+  const blockWorkspace = !background || (remoteData.value.length === 0 && tasks.value.length === 0)
 
-  loading.value = true
-  error.value = null
+  fetching.value = true
+  backgroundRefreshing.value = background && !blockWorkspace
+  loading.value = blockWorkspace
+  if (!background)
+    error.value = null
 
   try {
     let result: PingChartData
-    if (metricRpcSupported === false) {
+    if (metricRpcSupported === false && Date.now() < metricRpcRetryAt) {
       result = await fetchLegacyRecords(uuid, hours)
     }
     else {
       try {
         result = await fetchMetricRecords(uuid, hours)
         metricRpcSupported = true
+        metricRpcRetryAt = 0
       }
       catch (err) {
         if (!canFallbackToLegacyRecords(err))
           throw err
 
         metricRpcSupported = false
+        // A migrating/restarting 1.3.x metric store can become available while
+        // the dialog remains open. Retry that transient state without forcing
+        // the visitor to close and reopen the chart; unsupported old methods
+        // remain on the legacy path for this component lifetime.
+        metricRpcRetryAt = err instanceof RpcError && err.code === -32603
+          ? Date.now() + 60_000
+          : Number.POSITIVE_INFINITY
         result = await fetchLegacyRecords(uuid, hours)
       }
     }
@@ -380,6 +440,8 @@ async function fetchRecords() {
     remoteData.value = records
     remoteLossData.value = result.lossPoints
     tasks.value = result.tasks
+    refreshError.value = false
+    lastUpdatedAt.value = Date.now()
 
     // 仅在用户未手动清空时自动全选；后台轮询不得撤销「清空」操作
     if (tasks.value.length > 0 && selectedTaskIds.value.length === 0 && !userClearedSelection.value) {
@@ -390,14 +452,21 @@ async function fetchRecords() {
     if (requestId !== fetchRequestId)
       return
 
-    error.value = err instanceof Error ? err.message : '获取数据失败'
-    remoteData.value = []
-    remoteLossData.value = []
-    tasks.value = []
+    if (background && (remoteData.value.length > 0 || tasks.value.length > 0)) {
+      refreshError.value = true
+    }
+    else {
+      error.value = err instanceof Error ? err.message : '获取数据失败'
+      remoteData.value = []
+      remoteLossData.value = []
+      tasks.value = []
+    }
   }
   finally {
     if (requestId === fetchRequestId) {
       loading.value = false
+      fetching.value = false
+      backgroundRefreshing.value = false
     }
   }
 }
@@ -406,7 +475,8 @@ async function fetchRecords() {
 
 const mergedData = computed(() => {
   const data = remoteData.value
-  if (!data.length)
+  const lossData = remoteLossData.value
+  if (!data.length && !lossData.length)
     return []
 
   const toleranceMs = mergeToleranceMs.value
@@ -435,6 +505,28 @@ const mergedData = computed(() => {
 
     const group = grouped.get(useTs)!
     group[rec.task_id] = rec.value < 0 ? null : rec.value
+  }
+
+  // A fully lost bucket has no latency sample in Komari 1.3.1's metric
+  // response. Keep an explicit null row so the line breaks at the real loss
+  // timestamp and the loss marker remains aligned with the x-axis.
+  for (const loss of lossData) {
+    const ts = dayjs(loss.time).valueOf()
+    let anchor: number | null = null
+    for (const candidate of anchors) {
+      if (Math.abs(candidate - ts) <= toleranceMs) {
+        anchor = candidate
+        break
+      }
+    }
+    const useTs = anchor ?? ts
+    if (!grouped.has(useTs)) {
+      grouped.set(useTs, { time: dayjs(useTs).toISOString() })
+      anchors.push(useTs)
+    }
+    const group = grouped.get(useTs)!
+    if (!(loss.task_id in group))
+      group[loss.task_id] = null
   }
 
   const merged = Array.from(grouped.values()).sort(
@@ -602,7 +694,7 @@ function hideAllTasks() {
 // 通用 Tooltip 配置
 const baseTooltipConfig = computed(() => ({
   trigger: 'axis' as const,
-  confine: false,
+  confine: true,
   backgroundColor: chartThemeColors.value.tooltipBg,
   borderColor: 'transparent',
   borderWidth: 0,
@@ -638,10 +730,13 @@ const pingChartOption = computed(() => {
   const series = taskList.map((task) => {
     const color = getTaskColor(task.id)
     const lossMarkerIndexes = packetLossMarkers.value.get(task.id) || []
+    const rawValues = data.map(d => d[task.id] as number | null ?? null)
+    const displayValues = bridgeShortDisplayGaps(rawValues, 2)
     return {
       name: task.name,
       type: 'line' as const,
-      data: data.map(d => d[task.id] as number | null ?? null),
+      // 只在绘制副本上桥接 1–2 个采样周期；统计、Tooltip 与状态色块继续读取原始值。
+      data: displayValues,
       smooth: showDelay.value ? (cutPeak.value ? 0.28 : 0.08) : 0,
       showSymbol: false,
       connectNulls: false,
@@ -703,16 +798,24 @@ const pingChartOption = computed(() => {
         let html = `<div style="font-weight:600;margin-bottom:6px;color:${chartThemeColors.value.textSecondary}">${timeStr}</div>`
         html += '<div style="display:flex;flex-direction:column;gap:4px">'
 
-        // 按延迟值排序显示
-        const sortedParams = [...p].sort((a, b) => (a.value ?? 0) - (b.value ?? 0))
-
-        for (const item of sortedParams) {
-          if (item.value !== null && item.value !== undefined) {
-            // 通过任务名找到对应的任务ID，再获取颜色
+        // Tooltip 始终读取原始行，绝不展示绘制副本中的插值值。
+        const rawItems = p
+          .map((item) => {
             const task = tasks.value.find(t => t.name === item.seriesName)
-            const color = task ? colorMap.get(task.id) || chartColors[0] : chartColors[0]
+            const rawValue = task ? rowData[task.id] : null
+            return {
+              ...item,
+              task,
+              rawValue: typeof rawValue === 'number' && Number.isFinite(rawValue) ? rawValue : null,
+            }
+          })
+          .sort((a, b) => (a.rawValue ?? Number.POSITIVE_INFINITY) - (b.rawValue ?? Number.POSITIVE_INFINITY))
+
+        for (const item of rawItems) {
+          if (item.rawValue !== null) {
+            const color = item.task ? colorMap.get(item.task.id) || chartColors[0] : chartColors[0]
             const colorDot = `<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${color};margin-right:8px;flex-shrink:0"></span>`
-            html += `<div style="display:flex;align-items:center">${colorDot}<span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${item.seriesName}</span><span style="margin-left:auto;font-weight:600;margin-left:16px;font-variant-numeric:tabular-nums">${Math.round(item.value)} ms</span></div>`
+            html += `<div style="display:flex;align-items:center">${colorDot}<span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${item.seriesName}</span><span style="margin-left:auto;font-weight:600;margin-left:16px;font-variant-numeric:tabular-nums">${Math.round(item.rawValue)} ms</span></div>`
           }
         }
         html += '</div>'
@@ -778,7 +881,7 @@ watch(selectedView, () => {
   // 切换时间窗：清除手动清空标记并重新自动全选
   userClearedSelection.value = false
   selectedTaskIds.value = []
-  fetchRecords()
+  void fetchRecords()
 }, { immediate: true })
 
 watch(() => props.uuid, () => {
@@ -788,12 +891,12 @@ watch(() => props.uuid, () => {
   // 切换节点：清除手动清空标记并重新自动全选
   userClearedSelection.value = false
   selectedTaskIds.value = []
-  fetchRecords()
+  void fetchRecords()
 })
 
 function refreshWhenVisible() {
   if (document.visibilityState === 'visible')
-    void fetchRecords()
+    void fetchRecords({ background: true })
 }
 
 onMounted(() => {
@@ -885,7 +988,7 @@ onUnmounted(() => {
                   <span>LOSS {{ Number.isFinite(task.loss) ? task.loss.toFixed(2) : '0.00' }}%</span>
                   <span v-if="task.p99_p50_ratio !== undefined">JIT {{ task.p99_p50_ratio.toFixed(2) }}</span>
                 </div>
-                <DataTooltip placement="top" content-class="!rounded-none !left-auto right-0 translate-x-0 p-3 w-64">
+                <DataTooltip portal placement="top" content-class="!rounded-none p-3 w-64">
                   <Button variant="ghost" size="icon-xs" class="lnl-ping-probe-info" @click.stop>
                     <Icon icon="carbon:information" :width="14" :height="14" />
                   </Button>
@@ -909,6 +1012,13 @@ onUnmounted(() => {
                 <strong>网络质量时间线</strong>
               </div>
               <div class="lnl-ping-plot-actions">
+                <span
+                  class="lnl-ping-live-state"
+                  :class="{ 'is-refreshing': backgroundRefreshing, 'is-stale': refreshError }"
+                  :title="lastUpdatedAt ? `最近更新：${dayjs(lastUpdatedAt).format('HH:mm:ss')}` : '等待首批数据'"
+                >
+                  <i /> {{ refreshError ? '连接重试' : backgroundRefreshing ? '实时同步' : '实时' }}
+                </span>
                 <Button variant="ghost" size="xs" class="h-7 rounded-none" :class="[showDelay && '!text-emerald-600']" @click="showDelay = !showDelay">
                   延迟
                 </Button>
@@ -918,12 +1028,12 @@ onUnmounted(() => {
                 <Button variant="ghost" size="xs" class="h-7 rounded-none" :class="[cutPeak && '!text-emerald-600']" @click="cutPeak = !cutPeak">
                   平滑
                 </Button>
-                <DataTooltip placement="bottom" :width="272" :content-class="pickSurfaceClass('text-[11px] leading-relaxed !left-auto right-0 translate-x-0', 'text-[11px] leading-relaxed backdrop-blur-xl !left-auto right-0 translate-x-0')">
+                <DataTooltip portal placement="bottom" :width="272" :content-class="pickSurfaceClass('text-[11px] leading-relaxed', 'text-[11px] leading-relaxed backdrop-blur-xl')">
                   <Button variant="ghost" size="icon-xs" class="text-slate-500" aria-label="查看 Ping 平滑算法说明">
                     <Icon icon="carbon:information" :width="14" :height="14" />
                   </Button>
                   <template #content>
-                    <span>Komari 1.2.7+ 使用每时间桶末值绘制延迟、平均值标记丢包，避免把 -1 丢包编码参与延迟平均。开启“平滑”只对延迟折线应用 EWMA 与异常峰值抑制，不修改原始统计、丢包标记或节点质量色块。</span>
+                    <span>Komari 1.3.1 在最近 10 分钟保留精确样本，更长窗口由服务端分钟汇总。开启“平滑”只对连续有效片段应用 Hampel + EWMA；图表可在 1–2 个采样周期的短缺口间绘制展示线，长断线仍保持断开。原始统计、Tooltip、丢包标记和节点质量色块均不使用插值值。</span>
                   </template>
                 </DataTooltip>
               </div>
@@ -1175,6 +1285,33 @@ onUnmounted(() => {
   align-items: center;
   gap: 2px;
 }
+.lnl-ping-live-state {
+  display: inline-flex !important;
+  align-items: center;
+  gap: 5px;
+  margin-right: 5px;
+  color: var(--muted-foreground) !important;
+  font-size: 8px !important;
+  letter-spacing: 0.1em !important;
+  white-space: nowrap;
+}
+.lnl-ping-live-state i {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--lnl-green);
+  box-shadow: 0 0 8px color-mix(in srgb, var(--lnl-green) 60%, transparent);
+}
+.lnl-ping-live-state.is-refreshing i {
+  animation: ping-live-pulse 720ms ease-in-out infinite alternate;
+}
+.lnl-ping-live-state.is-stale {
+  color: var(--destructive) !important;
+}
+.lnl-ping-live-state.is-stale i {
+  background: var(--destructive);
+  box-shadow: none;
+}
 .lnl-ping-chart {
   min-height: 330px;
   height: clamp(330px, 42dvh, 420px);
@@ -1282,6 +1419,12 @@ onUnmounted(() => {
   .lnl-ping-panel.is-motion-enabled
     :is(.lnl-ping-toolbar, .lnl-ping-probes-head, .lnl-ping-probe, .lnl-ping-plot-head, .lnl-ping-chart) {
     animation: none;
+  }
+}
+@keyframes ping-live-pulse {
+  to {
+    opacity: 0.32;
+    transform: scale(0.72);
   }
 }
 </style>

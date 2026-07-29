@@ -10,6 +10,7 @@ const props = defineProps<{
 interface VisitorGeoData {
   ip: string
   isp: string
+  asn: string
   location: string
   countryCode: string
 }
@@ -24,6 +25,7 @@ interface VisitorInfoRow {
   value: string
   icon: string
   expandOnly?: boolean
+  wide?: boolean
 }
 
 const ANDROID_REGEX = /android/i
@@ -46,6 +48,7 @@ const device = ref('检测中')
 const browser = ref('检测中')
 const ip = ref('获取中')
 const isp = ref('获取中')
+const asn = ref('获取中')
 const location = ref('正在定位访客来源')
 const countryCode = ref('')
 const visitTime = ref(formatVisitTime(new Date()))
@@ -64,12 +67,14 @@ const keepExpandedRows = computed(() => isExpanded.value || presentationState.va
 const subtitle = computed(() => loading.value ? '检测中' : location.value || '网络访客')
 const flagSrc = computed(() => countryCode.value ? `/images/flags/${countryCode.value}.svg` : '')
 const displayIp = computed(() => isExpanded.value ? ip.value : maskIpForCollapsedState(ip.value))
+const greeting = computed(() => getTimeGreeting(new Date()))
 
 const visitorRows = computed<VisitorInfoRow[]>(() => [
   {
     label: '来源',
     value: subtitle.value,
     icon: 'tabler:world-pin',
+    wide: true,
   },
   {
     label: '设备',
@@ -91,6 +96,12 @@ const visitorRows = computed<VisitorInfoRow[]>(() => [
     label: '网络',
     value: isp.value,
     icon: 'tabler:building-skyscraper',
+    expandOnly: true,
+  },
+  {
+    label: 'ASN',
+    value: asn.value,
+    icon: 'tabler:network',
     expandOnly: true,
   },
   {
@@ -143,6 +154,28 @@ function formatVisitTime(date: Date): string {
     minute: '2-digit',
     hour12: false,
   }).format(date)
+}
+
+function getTimeGreeting(date: Date): string {
+  const hour = date.getHours()
+  if (hour >= 5 && hour < 11)
+    return '早上好'
+  if (hour >= 11 && hour < 14)
+    return '中午好'
+  if (hour >= 14 && hour < 18)
+    return '下午好'
+  if (hour >= 18 || hour < 1)
+    return '晚上好'
+  return '夜深了'
+}
+
+function normalizeAsn(value: unknown): string {
+  if (typeof value === 'number' && Number.isFinite(value))
+    return `AS${Math.trunc(value)}`
+  if (typeof value !== 'string' || !value.trim())
+    return '未知'
+  const normalized = value.trim().toUpperCase()
+  return normalized.startsWith('AS') ? normalized : `AS${normalized}`
 }
 
 function maskIpForCollapsedState(value: string): string {
@@ -271,6 +304,7 @@ async function fetchVisitorGeo(): Promise<VisitorGeoData | null> {
         isp?: string
         organization?: string
         asn_organization?: string
+        asn?: string | number
         country?: string
         country_code?: string
         region?: string
@@ -284,6 +318,7 @@ async function fetchVisitorGeo(): Promise<VisitorGeoData | null> {
       return {
         ip: data.ip,
         isp: data.isp || data.organization || data.asn_organization || '未知运营商',
+        asn: normalizeAsn(data.asn),
         location: [data.country, data.city || data.region].filter(Boolean).join(' · ') || '未知位置',
         countryCode: data.country_code || '',
       }
@@ -300,6 +335,7 @@ async function fetchVisitorGeo(): Promise<VisitorGeoData | null> {
         connection?: {
           isp?: string
           org?: string
+          asn?: string | number
         }
       }>('https://ipwho.is/', 4000)
 
@@ -310,6 +346,7 @@ async function fetchVisitorGeo(): Promise<VisitorGeoData | null> {
       return {
         ip: data.ip,
         isp: data.connection?.isp || data.connection?.org || '未知运营商',
+        asn: normalizeAsn(data.connection?.asn),
         location: [data.country, data.city || data.region].filter(Boolean).join(' · ') || '未知位置',
         countryCode: data.country_code || '',
       }
@@ -321,6 +358,7 @@ async function fetchVisitorGeo(): Promise<VisitorGeoData | null> {
           name?: string
         }
         asn?: {
+          asn?: string | number
           org?: string
           descr?: string
           country?: string
@@ -346,6 +384,7 @@ async function fetchVisitorGeo(): Promise<VisitorGeoData | null> {
       return {
         ip: data.ip,
         isp: data.asn?.org || data.company?.name || data.datacenter?.datacenter || data.asn?.descr || '未知运营商',
+        asn: normalizeAsn(data.asn?.asn),
         location: [
           data.location?.country || data.datacenter?.country,
           data.location?.city || data.location?.state || data.datacenter?.city || data.datacenter?.region,
@@ -359,6 +398,7 @@ async function fetchVisitorGeo(): Promise<VisitorGeoData | null> {
         reason?: string
         ip?: string
         org?: string
+        asn?: string | number
         country_name?: string
         country_code?: string
         region?: string
@@ -372,6 +412,7 @@ async function fetchVisitorGeo(): Promise<VisitorGeoData | null> {
       return {
         ip: data.ip,
         isp: data.org || '未知运营商',
+        asn: normalizeAsn(data.asn),
         location: [data.country_name, data.city || data.region].filter(Boolean).join(' · ') || '未知位置',
         countryCode: data.country_code || '',
       }
@@ -382,6 +423,7 @@ async function fetchVisitorGeo(): Promise<VisitorGeoData | null> {
         data?: {
           ip?: string
           isp?: string
+          asn?: string | number
           country?: string
           province?: string
           city?: string
@@ -396,6 +438,7 @@ async function fetchVisitorGeo(): Promise<VisitorGeoData | null> {
       return {
         ip: data.data.ip,
         isp: data.data.isp || '未知运营商',
+        asn: normalizeAsn(data.data.asn),
         location: [data.data.country, data.data.city || data.data.province].filter(Boolean).join(' · ') || '未知位置',
         countryCode: data.data.countryCode || '',
       }
@@ -427,12 +470,14 @@ onMounted(async () => {
   if (geo) {
     ip.value = geo.ip
     isp.value = geo.isp
+    asn.value = geo.asn
     location.value = geo.location
     countryCode.value = geo.countryCode.toUpperCase()
   }
   else {
     ip.value = '暂无法获取'
     isp.value = '网络信息不可用'
+    asn.value = '未知'
     location.value = '网络访客'
   }
 
@@ -459,9 +504,9 @@ onUnmounted(() => presentationTimers.forEach(timer => window.clearTimeout(timer)
       :aria-expanded="isExpanded"
       @click="expand = !expand"
     >
-      <span v-if="presentationActive" class="lnl-visitor-scan-head">
-        <span><i /> 身份信息扫描</span>
-        <b>{{ presentationState === 'verified' ? '验证完成' : presentationState === 'collapsing' ? '凭证已收束' : presentationState === 'entering' ? '建立会话' : '解析中' }}</b>
+      <span v-if="keepExpandedRows" class="lnl-visitor-scan-head">
+        <span><i :class="{ 'is-live': presentationActive }" /> {{ greeting }} · 身份信息扫描</span>
+        <b>{{ presentationActive ? (presentationState === 'verified' ? '验证完成' : presentationState === 'collapsing' ? '凭证已收束' : presentationState === 'entering' ? '建立会话' : '解析中') : '访客会话' }}</b>
       </span>
       <TransitionGroup
         tag="div"
@@ -472,6 +517,7 @@ onUnmounted(() => presentationTimers.forEach(timer => window.clearTimeout(timer)
         <div
           v-for="(item, index) in visibleRows" :key="item.icon"
           class="lnl-visitor-row flex min-w-0 items-center gap-2"
+          :class="{ 'is-source': item.wide }"
           :style="getItemTransitionStyle(index)"
         >
           <img
@@ -535,7 +581,7 @@ onUnmounted(() => presentationTimers.forEach(timer => window.clearTimeout(timer)
   padding: 9px 11px 9px 13px;
   border: 1px solid var(--lnl-line);
   border-radius: 0;
-  background: color-mix(in srgb, var(--background) 96%, transparent);
+  background: var(--background);
   box-shadow: 0 12px 38px rgb(0 0 0 / 18%);
   contain: layout paint style;
   color: inherit;
@@ -562,7 +608,7 @@ onUnmounted(() => presentationTimers.forEach(timer => window.clearTimeout(timer)
   box-shadow:
     0 18px 56px rgb(0 0 0 / 24%),
     inset 0 0 42px color-mix(in srgb, var(--lnl-green) 4%, transparent);
-  height: 190px;
+  height: 238px;
 }
 
 .lnl-visitor.is-collapsing .lnl-visitor-trigger,
@@ -573,6 +619,19 @@ onUnmounted(() => presentationTimers.forEach(timer => window.clearTimeout(timer)
 .lnl-visitor.is-presenting .lnl-visitor-rows,
 .lnl-visitor.is-expanded .lnl-visitor-rows {
   width: 100%;
+}
+
+.lnl-visitor.is-presenting .lnl-visitor-row.is-source,
+.lnl-visitor.is-expanded .lnl-visitor-row.is-source {
+  grid-column: 1 / -1;
+  min-height: 32px;
+  padding-bottom: 7px;
+  border-bottom: 1px solid color-mix(in srgb, var(--lnl-line) 62%, transparent);
+}
+
+.lnl-visitor.is-presenting .lnl-visitor-row.is-source p,
+.lnl-visitor.is-expanded .lnl-visitor-row.is-source p {
+  max-width: min(450px, calc(100vw - 120px));
 }
 
 .lnl-visitor.is-collapsing .lnl-visitor-rows,
@@ -653,6 +712,9 @@ onUnmounted(() => presentationTimers.forEach(timer => window.clearTimeout(timer)
   border-radius: 50%;
   background: var(--lnl-green);
   box-shadow: 0 0 12px color-mix(in srgb, var(--lnl-green) 70%, transparent);
+}
+
+.lnl-visitor-scan-head i.is-live {
   animation: visitor-scan-pulse 0.72s ease-in-out infinite alternate;
 }
 
@@ -675,7 +737,7 @@ onUnmounted(() => presentationTimers.forEach(timer => window.clearTimeout(timer)
 .lnl-visitor-trigger:focus-visible,
 .lnl-visitor-trigger.is-expanded {
   border-color: color-mix(in srgb, var(--lnl-green) 48%, var(--lnl-line));
-  background: color-mix(in srgb, var(--lnl-surface) 94%, transparent);
+  background: var(--background);
 }
 
 .lnl-visitor-trigger:focus-visible {
@@ -767,7 +829,17 @@ onUnmounted(() => presentationTimers.forEach(timer => window.clearTimeout(timer)
 
   .lnl-visitor.is-presenting .lnl-visitor-trigger,
   .lnl-visitor.is-expanded .lnl-visitor-trigger {
-    height: min(190px, calc(100dvh - 124px));
+    height: min(250px, calc(100dvh - 124px));
+  }
+
+  .lnl-visitor.is-presenting .lnl-visitor-row p,
+  .lnl-visitor.is-expanded .lnl-visitor-row p {
+    max-width: min(34vw, 150px);
+  }
+
+  .lnl-visitor.is-presenting .lnl-visitor-row.is-source p,
+  .lnl-visitor.is-expanded .lnl-visitor-row.is-source p {
+    max-width: calc(100vw - 116px);
   }
 }
 

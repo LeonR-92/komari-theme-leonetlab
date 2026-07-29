@@ -5,15 +5,18 @@ import { useRouter } from 'vue-router'
 import { Button } from '@/components/ui/button'
 import { DataTooltip } from '@/components/ui/data-tooltip'
 import { useAppStore } from '@/stores/app'
+import { refreshThemeCache } from '@/utils/pwa'
 
 const router = useRouter()
 const appStore = useAppStore()
 const isScrolled = inject<ReturnType<typeof ref<boolean>>>('isScrolled', ref(false))
-const themeTransition = ref<{ target: 'light' | 'dark', phase: 'covering' | 'revealing' } | null>(null)
+const themeTransition = ref<{ target: 'light' | 'dark' } | null>(null)
+const themeTransitionActive = ref(false)
 const leavingForAdmin = ref(false)
 const transitionTimers: number[] = []
 const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches
 const logoVisible = ref(true)
+const refreshingCache = ref(false)
 
 const actionButtons = computed(() => {
   const buttons = [{
@@ -21,13 +24,18 @@ const actionButtons = computed(() => {
     icon: appStore.themeMode === 'system' ? 'icon-park-outline:dark-mode' : appStore.themeMode === 'light' ? 'icon-park-outline:sun-one' : 'icon-park-outline:moon',
     action: 'toggleTheme',
   }]
+  buttons.push({
+    title: refreshingCache.value ? '正在刷新主题缓存' : '刷新主题缓存',
+    icon: 'tabler:refresh',
+    action: 'refreshThemeCache',
+  })
   if (appStore.isLoggedIn || !appStore.hideAdminEntryWhenLoggedOut)
     buttons.push({ title: '管理后台', icon: 'icon-park-outline:setting', action: 'jumpToSetting' })
   return buttons
 })
 
 function toggleTheme() {
-  if (themeTransition.value)
+  if (themeTransitionActive.value)
     return
 
   const nextMode = appStore.themeMode === 'system'
@@ -47,17 +55,41 @@ function toggleTheme() {
     return
   }
 
-  themeTransition.value = { target: nextResolvedMode, phase: 'covering' }
+  const startTransition = () => {
+    themeTransitionActive.value = true
+    document.documentElement.classList.add('lnl-theme-transitioning')
+    window.dispatchEvent(new CustomEvent('leonetlab:theme-transition-start'))
+  }
+  const finishTransition = () => {
+    themeTransitionActive.value = false
+    themeTransition.value = null
+    document.documentElement.classList.remove('lnl-theme-transitioning')
+    window.dispatchEvent(new CustomEvent('leonetlab:theme-transition-end'))
+  }
+
+  startTransition()
+  themeTransition.value = { target: nextResolvedMode }
   transitionTimers.push(window.setTimeout(() => {
     appStore.updateThemeMode(nextMode)
-    requestAnimationFrame(() => {
-      if (themeTransition.value)
-        themeTransition.value.phase = 'revealing'
-    })
-  }, 390))
+  }, 450))
   transitionTimers.push(window.setTimeout(() => {
-    themeTransition.value = null
-  }, 820))
+    finishTransition()
+  }, 860))
+}
+
+async function handleThemeCacheRefresh() {
+  if (refreshingCache.value)
+    return
+  refreshingCache.value = true
+  window.$message?.info('正在检查主题更新并清理旧缓存…')
+  try {
+    await refreshThemeCache()
+  }
+  catch (error) {
+    console.error('[Header] Theme cache refresh failed:', error)
+    refreshingCache.value = false
+    window.$message?.error('主题缓存刷新失败，请稍后重试')
+  }
 }
 
 function jumpToSetting() {
@@ -76,11 +108,16 @@ function jumpToSetting() {
 function handleButtonClick(action: string) {
   if (action === 'toggleTheme')
     toggleTheme()
+  if (action === 'refreshThemeCache')
+    void handleThemeCacheRefresh()
   if (action === 'jumpToSetting')
     jumpToSetting()
 }
 
-onUnmounted(() => transitionTimers.forEach(timer => window.clearTimeout(timer)))
+onUnmounted(() => {
+  transitionTimers.forEach(timer => window.clearTimeout(timer))
+  document.documentElement.classList.remove('lnl-theme-transitioning')
+})
 
 function handleLogoError(event: Event) {
   const image = event.currentTarget as HTMLImageElement
@@ -113,8 +150,8 @@ function handleLogoError(event: Event) {
       </div>
       <nav class="lnl-header-actions" aria-label="页面操作">
         <DataTooltip v-for="button in actionButtons" :key="button.action" :content="button.title" placement="left" content-class="whitespace-nowrap text-[11px] px-2">
-          <Button variant="ghost" size="icon-sm" :aria-label="button.title" @click="handleButtonClick(button.action)">
-            <Icon :icon="button.icon" :width="18" :height="18" />
+          <Button variant="ghost" size="icon-sm" :aria-label="button.title" :disabled="button.action === 'refreshThemeCache' && refreshingCache" @click="handleButtonClick(button.action)">
+            <Icon :icon="button.icon" :width="18" :height="18" :class="{ 'animate-spin': button.action === 'refreshThemeCache' && refreshingCache }" />
           </Button>
         </DataTooltip>
       </nav>
@@ -124,7 +161,7 @@ function handleLogoError(event: Event) {
     <div
       v-if="themeTransition"
       class="lnl-theme-wipe"
-      :class="[`to-${themeTransition.target}`, `is-${themeTransition.phase}`]"
+      :class="`to-${themeTransition.target}`"
       aria-hidden="true"
     />
     <div
@@ -155,21 +192,28 @@ function handleLogoError(event: Event) {
   position: fixed;
   z-index: 90;
   inset: 0;
+  overflow: hidden;
   pointer-events: none;
-  clip-path: circle(0 at calc(100% - 48px) 36px);
-  will-change: clip-path, opacity;
+  contain: strict;
 }
-.lnl-theme-wipe.is-covering {
-  animation: lnl-theme-cover 0.4s cubic-bezier(0.65, 0, 0.35, 1) both;
+.lnl-theme-wipe::before {
+  position: absolute;
+  top: -50vmax;
+  right: -50vmax;
+  width: 100vmax;
+  height: 100vmax;
+  border-radius: 50%;
+  content: '';
+  opacity: 0;
+  transform: translate3d(0, 0, 0) scale(0.02);
+  transform-origin: center;
+  animation: lnl-theme-orb-desktop 0.86s cubic-bezier(0.4, 0, 0.2, 1) both;
+  will-change: transform, opacity;
 }
-.lnl-theme-wipe.is-revealing {
-  clip-path: circle(150vmax at calc(100% - 48px) 36px);
-  animation: lnl-theme-reveal 0.42s cubic-bezier(0.22, 1, 0.36, 1) both;
-}
-.lnl-theme-wipe.to-dark {
+.lnl-theme-wipe.to-dark::before {
   background: #06100d;
 }
-.lnl-theme-wipe.to-light {
+.lnl-theme-wipe.to-light::before {
   background: #edf7f1;
 }
 .lnl-route-cover {
@@ -299,17 +343,25 @@ function handleLogoError(event: Event) {
   transform-origin: left;
   animation: lnl-route-track 0.76s 0.1s cubic-bezier(0.2, 0.72, 0.2, 1) both;
 }
-@keyframes lnl-theme-cover {
-  to {
-    clip-path: circle(150vmax at calc(100% - 48px) 36px);
+@keyframes lnl-theme-orb-desktop {
+  0% {
+    opacity: 0;
+    transform: translate3d(0, 0, 0) scale(0.02);
   }
-}
-@keyframes lnl-theme-reveal {
-  from {
+  6% {
     opacity: 1;
   }
-  to {
+  52% {
+    opacity: 1;
+    transform: translate3d(0, 0, 0) scale(3.18);
+  }
+  78% {
+    opacity: 1;
+    transform: translate3d(0, 0, 0) scale(3.18);
+  }
+  100% {
     opacity: 0;
+    transform: translate3d(0, 0, 0) scale(3.23);
   }
 }
 @keyframes lnl-route-cover-in {

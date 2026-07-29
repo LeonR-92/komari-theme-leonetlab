@@ -1,4 +1,4 @@
-const CACHE_NAME = 'leonetlab-observatory-v1.3.0'
+const CACHE_NAME = 'leonetlab-observatory-v1.3.1-R'
 const OFFLINE_URL = '/offline.html'
 const CORE_ASSETS = [
   OFFLINE_URL,
@@ -26,6 +26,19 @@ globalThis.addEventListener('activate', (event) => {
         .filter(key => key.startsWith('leonetlab-observatory-') && key !== CACHE_NAME)
         .map(key => caches.delete(key))))
       .then(() => globalThis.clients.claim()),
+  )
+})
+
+globalThis.addEventListener('message', (event) => {
+  if (event.data?.type !== 'CLEAR_THEME_CACHE')
+    return
+
+  event.waitUntil(
+    caches.keys()
+      .then(keys => Promise.all(keys
+        .filter(key => key.startsWith('leonetlab-observatory-'))
+        .map(key => caches.delete(key))))
+      .then(() => event.ports[0]?.postMessage({ ok: true })),
   )
 })
 

@@ -21,14 +21,19 @@ import { useAppStore } from '@/stores/app'
 import { useNodesStore } from '@/stores/nodes'
 import { getCoordByCode, getCountryCodeFromRegion } from '@/utils/geoHelper'
 import { getGlobeProbe } from '@/utils/globeIntroShared'
+import { formatBytesPerSecondWithConfig } from '@/utils/helper'
 import { isMobileLike } from '@/utils/mobilePerf'
+import { getRegionDisplayName } from '@/utils/regionHelper'
 
 const props = defineProps<{
   nodes?: NodeData[]
   variant?: 'dashboard' | 'intro'
   interactive?: boolean
+  showMarkers?: boolean
   showStatus?: boolean
   motion?: 'auto' | 'static'
+  introReleasing?: boolean
+  handoffActive?: boolean
 }>()
 
 // 无头浏览器回归探针：仅当页面预置 window.__lnlGlobeProbe 时记录朝向与
@@ -37,19 +42,23 @@ const globeProbe = getGlobeProbe()
 
 const appStore = useAppStore()
 const nodesStore = useNodesStore()
+const buildVersion = __BUILD_VERSION__
 
 const displayNodes = computed(() => props.nodes ?? nodesStore.earthNodes)
+const liveNodes = computed(() => props.nodes ?? nodesStore.nodes)
 
 const containerRef = ref<HTMLDivElement>()
 const canvasRef = ref<HTMLCanvasElement>()
 const dragging = ref(false)
+const themeTransitioning = ref(false)
 const { width: containerWidth, height: containerHeight } = useElementSize(containerRef)
 
 const documentVisibility = useDocumentVisibility()
 const elementVisible = useElementVisibility(containerRef)
 // 单一实例全程渲染：可见性只受文档与元素自身可见性门控（后台/屏外暂停）。
 const shouldRender = computed(() => documentVisibility.value === 'visible'
-  && elementVisible.value)
+  && (props.handoffActive || elementVisible.value)
+  && !themeTransitioning.value)
 // Emerald exposes five layout modes. Only `earth` rotates automatically;
 // `earth-stop` remains draggable but holds its orientation after release.
 // 系统开启"减少动态效果"时地球仪不自动旋转，但保留用户拖拽。
@@ -58,6 +67,7 @@ const shouldAutoRotate = computed(() => !prefersReducedMotion.value
   && (props.motion === 'auto'
     || (props.motion === undefined && appStore.earthViewMode === 'earth')))
 const interactive = computed(() => props.interactive ?? props.variant !== 'intro')
+const showMarkers = computed(() => props.showMarkers ?? props.variant !== 'intro')
 const showStatus = computed(() => props.showStatus ?? props.variant !== 'intro')
 
 let globe: Globe | null = null
@@ -132,19 +142,35 @@ function getCappedDpr(): number {
 interface RegionCluster {
   code: string
   coord: [number, number]
+  displayName: string
   servers: number
   onlineServers: number
+  cpuAverage: number
+  memoryPercent: number
+  throughput: number
 }
 
 function clusterKey(c: RegionCluster) {
   return `${c.code}:${c.servers}:${c.onlineServers}`
 }
 
-// 节点按地区聚合
+function clampPercent(value: number): number {
+  if (!Number.isFinite(value))
+    return 0
+  return Math.min(100, Math.max(0, value))
+}
+
+// 节点按地区聚合。位置来自低频地球快照，负载和流量始终使用实时节点状态。
 const regionClusters = computed<RegionCluster[]>(() => {
-  const map = new Map<string, RegionCluster>()
-  for (const node of displayNodes.value) {
-    const code = getCountryCodeFromRegion(node.region)
+  const locationMap = new Map(displayNodes.value.map(node => [node.uuid, node]))
+  const map = new Map<string, RegionCluster & {
+    cpuTotal: number
+    memoryUsed: number
+    memoryTotal: number
+  }>()
+  for (const node of liveNodes.value) {
+    const locationNode = locationMap.get(node.uuid) ?? node
+    const code = getCountryCodeFromRegion(locationNode.region)
     if (!code)
       continue
     const coord = getCoordByCode(code)
@@ -153,18 +179,45 @@ const regionClusters = computed<RegionCluster[]>(() => {
 
     let entry = map.get(code)
     if (!entry) {
-      entry = { code, coord, servers: 0, onlineServers: 0 }
+      entry = {
+        code,
+        coord,
+        displayName: getRegionDisplayName(locationNode.region),
+        servers: 0,
+        onlineServers: 0,
+        cpuAverage: 0,
+        cpuTotal: 0,
+        memoryPercent: 0,
+        memoryUsed: 0,
+        memoryTotal: 0,
+        throughput: 0,
+      }
       map.set(code, entry)
     }
     entry.servers += 1
-    if (node.online)
+    if (node.online) {
       entry.onlineServers += 1
+      entry.cpuTotal += node.cpu
+      entry.memoryUsed += node.ram
+      entry.memoryTotal += node.mem_total
+      entry.throughput += node.net_in + node.net_out
+    }
   }
-  return Array.from(map.values()).sort((a, b) => b.servers - a.servers)
+
+  return Array.from(map.values()).map((entry) => {
+    entry.cpuAverage = entry.onlineServers > 0
+      ? clampPercent(entry.cpuTotal / entry.onlineServers)
+      : 0
+    entry.memoryPercent = entry.memoryTotal > 0
+      ? clampPercent(entry.memoryUsed / entry.memoryTotal * 100)
+      : 0
+    return entry
+  }).sort((a, b) => b.servers - a.servers)
 })
 
-const clusterOverlayEls = new Map<string, HTMLDivElement>()
+const clusterOverlayEls = new Map<string, HTMLElement>()
 const clusterOverlayRefBinders = new Map<string, (el: Element | ComponentPublicInstance | null) => void>()
+const activeRegionCode = ref<string | null>(null)
 
 function coordToGlobePoint([lat, lon]: [number, number]): [number, number, number] {
   const latRad = lat * Math.PI / 180
@@ -185,10 +238,16 @@ function getRenderSize() {
 
 // iOS Safari 对 cobe 内部 marker anchor 的 DOM/style 行为不稳定，
 // overlay 改为组件内自行投影定位，避免回落到容器左上角。
-function syncClusterOverlayPosition(cluster: RegionCluster, el: HTMLDivElement) {
+function syncClusterOverlayPosition(
+  cluster: RegionCluster,
+  el: HTMLElement,
+  rootStyle = getComputedStyle(document.documentElement),
+) {
   const { width, height } = getRenderSize()
   if (width <= 0 || height <= 0) {
-    el.style.opacity = '0'
+    el.dataset.front = 'false'
+    el.style.pointerEvents = 'none'
+    el.tabIndex = -1
     return
   }
 
@@ -205,26 +264,44 @@ function syncClusterOverlayPosition(cluster: RegionCluster, el: HTMLDivElement) 
   const screenX = cosPhi * x + sinPhi * z
   const screenY = sinPhi * sinTheta * x + cosTheta * y - cosPhi * sinTheta * z
   const cameraDepth = -sinPhi * cosTheta * x + sinTheta * y + cosPhi * cosTheta * z
-  const visibility = Math.min(1, Math.max(0, (cameraDepth + 0.025) / 0.1))
+  const isFrontFacing = cameraDepth > 0.04
+  const officialVisibilityValue = rootStyle.getPropertyValue(`--cobe-visible-${cluster.code}`).trim()
+  const officialVisibility = Number.parseFloat(officialVisibilityValue)
+  // COBE 2 exposes its own visibility signal. Some bundled/minified builds emit
+  // a non-numeric token, so retain the mathematically equivalent projection as
+  // a compatibility fallback instead of leaving every flag fully transparent.
+  const markerVisibility = Number.isFinite(officialVisibility)
+    ? Math.max(0, Math.min(1, officialVisibility))
+    : (isFrontFacing ? 1 : 0)
   const xPx = ((screenX / aspect) * GLOBE_SCALE + 1) * width / 2
   const yPx = ((-screenY) * GLOBE_SCALE + 1) * height / 2
 
   el.style.transform = `translate3d(${xPx}px, ${yPx}px, 0)`
-  el.style.opacity = `${visibility}`
+  el.style.setProperty('--lnl-cobe-visible', String(markerVisibility))
+  el.dataset.visibilitySource = Number.isFinite(officialVisibility) ? 'cobe' : 'projection-fallback'
+  el.dataset.front = isFrontFacing ? 'true' : 'false'
+  el.style.pointerEvents = interactive.value && isFrontFacing ? 'auto' : 'none'
+  el.tabIndex = interactive.value && isFrontFacing ? 0 : -1
+  el.setAttribute('aria-hidden', isFrontFacing ? 'false' : 'true')
+  el.dataset.side = xPx > width * 0.62 ? 'left' : 'right'
+  if (!isFrontFacing && activeRegionCode.value === cluster.code)
+    activeRegionCode.value = null
 }
 
 function syncClusterOverlayPositions() {
+  const rootStyle = getComputedStyle(document.documentElement)
   for (const cluster of regionClusters.value) {
     const el = clusterOverlayEls.get(cluster.code)
     if (!el)
       continue
-    syncClusterOverlayPosition(cluster, el)
+    syncClusterOverlayPosition(cluster, el, rootStyle)
   }
 }
 
 function setClusterOverlayEl(code: string, el: Element | ComponentPublicInstance | null) {
-  if (el instanceof HTMLDivElement) {
+  if (el instanceof HTMLElement) {
     el.style.willChange = 'transform, opacity'
+    el.style.setProperty('--lnl-cobe-visible', '0')
     clusterOverlayEls.set(code, el)
 
     const cluster = regionClusters.value.find(item => item.code === code)
@@ -232,7 +309,7 @@ function setClusterOverlayEl(code: string, el: Element | ComponentPublicInstance
       syncClusterOverlayPosition(cluster, el)
     }
     else {
-      el.style.opacity = '0'
+      el.dataset.front = 'false'
     }
     return
   }
@@ -252,8 +329,9 @@ function bindClusterOverlayRef(code: string): (el: Element | ComponentPublicInst
 
 const markers = computed<Marker[]>(() => {
   return regionClusters.value.map(cluster => ({
+    id: cluster.code,
     location: cluster.coord,
-    size: 0, // 不渲染圆点
+    size: showMarkers.value ? 0.018 : 0,
   }))
 })
 
@@ -262,17 +340,19 @@ const themeColors = computed(() => {
     return {
       dark: 1,
       mapBrightness: 4,
+      mapBaseBrightness: 0.055,
       baseColor: [0.32, 0.33, 0.4] as [number, number, number],
-      markerColor: [0.4, 0.7, 1.0] as [number, number, number],
-      glowColor: [0.2, 0.25, 0.45] as [number, number, number],
+      markerColor: [0.45, 0.95, 0.72] as [number, number, number],
+      glowColor: [0.09, 0.22, 0.16] as [number, number, number],
     }
   }
   return {
     dark: 0,
     mapBrightness: 6,
+    mapBaseBrightness: 0.1,
     baseColor: [1, 1, 1] as [number, number, number],
-    markerColor: [0.21, 0.51, 0.93] as [number, number, number],
-    glowColor: [1, 1, 1] as [number, number, number],
+    markerColor: [0.08, 0.48, 0.31] as [number, number, number],
+    glowColor: [0.87, 0.97, 0.91] as [number, number, number],
   }
 })
 
@@ -290,6 +370,7 @@ function buildInitialOptions(): COBEOptions {
     // 移动端降低 cobe 点阵采样数，削减每帧 WebGL 绘制成本
     mapSamples: props.variant === 'intro' ? (isMobileLike ? 5600 : 7200) : (isMobileLike ? 6000 : 10000),
     mapBrightness: colors.mapBrightness,
+    mapBaseBrightness: colors.mapBaseBrightness,
     baseColor: colors.baseColor,
     markerColor: colors.markerColor,
     glowColor: colors.glowColor,
@@ -416,12 +497,28 @@ function stopGlobe() {
 }
 
 onMounted(() => {
+  window.addEventListener('leonetlab:theme-transition-start', handleThemeTransitionStart)
+  window.addEventListener('leonetlab:theme-transition-end', handleThemeTransitionEnd)
   startGlobe()
 })
 
 onBeforeUnmount(() => {
+  window.removeEventListener('leonetlab:theme-transition-start', handleThemeTransitionStart)
+  window.removeEventListener('leonetlab:theme-transition-end', handleThemeTransitionEnd)
   stopGlobe()
 })
+
+function handleThemeTransitionStart() {
+  themeTransitioning.value = true
+  syncRafState()
+}
+
+function handleThemeTransitionEnd() {
+  themeTransitioning.value = false
+  triggerStaticRedrawWindow(900)
+  updateGlobeFrame()
+  syncRafState()
+}
 
 // Theme changes must update the existing WebGL instance in place. Recreating
 // cobe briefly detaches its canvas wrapper and desynchronizes the DOM flags.
@@ -432,6 +529,7 @@ watch(() => appStore.isDark, () => {
   globe.update({
     dark: colors.dark,
     mapBrightness: colors.mapBrightness,
+    mapBaseBrightness: colors.mapBaseBrightness,
     baseColor: colors.baseColor,
     markerColor: colors.markerColor,
     glowColor: colors.glowColor,
@@ -468,7 +566,7 @@ watch(shouldAutoRotate, () => {
 
 // 仅地区集合或在线状态变化时才推送 markers；速率推送不触发
 watch(
-  () => regionClusters.value.map(clusterKey).join(','),
+  () => `${showMarkers.value}:${regionClusters.value.map(clusterKey).join(',')}`,
   async () => {
     if (!globe)
       return
@@ -534,7 +632,49 @@ function onPointerUp(e: PointerEvent) {
 
 function handleFlagError(event: Event) {
   const image = event.currentTarget as HTMLImageElement
-  image.style.display = 'none'
+  if (image.dataset.retry !== '1') {
+    image.dataset.retry = '1'
+    const retryUrl = new URL(image.src)
+    retryUrl.searchParams.set('retry', '1')
+    image.src = retryUrl.href
+    return
+  }
+  image.hidden = true
+}
+
+function handleFlagLoad(event: Event) {
+  const image = event.currentTarget as HTMLImageElement
+  image.hidden = false
+}
+
+function toggleRegion(code: string) {
+  if (!appStore.regionalTelemetryEnabled)
+    return
+  activeRegionCode.value = activeRegionCode.value === code ? null : code
+}
+
+function openRegion(code: string) {
+  if (appStore.regionalTelemetryEnabled)
+    activeRegionCode.value = code
+}
+
+function closeRegion(code: string) {
+  if (activeRegionCode.value === code)
+    activeRegionCode.value = null
+}
+
+function handleRegionPointerEnter(event: PointerEvent, code: string) {
+  if (event.pointerType !== 'touch')
+    openRegion(code)
+}
+
+function handleRegionPointerLeave(event: PointerEvent, code: string) {
+  if (event.pointerType !== 'touch')
+    closeRegion(code)
+}
+
+function formatThroughput(value: number): string {
+  return formatBytesPerSecondWithConfig(value, appStore.byteDecimals)
 }
 
 const totalServers = computed(() => displayNodes.value.length)
@@ -546,11 +686,15 @@ const offlineServers = computed(() => totalServers.value - onlineServers.value)
   <div
     ref="containerRef" class="node-earth-globe relative aspect-square w-full mx-auto"
     :class="[
-      { 'is-dragging': dragging, 'is-intro': variant === 'intro' },
+      {
+        'is-dragging': dragging,
+        'is-intro': variant === 'intro',
+        'has-region-readout': activeRegionCode !== null,
+      },
       variant === 'intro' ? '' : '-translate-y-6 md:-translate-y-12',
       interactive ? 'touch-none cursor-grab active:cursor-grabbing' : '',
     ]"
-    :role="interactive ? 'img' : undefined"
+    :role="interactive ? 'region' : undefined"
     :aria-label="interactive ? '可拖动旋转的全球节点地球' : undefined"
     @pointerdown="onPointerDown" @pointermove="onPointerMove" @pointerup="onPointerUp" @pointercancel="onPointerUp"
   >
@@ -559,20 +703,42 @@ const offlineServers = computed(() => totalServers.value - onlineServers.value)
       class="earth-globe-canvas pointer-events-none absolute inset-0 w-full h-full select-none"
     />
 
-    <template v-for="(cluster, clusterIndex) in regionClusters" :key="cluster.code">
-      <div
+    <div
+      v-if="variant === 'intro'"
+      class="lnl-intro-halo"
+      :class="{ 'is-releasing': introReleasing }"
+      aria-hidden="true"
+    >
+      <span class="lnl-intro-halo-ring is-one" />
+      <span class="lnl-intro-halo-ring is-two" />
+      <span class="lnl-intro-halo-ring is-three" />
+      <span class="lnl-intro-halo-wave" />
+    </div>
+
+    <template v-for="(cluster, clusterIndex) in showMarkers ? regionClusters : []" :key="cluster.code">
+      <button
         :ref="bindClusterOverlayRef(cluster.code)"
-        class="lnl-earth-overlay absolute -top-3.5 left-0 pointer-events-none"
+        type="button"
+        class="lnl-earth-overlay absolute -top-3.5 left-0"
+        :class="{ 'is-active': activeRegionCode === cluster.code }"
         :style="{ '--lnl-marker-index': clusterIndex }"
+        :aria-label="`${cluster.displayName}：${cluster.onlineServers}/${cluster.servers} 台在线，查看地区负载`"
+        :aria-expanded="activeRegionCode === cluster.code"
+        @pointerdown.stop
+        @pointerenter="handleRegionPointerEnter($event, cluster.code)"
+        @pointerleave="handleRegionPointerLeave($event, cluster.code)"
+        @blur="closeRegion(cluster.code)"
+        @click.stop="toggleRegion(cluster.code)"
       >
         <span class="lnl-earth-flag absolute -bottom-2 -left-2 z-3" aria-hidden="true">
           <span>{{ cluster.code }}</span>
           <img
-            :src="`/images/flags/${cluster.code}.svg`" :alt="cluster.code"
+            :src="`/images/flags/${cluster.code}.svg?v=${buildVersion}`" alt=""
+            @load="handleFlagLoad"
             @error="handleFlagError"
           >
         </span>
-        <div class="relative z-2 bg-background/60 rounded py-0.5 px-2 text-xs zoom-80 items-start justify-center text-nowrap">
+        <div class="lnl-earth-count relative z-2 items-start justify-center text-nowrap">
           <div v-if="cluster.onlineServers > 0" class="flex items-center gap-1">
             <span class="inline-block size-1.5 rounded-full bg-green-600" />
             <span class="text-green-600">{{ cluster.onlineServers }}</span>
@@ -582,7 +748,29 @@ const offlineServers = computed(() => totalServers.value - onlineServers.value)
             <span class="text-yellow-600">{{ cluster.servers - cluster.onlineServers }}</span>
           </div>
         </div>
-      </div>
+        <Transition name="region-readout">
+          <div v-if="appStore.regionalTelemetryEnabled && activeRegionCode === cluster.code" class="lnl-earth-readout" role="status">
+            <div class="lnl-earth-readout-head">
+              <span>{{ cluster.code }} / REGION TELEMETRY</span>
+              <strong>{{ cluster.displayName }}</strong>
+              <small>{{ cluster.onlineServers }} / {{ cluster.servers }} ONLINE</small>
+            </div>
+            <dl>
+              <div>
+                <dt><span>CPU 总体负载</span><b>{{ cluster.cpuAverage.toFixed(1) }}%</b></dt>
+                <dd><i :style="{ width: `${cluster.cpuAverage}%` }" /></dd>
+              </div>
+              <div>
+                <dt><span>内存占用</span><b>{{ cluster.memoryPercent.toFixed(1) }}%</b></dt>
+                <dd><i :style="{ width: `${cluster.memoryPercent}%` }" /></dd>
+              </div>
+            </dl>
+            <div class="lnl-earth-readout-rate">
+              <span>LIVE THROUGHPUT</span><b>{{ formatThroughput(cluster.throughput) }}</b>
+            </div>
+          </div>
+        </Transition>
+      </button>
     </template>
 
     <div
@@ -620,6 +808,66 @@ const offlineServers = computed(() => totalServers.value - onlineServers.value)
   max-width: none;
 }
 
+.lnl-intro-halo,
+.lnl-intro-halo-ring,
+.lnl-intro-halo-wave {
+  position: absolute;
+  pointer-events: none;
+}
+
+.lnl-intro-halo {
+  z-index: 1;
+  inset: 3%;
+  border-radius: 50%;
+  contain: layout paint;
+}
+
+.lnl-intro-halo-ring,
+.lnl-intro-halo-wave {
+  inset: 0;
+  border-radius: 50%;
+  border: 1px solid color-mix(in srgb, var(--lnl-green) 42%, transparent);
+  box-shadow:
+    inset 0 0 28px color-mix(in srgb, var(--lnl-green) 6%, transparent),
+    0 0 28px color-mix(in srgb, var(--lnl-green) 10%, transparent);
+  opacity: 0;
+  will-change: transform, opacity;
+}
+
+.lnl-intro-halo-ring.is-one {
+  animation: intro-halo-breathe 2.8s 0.18s ease-in-out infinite;
+}
+
+.lnl-intro-halo-ring.is-two {
+  inset: 5%;
+  border-color: color-mix(in srgb, var(--lnl-cyan) 30%, transparent);
+  animation: intro-halo-breathe 2.8s 0.82s ease-in-out infinite;
+}
+
+.lnl-intro-halo-ring.is-three {
+  inset: -4%;
+  border-style: dashed;
+  border-color: color-mix(in srgb, var(--lnl-green) 20%, transparent);
+  animation: intro-halo-breathe 3.3s 1.35s ease-in-out infinite;
+}
+
+.lnl-intro-halo.is-releasing .lnl-intro-halo-ring {
+  animation: intro-halo-release 440ms cubic-bezier(0.2, 0.72, 0.2, 1) both;
+}
+
+.lnl-intro-halo.is-releasing .lnl-intro-halo-ring.is-two {
+  animation-delay: 45ms;
+}
+
+.lnl-intro-halo.is-releasing .lnl-intro-halo-ring.is-three {
+  animation-delay: 90ms;
+}
+
+.lnl-intro-halo.is-releasing .lnl-intro-halo-wave {
+  border-color: color-mix(in srgb, var(--lnl-green) 58%, transparent);
+  animation: intro-halo-wave 480ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
 @media (max-width: 760px) {
   .node-earth-globe {
     width: calc(100vw - 32px);
@@ -634,7 +882,7 @@ const offlineServers = computed(() => totalServers.value - onlineServers.value)
   place-items: center;
   overflow: hidden;
   border: 1px solid color-mix(in srgb, var(--lnl-line) 75%, transparent);
-  background: var(--background);
+  background: color-mix(in srgb, var(--background) 94%, var(--lnl-surface));
   color: var(--muted-foreground);
   font: 7px/1 var(--font-mono);
   box-shadow: 0 2px 8px rgb(0 0 0 / 24%);
@@ -652,36 +900,284 @@ const offlineServers = computed(() => totalServers.value - onlineServers.value)
 }
 
 .lnl-earth-overlay {
+  z-index: 5;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  opacity: var(--lnl-cobe-visible, 0);
   backface-visibility: hidden;
-  transition: opacity 70ms linear;
+  transition:
+    opacity var(--lnl-motion-fast, 180ms) ease,
+    visibility 0s linear var(--lnl-motion-fast, 180ms);
   will-change: transform, opacity;
+}
+
+.lnl-earth-overlay[data-front='false'] {
+  visibility: hidden;
+  opacity: 0 !important;
+  pointer-events: none !important;
+}
+
+.lnl-earth-overlay[data-front='true'] {
+  visibility: visible;
+  transition-delay: 0s;
+}
+
+.lnl-earth-overlay.is-active {
+  z-index: 30;
+}
+
+.node-earth-globe.has-region-readout .lnl-earth-overlay:not(.is-active) {
+  opacity: 0.34 !important;
+}
+
+.lnl-earth-overlay:focus-visible {
+  outline: none;
+}
+
+.lnl-earth-overlay:focus-visible .lnl-earth-flag {
+  outline: 1px solid var(--lnl-green);
+  outline-offset: 3px;
+}
+
+.lnl-earth-count {
+  display: flex;
+  min-width: 24px;
+  min-height: 17px;
+  flex-direction: column;
+  margin-left: 15px;
+  padding: 2px 7px;
+  border: 1px solid color-mix(in srgb, var(--lnl-line) 72%, transparent);
+  background: color-mix(in srgb, var(--background) 82%, transparent);
+  box-shadow: 0 6px 20px rgb(0 0 0 / 12%);
+  font: 8px/1.25 var(--font-mono);
+  backdrop-filter: blur(7px);
+  transform: translate3d(0, 0, 0);
+  transition:
+    opacity 160ms ease,
+    transform 240ms cubic-bezier(0.22, 1, 0.36, 1),
+    border-color 180ms ease,
+    background-color 180ms ease;
+}
+
+.lnl-earth-flag {
+  transition:
+    opacity 160ms ease,
+    transform 240ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.lnl-earth-overlay.is-active > :is(.lnl-earth-flag, .lnl-earth-count) {
+  animation: none !important;
+  opacity: 0;
+  transform: translate3d(-5px, 3px, 0) scale(0.78);
+}
+
+.lnl-earth-overlay:hover .lnl-earth-count,
+.lnl-earth-overlay:focus-visible .lnl-earth-count {
+  border-color: color-mix(in srgb, var(--lnl-green) 54%, var(--lnl-line));
+  background: color-mix(in srgb, var(--background) 94%, transparent);
 }
 
 .node-earth-globe.is-dragging .lnl-earth-overlay {
   transition: none;
 }
 
-.node-earth-globe.is-intro .lnl-earth-overlay > * {
-  animation: intro-marker-focus 820ms calc(420ms + var(--lnl-marker-index, 0) * 52ms) cubic-bezier(0.16, 1, 0.3, 1) both;
-  will-change: opacity, filter;
+.node-earth-globe:not(.is-intro) .lnl-earth-overlay > :not(.lnl-earth-readout) {
+  animation: dashboard-marker-in 520ms calc(90ms + var(--lnl-marker-index, 0) * 45ms) cubic-bezier(0.16, 1, 0.3, 1) both;
+  will-change: opacity, transform;
 }
 
-@keyframes intro-marker-focus {
+.lnl-earth-readout {
+  position: absolute;
+  z-index: 8;
+  top: -30px;
+  left: 25px;
+  width: min(260px, calc(100vw - 42px));
+  padding: 14px;
+  border: 1px solid color-mix(in srgb, var(--lnl-green) 42%, var(--lnl-line));
+  background:
+    linear-gradient(135deg, color-mix(in srgb, var(--lnl-green) 7%, transparent), transparent 52%), var(--background);
+  box-shadow: 0 18px 48px rgb(0 0 0 / 22%);
+  text-align: left;
+  transform-origin: top left;
+}
+
+.lnl-earth-overlay[data-side='left'] .lnl-earth-readout {
+  right: 25px;
+  left: auto;
+  transform-origin: top right;
+}
+
+.lnl-earth-readout-head {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 3px 10px;
+  padding-bottom: 9px;
+  border-bottom: 1px solid var(--lnl-line);
+}
+
+.lnl-earth-readout-head > span {
+  grid-column: 1 / -1;
+  color: var(--lnl-green);
+  font: 9px/1.3 var(--font-mono);
+  letter-spacing: 0.12em;
+}
+
+.lnl-earth-readout-head strong {
+  overflow: hidden;
+  font: 650 15px/1.3 var(--font-sans);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.lnl-earth-readout-head small {
+  align-self: center;
+  color: var(--muted-foreground);
+  font: 9px/1 var(--font-mono);
+}
+
+.lnl-earth-readout dl {
+  display: grid;
+  gap: 11px;
+  margin: 12px 0 0;
+}
+
+.lnl-earth-readout dt {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  color: var(--muted-foreground);
+  font: 11px/1.35 var(--font-mono);
+}
+
+.lnl-earth-readout dt b {
+  overflow: hidden;
+  max-width: 154px;
+  color: var(--foreground);
+  font-size: 12px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.lnl-earth-readout dd {
+  height: 4px;
+  margin: 5px 0 0;
+  overflow: hidden;
+  background: color-mix(in srgb, var(--lnl-line) 72%, transparent);
+}
+
+.lnl-earth-readout dd i {
+  display: block;
+  height: 100%;
+  background: linear-gradient(90deg, var(--lnl-green), var(--lnl-cyan));
+  box-shadow: 0 0 10px color-mix(in srgb, var(--lnl-green) 36%, transparent);
+  transition: width 420ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.lnl-earth-readout-rate {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 10px;
+  padding-top: 8px;
+  border-top: 1px solid var(--lnl-line);
+  font: 10px/1.25 var(--font-mono);
+}
+
+.lnl-earth-readout-rate span {
+  color: var(--muted-foreground);
+  letter-spacing: 0.1em;
+}
+
+.lnl-earth-readout-rate b {
+  color: var(--lnl-green);
+  font-weight: 500;
+}
+
+.region-readout-enter-active,
+.region-readout-leave-active {
+  transition:
+    opacity 220ms ease,
+    clip-path 340ms cubic-bezier(0.16, 1, 0.3, 1),
+    transform 360ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.region-readout-enter-from,
+.region-readout-leave-to {
+  opacity: 0;
+  clip-path: inset(0 100% 0 0);
+  transform: translate3d(-9px, 5px, 0) scale(0.965);
+}
+
+.lnl-earth-overlay[data-side='left'] .region-readout-enter-from,
+.lnl-earth-overlay[data-side='left'] .region-readout-leave-to {
+  clip-path: inset(0 0 0 100%);
+  transform: translate3d(9px, 5px, 0) scale(0.965);
+}
+
+@keyframes intro-halo-breathe {
+  0%,
+  100% {
+    opacity: 0.18;
+    transform: scale(0.965);
+  }
+  50% {
+    opacity: 0.68;
+    transform: scale(1.025);
+  }
+}
+
+@keyframes intro-halo-release {
+  from {
+    opacity: 0.62;
+    transform: scale(1);
+  }
+  to {
+    opacity: 0;
+    transform: scale(1.24);
+  }
+}
+
+@keyframes intro-halo-wave {
+  from {
+    opacity: 0.78;
+    transform: scale(0.92);
+  }
+  to {
+    opacity: 0;
+    transform: scale(1.48);
+  }
+}
+
+@keyframes dashboard-marker-in {
   from {
     opacity: 0;
-    filter: blur(5px);
+    transform: translateY(5px) scale(0.86);
   }
   to {
     opacity: 1;
-    filter: blur(0);
+    transform: none;
   }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .node-earth-globe.is-intro .lnl-earth-overlay > * {
+  .node-earth-globe:not(.is-intro) .lnl-earth-overlay > :not(.lnl-earth-readout) {
     animation: none;
     opacity: 1;
-    filter: none;
+    transform: none;
+  }
+
+  .region-readout-enter-active,
+  .region-readout-leave-active,
+  .lnl-earth-readout dd i,
+  .lnl-intro-halo-ring,
+  .lnl-intro-halo-wave {
+    transition: none;
+    animation: none;
   }
 }
 </style>

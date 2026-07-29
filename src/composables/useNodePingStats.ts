@@ -47,7 +47,7 @@ export const NODE_PING_BAR_COUNT = 10
 const CACHE_VERSION = 6
 const CACHE_KEY_PREFIX = 'komari-theme-emerald:node-ping-stats'
 const FULL_LOSS_EPSILON = 1e-6
-const PING_RECORD_REFRESH_INTERVAL_MS = 30_000
+const PING_RECORD_REFRESH_INTERVAL_MS = 15_000
 const sharedPingRecordsCache = new Map<number, SharedPingRecordsEntry>()
 
 function createEmptyStats(): NodePingStatsState {

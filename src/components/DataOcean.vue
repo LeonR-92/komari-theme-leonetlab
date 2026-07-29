@@ -20,6 +20,7 @@ interface NavigatorWithConnection extends Navigator {
 
 const appStore = useAppStore()
 const canvasRef = ref<HTMLCanvasElement | null>(null)
+const themeTransitioning = ref(false)
 const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches
 const saveData = (navigator as NavigatorWithConnection).connection?.saveData === true
 const currents = [
@@ -57,14 +58,14 @@ function configureCanvas() {
   width = size.width
   height = size.height
   const mobile = width < 760
-  dpr = Math.min(window.devicePixelRatio || 1, mobile ? 1.15 : 1.3)
+  dpr = Math.min(window.devicePixelRatio || 1, mobile ? 1 : 1.3)
   canvas.width = Math.round(width * dpr)
   canvas.height = Math.round(height * dpr)
   context = canvas.getContext('2d', { alpha: true })
   context?.setTransform(dpr, 0, 0, dpr, 0, 0)
 
-  columns = mobile ? 18 : width > 1500 ? 30 : 25
-  rows = mobile ? 17 : 21
+  columns = mobile ? 14 : width > 1500 ? 30 : 25
+  rows = mobile ? 15 : 21
   points = []
   for (let row = 0; row < rows; row++) {
     for (let column = 0; column < columns; column++) {
@@ -157,7 +158,8 @@ function paint(time: number) {
     ctx.fill()
   }
 
-  currents.forEach((current, index) => {
+  const visibleCurrents = width < 760 ? currents.slice(0, 2) : currents
+  visibleCurrents.forEach((current, index) => {
     const [sx, sy, cx, cy, ex, ey, phase] = current
     const gradient = ctx.createLinearGradient(sx * width, sy * height, ex * width, ey * height)
     gradient.addColorStop(0, `rgba(${green}, 0)`)
@@ -183,7 +185,8 @@ function paint(time: number) {
 
 function animate(time: number) {
   animationFrame = window.requestAnimationFrame(animate)
-  if (props.paused || document.hidden || time - lastPaint < 1000 / 50)
+  const targetFps = isMobileLike ? 24 : 50
+  if (props.paused || themeTransitioning.value || document.hidden || time - lastPaint < 1000 / targetFps)
     return
   lastPaint = time
   paint(time)
@@ -207,16 +210,28 @@ function handleVisibilityChange() {
     lastPaint = 0
 }
 
+function handleThemeTransitionStart() {
+  themeTransitioning.value = true
+}
+
+function handleThemeTransitionEnd() {
+  themeTransitioning.value = false
+  lastPaint = 0
+  paint(performance.now())
+}
+
 watch(() => appStore.isDark, () => paint(performance.now()))
 watch(() => props.paused, paused => !paused && paint(performance.now()))
 
 onMounted(() => {
   configureCanvas()
   window.addEventListener('resize', handleResize, { passive: true })
+  window.addEventListener('leonetlab:theme-transition-start', handleThemeTransitionStart)
+  window.addEventListener('leonetlab:theme-transition-end', handleThemeTransitionEnd)
   document.addEventListener('visibilitychange', handleVisibilityChange)
-  // 移动端（触屏/小视口）只绘制静态帧：全屏 50fps Canvas 是发热与掉帧的
-  // 主要来源之一；resize/主题变化仍会通过既有 watcher 重绘单帧。
-  if (!reducedMotion && !saveData && !isMobileLike)
+  // 移动端保留与桌面一致的动态海洋，但以 24fps、1x DPR、更稀疏网格和两条
+  // 信号流运行；减少动态效果或省流量模式仍只绘制静态帧。
+  if (!reducedMotion && !saveData)
     animationFrame = window.requestAnimationFrame(animate)
 })
 
@@ -224,6 +239,8 @@ onUnmounted(() => {
   window.cancelAnimationFrame(animationFrame)
   window.clearTimeout(resizeTimer)
   window.removeEventListener('resize', handleResize)
+  window.removeEventListener('leonetlab:theme-transition-start', handleThemeTransitionStart)
+  window.removeEventListener('leonetlab:theme-transition-end', handleThemeTransitionEnd)
   document.removeEventListener('visibilitychange', handleVisibilityChange)
 })
 </script>

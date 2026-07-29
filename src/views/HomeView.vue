@@ -110,6 +110,7 @@ onMounted(async () => {
 
 const searchText = ref('')
 const debouncedSearchText = ref('')
+const searchOpen = ref(false)
 const selectedPingNodeUuid = ref<string | null>(null)
 const pingDialogOpen = ref(false)
 let pingDialogCleanupTimer: number | null = null
@@ -123,6 +124,28 @@ const updateDebouncedSearch = useDebounceFn((value: string) => {
 watch(searchText, (value) => {
   updateDebouncedSearch(value)
 })
+
+async function toggleNodeSearch() {
+  if (searchOpen.value) {
+    searchText.value = ''
+    debouncedSearchText.value = ''
+    searchOpen.value = false
+    return
+  }
+
+  searchOpen.value = true
+  await nextTick()
+  document.querySelector<HTMLInputElement>('#node-search')?.focus()
+}
+
+function handleSearchKeydown(event: KeyboardEvent) {
+  if (event.key !== 'Escape')
+    return
+  event.preventDefault()
+  searchText.value = ''
+  debouncedSearchText.value = ''
+  searchOpen.value = false
+}
 
 const groups = computed(() => [
   { tab: '全部节点', name: 'all' },
@@ -284,8 +307,11 @@ function getNodeItemTransitionStyle(index: number): Record<string, string> {
     <div class="node-info p-4 pt-0 flex flex-col gap-4 relative z-1 md:pointer-events-none" :class="appStore.earthViewMode === 'hide' && 'pt-4'">
       <div class="nodes">
         <Tabs v-model="appStore.nodeSelectedGroup" class="w-full flex-col gap-4">
-          <div class="flex gap-2 items-start flex-nowrap">
-            <div class="overflow-x-auto rounded-sm md:pointer-events-auto">
+          <div
+            class="lnl-node-toolbar flex gap-2 items-start flex-nowrap"
+            :class="{ 'is-searching': searchOpen, 'is-motion-reduced': appStore.disablePageAnimation }"
+          >
+            <div class="lnl-node-tabs overflow-x-auto rounded-sm md:pointer-events-auto">
               <TabsList :class="pickSurfaceClass('w-max h-8 bg-background/60 rounded-md', 'w-max h-8 bg-background/50 backdrop-blur-xl rounded-md')">
                 <TabsTrigger
                   v-for="g in groups" :key="g.name" :value="g.name"
@@ -295,7 +321,7 @@ function getNodeItemTransitionStyle(index: number): Record<string, string> {
                 </TabsTrigger>
               </TabsList>
             </div>
-            <div class="ml-auto search flex gap-2 items-center pointer-events-auto">
+            <div class="lnl-node-actions ml-auto search flex gap-2 items-center pointer-events-auto">
               <Button
                 variant="outline" size="icon" aria-label="卡片视图"
                 :aria-pressed="appStore.nodeViewMode === 'card'"
@@ -314,19 +340,30 @@ function getNodeItemTransitionStyle(index: number): Record<string, string> {
               >
                 <Icon icon="tabler:table" :width="14" :height="14" />
               </Button>
-              <div class="relative z-1 w-8 h-8">
-                <div class="absolute top-0 right-0 ">
-                  <Input
-                    id="node-search" v-model="searchText" name="node-search" placeholder="搜索节点名称、地区、系统"
-                    class="h-8 w-8 rounded-md border-none shadow-none transition-all placeholder:text-transparent focus:!w-60 focus:!pl-7.5 focus:placeholder:!text-muted-foreground focus:!ring-emerald-500/10"
-                    :class="pickSurfaceClass('bg-background hover:!bg-background/95 focus:!bg-background', 'bg-background/50 hover:!bg-background/60 focus:!bg-background/80 backdrop-blur-xs')"
-                  />
-                  <Icon
-                    icon="tabler:search" :width="14" :height="14"
-                    class="absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none"
-                  />
-                </div>
-              </div>
+              <Button
+                variant="ghost"
+                size="icon"
+                class="lnl-node-search-toggle h-8 w-8 border-none shadow-none"
+                :aria-label="searchOpen ? '关闭节点搜索' : '打开节点搜索'"
+                :aria-expanded="searchOpen"
+                aria-controls="node-search"
+                @click="toggleNodeSearch"
+              >
+                <Icon :icon="searchOpen ? 'tabler:x' : 'tabler:search'" :width="14" :height="14" />
+              </Button>
+            </div>
+            <div class="lnl-node-search-drawer" :class="{ 'is-open': searchOpen }">
+              <Input
+                id="node-search"
+                v-model="searchText"
+                name="node-search"
+                placeholder="搜索节点名称、地区、系统"
+                :tabindex="searchOpen ? 0 : -1"
+                :aria-hidden="!searchOpen"
+                class="lnl-node-search-input h-8 rounded-md border-none shadow-none focus:!ring-emerald-500/10"
+                :class="pickSurfaceClass('bg-background hover:!bg-background/95 focus:!bg-background', 'bg-background/50 hover:!bg-background/60 focus:!bg-background/80 backdrop-blur-xs')"
+                @keydown="handleSearchKeydown"
+              />
             </div>
           </div>
           <TabsContent :key="appStore.nodeSelectedGroup" :value="appStore.nodeSelectedGroup" class="pointer-events-auto">
@@ -337,7 +374,7 @@ function getNodeItemTransitionStyle(index: number): Record<string, string> {
               :move-class="isMobileLike ? MOBILE_NO_MOVE_CLASS : undefined"
               name="node-card-switch"
               tag="div"
-              class="gap-4 grid grid-cols-1 sm:grid-cols-[repeat(auto-fill,minmax(330px,1fr))]"
+              class="gap-4 grid grid-cols-1 sm:grid-cols-[repeat(auto-fill,minmax(344px,1fr))]"
             >
               <div
                 v-for="(node, index) in nodeList"
@@ -415,6 +452,88 @@ function getNodeItemTransitionStyle(index: number): Record<string, string> {
   letter-spacing: 0.13em;
 }
 
+.lnl-node-search-drawer {
+  position: relative;
+  z-index: 2;
+  width: 0;
+  height: 32px;
+  overflow: hidden;
+  opacity: 0;
+  transform: translateX(10px);
+  pointer-events: none;
+  transition:
+    width var(--lnl-motion-standard) var(--lnl-ease-emphasis),
+    opacity var(--lnl-motion-fast) ease,
+    transform var(--lnl-motion-standard) var(--lnl-ease-emphasis);
+  will-change: width, opacity, transform;
+}
+
+.lnl-node-search-drawer.is-open {
+  width: min(260px, 52vw);
+  opacity: 1;
+  transform: none;
+  pointer-events: auto;
+}
+
+@media (max-width: 640px) {
+  .lnl-node-toolbar {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    width: 100%;
+    gap: 0 8px;
+  }
+
+  .lnl-node-toolbar .lnl-node-tabs {
+    width: 100%;
+    min-width: 0;
+  }
+
+  .lnl-node-toolbar .lnl-node-actions {
+    width: auto;
+    min-width: 0;
+    margin-left: 0;
+  }
+
+  .lnl-node-search-drawer {
+    grid-column: 1 / -1;
+    width: 100%;
+    min-width: 0;
+    height: 0;
+    margin-top: 0;
+    transform: translateY(-8px);
+    transition:
+      height var(--lnl-motion-standard) var(--lnl-ease-emphasis),
+      margin-top var(--lnl-motion-standard) var(--lnl-ease-emphasis),
+      opacity var(--lnl-motion-fast) ease,
+      transform var(--lnl-motion-standard) var(--lnl-ease-emphasis);
+  }
+
+  .lnl-node-search-drawer.is-open {
+    width: 100%;
+    height: 32px;
+    margin-top: 8px;
+    transform: none;
+  }
+}
+
+.lnl-node-search-input {
+  display: block;
+  width: 100%;
+}
+
+.lnl-node-search-toggle {
+  flex: 0 0 32px;
+  transition:
+    color var(--lnl-motion-fast) ease,
+    background-color var(--lnl-motion-fast) ease,
+    transform var(--lnl-motion-standard) var(--lnl-ease-emphasis);
+}
+
+.lnl-node-toolbar.is-searching .lnl-node-search-toggle {
+  color: var(--lnl-green);
+  transform: rotate(90deg);
+}
+
 :global(.lnl-ping-dialog[data-state='open']) {
   animation: lnl-ping-dialog-in 360ms cubic-bezier(0.16, 1, 0.3, 1) both;
 }
@@ -488,5 +607,17 @@ function getNodeItemTransitionStyle(index: number): Record<string, string> {
     opacity: 1;
     transform: none;
   }
+
+  .lnl-node-search-drawer,
+  .lnl-node-search-input,
+  .lnl-node-search-toggle {
+    transition: none;
+  }
+}
+
+.lnl-node-toolbar.is-motion-reduced .lnl-node-search-drawer,
+.lnl-node-toolbar.is-motion-reduced .lnl-node-search-input,
+.lnl-node-toolbar.is-motion-reduced .lnl-node-search-toggle {
+  transition: none;
 }
 </style>

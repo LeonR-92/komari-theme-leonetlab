@@ -14,7 +14,7 @@ import {
   getPingTaskIdsWithSamples,
   summarizePingSamples,
 } from '../src/utils/pingMetrics.ts'
-import { cutPeakValues, fillMissingTimePoints } from '../src/utils/recordHelper.ts'
+import { bridgeShortDisplayGaps, cutPeakValues, fillMissingTimePoints } from '../src/utils/recordHelper.ts'
 import { normalizeRecordCollection } from '../src/utils/recordResponse.ts'
 
 const nodeA = { uuid: 'node-a', name: 'Tokyo' }
@@ -97,6 +97,32 @@ const smoothedRecords = cutPeakValues([
   { time: '2026-07-20T00:02:00Z', latency: 120 },
 ], ['latency'])
 assert.equal(smoothedRecords[1].latency, null)
+assert.equal(smoothedRecords[0].latency, 100)
+assert.equal(smoothedRecords[2].latency, 120)
+
+// A loss gap starts a new smoothing segment: its first valid point must not
+// inherit the EWMA state or Hampel neighbors from before the disconnect.
+const segmentedSmoothing = cutPeakValues([
+  { time: '2026-07-20T00:00:00Z', latency: 20 },
+  { time: '2026-07-20T00:01:00Z', latency: 22 },
+  { time: '2026-07-20T00:02:00Z', latency: null },
+  { time: '2026-07-20T00:03:00Z', latency: 180 },
+  { time: '2026-07-20T00:04:00Z', latency: 182 },
+], ['latency'])
+assert.equal(segmentedSmoothing[2].latency, null)
+assert.equal(segmentedSmoothing[3].latency, 180)
+
+// The chart may visually bridge only one or two missing buckets. The helper
+// must return a copy, preserve long disconnects, and never write into source data.
+const oneBucketGap = [100, null, 120]
+assert.deepEqual(bridgeShortDisplayGaps(oneBucketGap), [100, 110, 120])
+assert.deepEqual(oneBucketGap, [100, null, 120])
+assert.deepEqual(bridgeShortDisplayGaps([100, null, null, 130]), [100, 110, 120, 130])
+assert.deepEqual(
+  bridgeShortDisplayGaps([100, null, null, null, 140]),
+  [100, null, null, null, 140],
+)
+assert.deepEqual(bridgeShortDisplayGaps([null, 100, 120, null]), [null, 100, 120, null])
 
 const dailyCost = calculateTotalDailyCostCNY([
   { price: 30, billing_cycle: 30, currency: 'CNY', tags: '' },

@@ -3,6 +3,7 @@ import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { useAppStore } from '@/stores/app'
 import { useNodesStore } from '@/stores/nodes'
 
+const props = defineProps<{ handoffReady?: boolean }>()
 const emit = defineEmits<{ skip: [] }>()
 const appStore = useAppStore()
 const nodesStore = useNodesStore()
@@ -48,7 +49,10 @@ onUnmounted(() => timers.forEach(timer => window.clearTimeout(timer)))
 <template>
   <div
     class="lnl-intro"
-    :class="appStore.isDark ? 'lnl-intro-dark' : 'lnl-intro-light'"
+    :class="[
+      appStore.isDark ? 'lnl-intro-dark' : 'lnl-intro-light',
+      { 'has-globe-handoff': props.handoffReady },
+    ]"
     role="status"
     aria-live="polite"
     aria-label="正在连接监控数据"
@@ -393,22 +397,38 @@ onUnmounted(() => timers.forEach(timer => window.clearTimeout(timer)))
   display: inline-block;
 }
 
-.lnl-intro.lnl-intro-exit-leave-active .lnl-intro-globe {
+.lnl-intro:not(.has-globe-handoff).lnl-intro-exit-leave-active .lnl-intro-globe {
   animation: none;
   filter: none;
   transition: opacity 0.42s cubic-bezier(0.4, 0, 0.2, 1);
 }
-.lnl-intro.lnl-intro-exit-leave-to .lnl-intro-globe {
+.lnl-intro:not(.has-globe-handoff).lnl-intro-exit-leave-to .lnl-intro-globe {
   opacity: 0;
 }
 .lnl-intro.lnl-intro-exit-leave-active
-  :is(.lnl-intro-copy, .lnl-intro-telemetry, .lnl-intro-top, .lnl-intro-bottom, .lnl-intro-progress, .lnl-intro-skip) {
+  :is(
+    .lnl-intro-copy,
+    .lnl-intro-telemetry,
+    .lnl-intro-top,
+    .lnl-intro-bottom,
+    .lnl-intro-progress,
+    .lnl-intro-skip,
+    .lnl-intro-globe-hud
+  ) {
   transition:
     opacity 0.42s cubic-bezier(0.4, 0, 0.2, 1),
     transform 0.52s cubic-bezier(0.22, 1, 0.36, 1);
 }
 .lnl-intro.lnl-intro-exit-leave-to
-  :is(.lnl-intro-copy, .lnl-intro-telemetry, .lnl-intro-top, .lnl-intro-bottom, .lnl-intro-progress, .lnl-intro-skip) {
+  :is(
+    .lnl-intro-copy,
+    .lnl-intro-telemetry,
+    .lnl-intro-top,
+    .lnl-intro-bottom,
+    .lnl-intro-progress,
+    .lnl-intro-skip,
+    .lnl-intro-globe-hud
+  ) {
   opacity: 0;
   transform: translateY(-8px);
 }

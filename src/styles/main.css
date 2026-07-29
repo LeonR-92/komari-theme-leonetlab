@@ -43,6 +43,11 @@
   --lnl-cyan: #4a9eaa;
   --lnl-line: rgba(33, 104, 78, 0.25);
   --lnl-surface: rgba(242, 249, 245, 0.78);
+  --lnl-motion-fast: 180ms;
+  --lnl-motion-standard: 320ms;
+  --lnl-motion-emphasis: 560ms;
+  --lnl-ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+  --lnl-ease-emphasis: cubic-bezier(0.16, 1, 0.3, 1);
 }
 
 .dark {
@@ -122,8 +127,6 @@
 
 * {
   border-color: var(--color-border);
-  scrollbar-color: color-mix(in srgb, var(--lnl-green) 42%, transparent) transparent;
-  scrollbar-width: thin;
 }
 *::selection {
   color: var(--background);
@@ -136,6 +139,8 @@ html {
   overflow-x: clip;
   background: var(--background);
   font-family: var(--font-sans);
+  scrollbar-color: color-mix(in srgb, var(--lnl-green) 42%, transparent) transparent;
+  scrollbar-width: thin;
   scroll-behavior: smooth;
 }
 body {
@@ -526,12 +531,45 @@ textarea {
 }
 .node-card [class*='text-[11px]'] {
   font-family: var(--font-mono);
-  font-size: 12px;
-  line-height: 1.35;
+  font-size: 13px;
+  line-height: 1.4;
 }
 .node-card .text-xs,
 .node-info .text-xs {
-  font-size: 13px;
+  font-size: 14px;
+}
+.node-card [class*='text-md'] {
+  font-size: 16px;
+  line-height: 1.3;
+}
+.node-card .lnl-node-resource-grid {
+  margin: -4px -5px 0;
+  padding: 9px 8px 10px;
+  border: 1px solid color-mix(in srgb, var(--lnl-line) 66%, transparent);
+  background: color-mix(in srgb, var(--lnl-surface) 56%, transparent);
+}
+.node-card .lnl-node-telemetry {
+  padding-top: 10px;
+}
+.node-card .lnl-node-quality {
+  margin-top: 2px;
+  padding-top: 9px;
+  border-top: 1px solid color-mix(in srgb, var(--lnl-line) 68%, transparent);
+}
+.node-card.is-compact [class*='text-[11px]'] {
+  font-size: 11.5px;
+}
+.node-card.is-compact .text-xs {
+  font-size: 12px;
+}
+.node-card.is-compact [class*='text-md'] {
+  font-size: 14px;
+}
+.node-card.is-compact .lnl-node-resource-grid {
+  padding-block: 7px;
+}
+.node-card [data-node-ping-panel] {
+  min-height: 36px;
 }
 .node-card > div > div {
   position: relative;
@@ -817,7 +855,7 @@ textarea {
       background-color 0.2s ease !important;
   }
   body:has(.lnl-visitor.is-presenting, .lnl-visitor.is-expanded) .lnl-back-top {
-    bottom: max(216px, calc(env(safe-area-inset-bottom) + 208px)) !important;
+    bottom: max(280px, calc(env(safe-area-inset-bottom) + 272px)) !important;
   }
   .lnl-dashboard-head {
     grid-template-columns: 1fr;

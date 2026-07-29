@@ -12,12 +12,11 @@ import Provider from './components/Provider.vue'
 
 const appStore = useAppStore()
 
-const isReady = ref(false)
 // Bump this key only when a release intentionally needs to present the intro
 // again. The value still keeps the animation to once per browser session.
 // 1.2.8 重构为单 cobe 实例交接（Teleport 迁移同一 DOM，WebGL 上下文不重建），
 // 让老用户重放重构后的 intro。
-const INTRO_SESSION_KEY = 'leonetlab:intro:1.2.9'
+const INTRO_SESSION_KEY = 'leonetlab:intro:1.3.1-pre'
 // 飞行壳的 transform 过渡时长；交接收尾以 transitionend 为准，固定计时器只作
 // 兜底：主线程长任务会推迟 CSS 过渡起点，按点击时刻计时会提前撤壳闪跳。
 const INTRO_HANDOFF_DURATION_MS = 1080
@@ -39,17 +38,19 @@ function shouldPlayIntro(): boolean {
   }
 }
 
-const introWillPlay = shouldPlayIntro()
-appStore.introActive = introWillPlay
-const showLaunch = ref(introWillPlay)
-const introComplete = ref(!introWillPlay)
-const appShellMounted = ref(!introWillPlay)
-const ambientAnimationReady = ref(!introWillPlay)
+const introSessionEligible = shouldPlayIntro()
+const introWillPlay = ref(false)
+appStore.introActive = false
+const showLaunch = ref(false)
+const introComplete = ref(false)
+const appShellMounted = ref(false)
+const ambientAnimationReady = ref(false)
 const introRevealActive = ref(false)
 const introFinishing = ref(false)
 const introLeaving = ref(false)
-const launchStartedAt = performance.now()
-const launchMinimumMs = introWillPlay ? 4200 : 0
+const introHandoffReady = ref(false)
+let launchStartedAt = 0
+const launchMinimumMs = 4200
 let introFinalizeTimer: ReturnType<typeof window.setTimeout> | null = null
 let introRevealTimer: ReturnType<typeof window.setTimeout> | null = null
 let ambientStartTimer: ReturnType<typeof window.setTimeout> | null = null
@@ -64,12 +65,11 @@ const nextFrame = () => new Promise<void>(resolve => window.requestAnimationFram
 // dashboard 槽位（NodeGeneralCards 内）。Teleport 目标变化时 Vue 移动同一个
 // DOM 子树，canvas 与 WebGL 上下文原样保留，相位、拖拽状态全程连续。
 // ---------------------------------------------------------------------------
-type GlobePhase = 'intro-slot' | 'flight' | 'slot' | 'none'
-const globePhase = ref<GlobePhase>(introWillPlay ? 'intro-slot' : 'none')
+type GlobePhase = 'intro-stage' | 'flight' | 'slot' | 'none'
+const globePhase = ref<GlobePhase>('none')
 const globeTeleportTarget = computed(() => {
   switch (globePhase.value) {
-    case 'intro-slot':
-      return '.lnl-intro-globe'
+    case 'intro-stage':
     case 'flight':
       return '#lnl-globe-flight-shell'
     default:
@@ -109,6 +109,31 @@ function measureGlobeRects(): { source: FlightRect, target: FlightRect } | null 
   return { source: toFlightRect(source), target: toFlightRect(target) }
 }
 
+async function mountIntroGlobeStage(): Promise<boolean> {
+  const sourceEl = document.querySelector('.lnl-intro-globe')
+  if (!sourceEl)
+    return false
+
+  const source = sourceEl.getBoundingClientRect()
+  if (source.width <= 0 || source.height <= 0)
+    return false
+
+  flightSourceRect = toFlightRect(source)
+  flightShellStyle.value = {
+    top: `${source.top}px`,
+    left: `${source.left}px`,
+    width: `${source.width}px`,
+    height: `${source.height}px`,
+    transform: 'none',
+  }
+  flightShellVisible.value = true
+  await nextTick()
+  globePhase.value = 'intro-stage'
+  await nextTick()
+  window.addEventListener('resize', handleHandoffResize)
+  return true
+}
+
 function flightTransform(source: FlightRect, target: FlightRect): string {
   const dx = target.left - source.left
   const dy = target.top - source.top
@@ -128,12 +153,12 @@ async function startGlobeFlight(source: FlightRect, target: FlightRect) {
     height: `${source.height}px`,
     transform: 'none',
   }
-  flightShellVisible.value = true
-  await nextTick()
   globePhase.value = 'flight'
   await nextTick()
-  await nextFrame()
-  await nextFrame()
+  // Flush the source geometry once after the flight class is active. This
+  // establishes a real transition start without adding one or two blank rAF
+  // waits; the globe remains painted in the persistent layer throughout.
+  document.querySelector('#lnl-globe-flight-shell')?.getBoundingClientRect()
   if (globePhase.value !== 'flight' || !flightSourceRect || !flightTargetRect)
     return
   flightShellStyle.value = {
@@ -149,6 +174,23 @@ function handleHandoffResize() {
     return
   handoffResizeRaf = window.requestAnimationFrame(() => {
     handoffResizeRaf = 0
+    if (globePhase.value === 'intro-stage') {
+      const sourceEl = document.querySelector('.lnl-intro-globe')
+      if (!sourceEl)
+        return
+      const sourceRect = sourceEl.getBoundingClientRect()
+      if (sourceRect.width <= 0)
+        return
+      flightSourceRect = toFlightRect(sourceRect)
+      flightShellStyle.value = {
+        top: `${sourceRect.top}px`,
+        left: `${sourceRect.left}px`,
+        width: `${sourceRect.width}px`,
+        height: `${sourceRect.height}px`,
+        transform: 'none',
+      }
+      return
+    }
     if (globePhase.value !== 'flight' || !flightSourceRect)
       return
     const targetEl = document.querySelector('#lnl-globe-dashboard-slot')
@@ -195,34 +237,42 @@ const pageTransitionProps = computed(() => appStore.disablePageAnimation
 
 onMounted(async () => {
   try {
-    const preloadHomeVisuals = introWillPlay
-      ? Promise.allSettled([
-          import('@/views/HomeView.vue'),
-          import('@/components/NodeCard.vue'),
-          import('@/components/NodeGeneralCards.vue'),
-        ])
-      : Promise.resolve()
+    const preloadHomeVisuals = Promise.allSettled([
+      import('@/views/HomeView.vue'),
+      import('@/components/NodeCard.vue'),
+      import('@/components/NodeGeneralCards.vue'),
+    ])
     await Promise.all([initApp(), preloadHomeVisuals])
-    await nextTick()
-    isReady.value = true
-    // Mount the real dashboard underneath the intro once data is ready. This
-    // lets the intro globe hand off to an already-rendered dashboard globe.
-    if (introWillPlay)
+    const playIntro = introSessionEligible && appStore.introAnimationEnabled
+    introWillPlay.value = playIntro
+
+    if (playIntro) {
+      appStore.introActive = true
+      showLaunch.value = true
+      launchStartedAt = performance.now()
+      // Mount both layout anchors before the persistent globe stage. The globe
+      // remains in that one fixed stage until the handoff has landed.
+      await nextTick()
       appShellMounted.value = true
+      await nextTick()
+      const stageMounted = await mountIntroGlobeStage()
+      if (!stageMounted)
+        globePhase.value = 'none'
+      await wait(Math.max(0, launchMinimumMs - (performance.now() - launchStartedAt)))
+      await finishIntro()
+      return
+    }
+
+    await revealDashboardWithoutIntro()
   }
   catch (error) {
     console.error('[App] Initialization failed:', error)
-    isReady.value = true
-  }
-  finally {
-    await wait(Math.max(0, launchMinimumMs - (performance.now() - launchStartedAt)))
-    if (introWillPlay)
-      await finishIntro()
+    await revealDashboardWithoutIntro()
   }
 })
 
 async function finishIntro() {
-  if (!introWillPlay || !showLaunch.value || introFinishing.value)
+  if (!introWillPlay.value || !showLaunch.value || introFinishing.value)
     return
   introFinishing.value = true
   appShellMounted.value = true
@@ -237,13 +287,13 @@ async function finishIntro() {
         await nextFrame()
     }
   }
-  // 手动切换 leave 类而不是 v-if + <Transition>：Vue 的 Transition 会在
-  // leave 开始时立即销毁组件实例（仅延迟移除 DOM），cobe 地球随之冻结。
-  // 保持组件存活可让地球在飞行期间继续旋转，交接全程相位连续。
+  // Keep the cover and globe instance alive until the persistent stage lands.
+  // The ripple and the FLIP transform start together with no empty wait.
+  introHandoffReady.value = Boolean(rects)
   introLeaving.value = true
   if (rects) {
+    await nextTick()
     await startGlobeFlight(rects.source, rects.target)
-    window.addEventListener('resize', handleHandoffResize)
     window.addEventListener('transitionend', handleHandoffTransitionEnd)
     if (introFinalizeTimer !== null)
       window.clearTimeout(introFinalizeTimer)
@@ -258,6 +308,36 @@ async function finishIntro() {
   catch {
     // Storage can be unavailable in strict privacy modes.
   }
+}
+
+function scheduleDashboardReveal() {
+  introRevealActive.value = true
+  if (introRevealTimer !== null)
+    window.clearTimeout(introRevealTimer)
+  introRevealTimer = window.setTimeout(() => {
+    introRevealActive.value = false
+  }, 1500)
+
+  if (ambientStartTimer !== null)
+    window.clearTimeout(ambientStartTimer)
+  ambientStartTimer = window.setTimeout(() => {
+    window.requestAnimationFrame(() => {
+      ambientAnimationReady.value = true
+    })
+  }, 260)
+}
+
+async function revealDashboardWithoutIntro() {
+  showLaunch.value = false
+  introLeaving.value = false
+  introHandoffReady.value = false
+  appStore.introActive = false
+  globePhase.value = 'none'
+  flightShellVisible.value = false
+  appShellMounted.value = true
+  await nextTick()
+  introComplete.value = true
+  scheduleDashboardReveal()
 }
 
 function handleIntroAfterLeave() {
@@ -278,25 +358,19 @@ function handleIntroAfterLeave() {
       flightTargetRect = null
     })
   }
-  else if (globePhase.value === 'intro-slot') {
+  else if (globePhase.value === 'intro-stage') {
     // 回退路径：无交接目标，引擎随封面淡出后销毁。
     globePhase.value = 'none'
+    flightShellVisible.value = false
   }
   introComplete.value = true
+  introHandoffReady.value = false
   appStore.introActive = false
   appShellMounted.value = true
-  introRevealActive.value = true
   introFinishing.value = false
   // 交接飞行结束后再卸载封面，地球引擎在此之前一直保持旋转。
   showLaunch.value = false
-  introRevealTimer = window.setTimeout(() => {
-    introRevealActive.value = false
-  }, 1500)
-  ambientStartTimer = window.setTimeout(() => {
-    window.requestAnimationFrame(() => {
-      ambientAnimationReady.value = true
-    })
-  }, 260)
+  scheduleDashboardReveal()
 }
 
 // 非首访 / 减少动态 / intro 回退后的路由返回：无飞行过程，地球引擎直接在
@@ -335,24 +409,30 @@ onUnmounted(() => {
     <LoadingCover
       v-if="showLaunch"
       :class="introLeaving ? 'lnl-intro-exit-leave-active lnl-intro-exit-leave-to' : ''"
+      :handoff-ready="introHandoffReady"
       @skip="finishIntro"
     />
-    <!-- 唯一的 cobe 引擎：Teleport 目标随 globePhase 在 intro 槽位、飞行壳与
-         dashboard 槽位之间迁移，同一 DOM（含 WebGL 上下文）全程保留。
-         v-if 挂在 Teleport 自身：'none' → 'slot' 时重新挂载 Teleport 实例，
-         保证目标解析发生在槽位已存在之后（Teleport 只在挂载或 to 变化时
-         解析一次目标，解析失败不会自动重试）。 -->
+    <!-- The one COBE engine stays in a persistent fixed stage from the
+         intro's first frame through landing. Teleport moves the identical
+         canvas into the dashboard only after both rectangles match. -->
     <Teleport v-if="globePhase !== 'none'" :to="globeTeleportTarget">
       <NodeEarthGlobe
         :variant="globeVariant"
         :interactive="globePhase === 'slot'"
+        :show-markers="globePhase === 'slot'"
         :show-status="globePhase === 'slot'"
         :motion="globePhase === 'slot' ? undefined : 'auto'"
+        :intro-releasing="introLeaving && globePhase !== 'slot'"
+        :handoff-active="globePhase === 'intro-stage' || globePhase === 'flight'"
       />
     </Teleport>
     <div
       v-if="flightShellVisible"
       id="lnl-globe-flight-shell"
+      :class="{
+        'is-intro-stage': globePhase === 'intro-stage',
+        'is-flight': globePhase === 'flight',
+      }"
       :style="flightShellStyle"
       aria-hidden="true"
     />
@@ -374,19 +454,49 @@ onUnmounted(() => {
 </template>
 
 <style>
-/* 飞行壳：交接期间承载地球引擎的 fixed 容器，transform 过渡即飞行本体。
-   源/终点矩形由 App.vue 测量后以内联样式写入。 */
+/* Persistent intro/flight stage. The canvas is never removed between the
+   cover and dashboard; only this compositor layer changes geometry. */
 #lnl-globe-flight-shell {
   position: fixed;
   z-index: 110;
   pointer-events: none;
   transform-origin: top left;
-  transition: transform 1080ms cubic-bezier(0.2, 0.78, 0.2, 1);
   will-change: transform;
+}
+
+#lnl-globe-flight-shell.is-intro-stage {
+  animation: lnl-globe-stage-in 900ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+#lnl-globe-flight-shell.is-flight {
+  animation: none;
+  opacity: 1;
+  filter: none;
+  transition: transform 1080ms cubic-bezier(0.2, 0.78, 0.2, 1);
 }
 
 #lnl-globe-flight-shell > .node-earth-globe {
   width: 100%;
   max-width: none;
+}
+
+@keyframes lnl-globe-stage-in {
+  from {
+    opacity: 0;
+    filter: blur(14px);
+    transform: translate3d(-10px, 8px, 0) scale(0.94);
+  }
+  to {
+    opacity: 1;
+    filter: blur(0);
+    transform: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  #lnl-globe-flight-shell {
+    animation: none;
+    transition: none;
+  }
 }
 </style>

@@ -1,9 +1,9 @@
 {
   "name": "komari-theme-leonetlab",
   "type": "module",
-  "version": "1.3.0",
+  "version": "1.3.1-R",
   "packageManager": "bun@1.3.14",
-  "description": "A theme for Komari, based on Komari Emerald",
+  "description": "A precision network observatory theme for Komari with a live COBE globe, regional telemetry, responsive node cards, Ping analytics and PWA support",
   "author": {
     "name": "LeoNetLab",
     "url": "https://github.com/LeonR-92"
