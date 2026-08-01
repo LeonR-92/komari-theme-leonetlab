@@ -760,7 +760,10 @@ const globeFlagThemeAuditExpression = `new Promise((resolve) => {
         setTimeout(() => {
           const interactiveOverlay = [...document.querySelectorAll('.node-earth-globe:not(.is-intro) .lnl-earth-overlay')]
             .find(overlay => getComputedStyle(overlay).pointerEvents !== 'none');
-          interactiveOverlay?.dispatchEvent(new PointerEvent('pointerenter', { pointerType: 'mouse' }));
+          // Headless Linux does not always advertise a fine hover pointer. Use the
+          // product's shared click/touch path here; hover intent is covered by the
+          // dedicated region-interaction audit with an explicit desktop fixture.
+          interactiveOverlay?.click();
           setTimeout(() => {
             const readout = interactiveOverlay?.querySelector('.lnl-earth-readout');
             const activeFlag = interactiveOverlay?.querySelector('.lnl-earth-flag');
