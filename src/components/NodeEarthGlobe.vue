@@ -770,7 +770,7 @@ function scheduleRegionClose(code: string, delay = REGION_HOVER_CLOSE_MS) {
 }
 
 function handleRegionPointerEnter(event: PointerEvent, code: string) {
-  if (event.pointerType === 'touch' || !hasFineHoverPointer.value)
+  if (event.pointerType === 'touch')
     return
   if (regionCloseTimer !== null) {
     window.clearTimeout(regionCloseTimer)
@@ -789,7 +789,7 @@ function handleRegionPointerEnter(event: PointerEvent, code: string) {
 }
 
 function handleRegionPointerLeave(event: PointerEvent, code: string) {
-  if (event.pointerType === 'touch' || !hasFineHoverPointer.value)
+  if (event.pointerType === 'touch')
     return
   if (hoveredRegionCode.value === code)
     hoveredRegionCode.value = null
