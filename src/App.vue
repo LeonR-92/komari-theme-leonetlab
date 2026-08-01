@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
+import { useRoute } from 'vue-router'
 import NodeEarthGlobe from '@/components/NodeEarthGlobe.vue'
 import { Toaster } from '@/components/ui/sonner'
 import { useAppStore } from '@/stores/app'
@@ -11,12 +12,13 @@ import LoadingCover from './components/LoadingCover.vue'
 import Provider from './components/Provider.vue'
 
 const appStore = useAppStore()
+const route = useRoute()
 
 // Bump this key only when a release intentionally needs to present the intro
 // again. The value still keeps the animation to once per browser session.
 // 1.2.8 重构为单 cobe 实例交接（Teleport 迁移同一 DOM，WebGL 上下文不重建），
 // 让老用户重放重构后的 intro。
-const INTRO_SESSION_KEY = 'leonetlab:intro:1.3.1-pre'
+const INTRO_SESSION_KEY = 'leonetlab:intro:1.3.2'
 // 飞行壳的 transform 过渡时长；交接收尾以 transitionend 为准，固定计时器只作
 // 兜底：主线程长任务会推迟 CSS 过渡起点，按点击时刻计时会提前撤壳闪跳。
 const INTRO_HANDOFF_DURATION_MS = 1080
@@ -55,8 +57,44 @@ let introFinalizeTimer: ReturnType<typeof window.setTimeout> | null = null
 let introRevealTimer: ReturnType<typeof window.setTimeout> | null = null
 let ambientStartTimer: ReturnType<typeof window.setTimeout> | null = null
 let handoffResizeRaf = 0
+let initialShellPromise: Promise<void> | null = null
 const wait = (duration: number) => new Promise(resolve => window.setTimeout(resolve, duration))
 const nextFrame = () => new Promise<void>(resolve => window.requestAnimationFrame(() => resolve()))
+
+type DashboardPulseOrigin = 'landing' | 'route'
+const dashboardPulseId = ref(0)
+const dashboardPulseOrigin = ref<DashboardPulseOrigin>('landing')
+let dashboardPulseScheduled = false
+let dashboardPulseIssued = false
+
+async function requestDashboardPulse(preferredOrigin: DashboardPulseOrigin) {
+  if (dashboardPulseScheduled || reducedMotion || appStore.disablePageAnimation || !isEarthMode())
+    return
+
+  dashboardPulseScheduled = true
+  const origin: DashboardPulseOrigin = dashboardPulseIssued ? preferredOrigin : 'landing'
+  const deadline = performance.now() + 1600
+  try {
+    while (performance.now() < deadline) {
+      await nextTick()
+      const slot = document.querySelector<HTMLElement>('#lnl-globe-dashboard-slot')
+      const canvas = slot?.querySelector<HTMLCanvasElement>('canvas')
+      if (slot && canvas && slot.getBoundingClientRect().width > 0) {
+        // Let COBE paint once at the dashboard geometry before the compositor-only
+        // halo begins. This keeps the ripple visually attached to the landed globe.
+        await nextFrame()
+        dashboardPulseOrigin.value = origin
+        dashboardPulseId.value += 1
+        dashboardPulseIssued = true
+        return
+      }
+      await nextFrame()
+    }
+  }
+  finally {
+    dashboardPulseScheduled = false
+  }
+}
 
 // ---------------------------------------------------------------------------
 // v1.2.8 单实例地球交接
@@ -235,29 +273,43 @@ const pageTransitionProps = computed(() => appStore.disablePageAnimation
       mode: 'out-in' as const,
     })
 
+async function prepareInitialShell() {
+  if (appShellMounted.value)
+    return
+
+  const playIntro = introSessionEligible && appStore.introAnimationEnabled
+  introWillPlay.value = playIntro
+  appShellMounted.value = true
+
+  if (!playIntro)
+    return
+
+  appStore.introActive = true
+  showLaunch.value = true
+  launchStartedAt = performance.now()
+  await nextTick()
+  const stageMounted = await mountIntroGlobeStage()
+  if (!stageMounted)
+    globePhase.value = 'none'
+}
+
+function ensureInitialShell() {
+  initialShellPromise ??= prepareInitialShell()
+  return initialShellPromise
+}
+
 onMounted(async () => {
   try {
-    const preloadHomeVisuals = Promise.allSettled([
+    // 首页视觉块只做后台预取，不再阻塞首访封面出现。
+    void Promise.allSettled([
       import('@/views/HomeView.vue'),
       import('@/components/NodeCard.vue'),
       import('@/components/NodeGeneralCards.vue'),
     ])
-    await Promise.all([initApp(), preloadHomeVisuals])
-    const playIntro = introSessionEligible && appStore.introAnimationEnabled
-    introWillPlay.value = playIntro
+    await initApp(ensureInitialShell)
+    await ensureInitialShell()
 
-    if (playIntro) {
-      appStore.introActive = true
-      showLaunch.value = true
-      launchStartedAt = performance.now()
-      // Mount both layout anchors before the persistent globe stage. The globe
-      // remains in that one fixed stage until the handoff has landed.
-      await nextTick()
-      appShellMounted.value = true
-      await nextTick()
-      const stageMounted = await mountIntroGlobeStage()
-      if (!stageMounted)
-        globePhase.value = 'none'
+    if (introWillPlay.value) {
       await wait(Math.max(0, launchMinimumMs - (performance.now() - launchStartedAt)))
       await finishIntro()
       return
@@ -352,6 +404,7 @@ function handleIntroAfterLeave() {
   if (globePhase.value === 'flight') {
     // 引擎迁入 dashboard 槽位（槽位自挂载起即在 DOM 中），迁移完成后撤壳。
     globePhase.value = 'slot'
+    void requestDashboardPulse('landing')
     void nextTick(() => {
       flightShellVisible.value = false
       flightSourceRect = null
@@ -383,11 +436,17 @@ watch([appShellMounted, () => appStore.loading, globePhase], async ([shell, load
   while (globePhase.value === 'none' && performance.now() < deadline) {
     if (document.querySelector('#lnl-globe-dashboard-slot')) {
       globePhase.value = 'slot'
+      void requestDashboardPulse('landing')
       return
     }
     await nextFrame()
   }
 }, { immediate: true, flush: 'post' })
+
+watch(() => route.name, (nextRoute, previousRoute) => {
+  if (nextRoute === 'home' && previousRoute && previousRoute !== 'home')
+    void requestDashboardPulse('route')
+})
 
 onUnmounted(() => {
   appStore.introActive = false
@@ -424,6 +483,8 @@ onUnmounted(() => {
         :motion="globePhase === 'slot' ? undefined : 'auto'"
         :intro-releasing="introLeaving && globePhase !== 'slot'"
         :handoff-active="globePhase === 'intro-stage' || globePhase === 'flight'"
+        :dashboard-pulse-id="dashboardPulseId"
+        :dashboard-pulse-origin="dashboardPulseOrigin"
       />
     </Teleport>
     <div

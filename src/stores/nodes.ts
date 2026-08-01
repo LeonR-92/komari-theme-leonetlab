@@ -98,6 +98,7 @@ const useNodesStore = defineStore('nodes', () => {
   // ===== 状态 =====
   const nodes = ref<NodeData[]>([])
   const earthNodes = ref<NodeData[]>([])
+  const initialized = ref(false)
   const wsConnectionState = ref<WsConnectionState>('disconnected')
   const wsReconnectAttempts = ref<number>(0)
   let lastEarthSnapshotAt = 0
@@ -304,6 +305,7 @@ const useNodesStore = defineStore('nodes', () => {
     // 按 weight 升序排序（weight 越小越靠前，与官方前端一致）
     sortNodesByWeight()
     refreshEarthNodes(true)
+    initialized.value = true
   }
 
   /**
@@ -410,6 +412,7 @@ const useNodesStore = defineStore('nodes', () => {
    */
   function clearNodes(): void {
     nodes.value = []
+    initialized.value = false
     refreshEarthNodes(true)
   }
 
@@ -417,6 +420,7 @@ const useNodesStore = defineStore('nodes', () => {
     // 状态
     nodes,
     earthNodes,
+    initialized,
     wsConnectionState,
     wsReconnectAttempts,
     // 计算属性

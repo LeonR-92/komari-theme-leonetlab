@@ -34,6 +34,8 @@ const props = defineProps<{
   motion?: 'auto' | 'static'
   introReleasing?: boolean
   handoffActive?: boolean
+  dashboardPulseId?: number
+  dashboardPulseOrigin?: 'landing' | 'route'
 }>()
 
 // 无头浏览器回归探针：仅当页面预置 window.__lnlGlobeProbe 时记录朝向与
@@ -63,6 +65,7 @@ const shouldRender = computed(() => documentVisibility.value === 'visible'
 // `earth-stop` remains draggable but holds its orientation after release.
 // 系统开启"减少动态效果"时地球仪不自动旋转，但保留用户拖拽。
 const prefersReducedMotion = useMediaQuery('(prefers-reduced-motion: reduce)')
+const hasFineHoverPointer = useMediaQuery('(hover: hover) and (pointer: fine)')
 const shouldAutoRotate = computed(() => !prefersReducedMotion.value
   && (props.motion === 'auto'
     || (props.motion === undefined && appStore.earthViewMode === 'earth')))
@@ -88,6 +91,8 @@ let isPointerDown = false
 let lastPointerX = 0
 let lastPointerY = 0
 let staticRedrawUntil = 0
+let interactionRotationScale = 1
+let targetInteractionRotationScale = 1
 
 function normalizePhi(value: number): number {
   const circle = Math.PI * 2
@@ -218,6 +223,12 @@ const regionClusters = computed<RegionCluster[]>(() => {
 const clusterOverlayEls = new Map<string, HTMLElement>()
 const clusterOverlayRefBinders = new Map<string, (el: Element | ComponentPublicInstance | null) => void>()
 const activeRegionCode = ref<string | null>(null)
+const pinnedRegionCode = ref<string | null>(null)
+const hoveredRegionCode = ref<string | null>(null)
+let regionOpenTimer: ReturnType<typeof window.setTimeout> | null = null
+let regionCloseTimer: ReturnType<typeof window.setTimeout> | null = null
+const REGION_HOVER_OPEN_MS = 120
+const REGION_HOVER_CLOSE_MS = 220
 
 function coordToGlobePoint([lat, lon]: [number, number]): [number, number, number] {
   const latRad = lat * Math.PI / 180
@@ -275,6 +286,27 @@ function syncClusterOverlayPosition(
     : (isFrontFacing ? 1 : 0)
   const xPx = ((screenX / aspect) * GLOBE_SCALE + 1) * width / 2
   const yPx = ((-screenY) * GLOBE_SCALE + 1) * height / 2
+  const containerRect = containerRef.value?.getBoundingClientRect()
+  const readout = el.querySelector<HTMLElement>('.lnl-earth-readout')
+  const readoutWidth = Math.min(260, Math.max(220, window.innerWidth - 42))
+  const readoutHeight = readout?.offsetHeight || 188
+  const previousSide = el.dataset.side
+  // Keep a generous hysteresis band so a marker near the centre does not make
+  // the readout flip sides every few frames while the globe is slowing down.
+  const openToLeft = previousSide === 'left'
+    ? xPx > width * 0.54
+    : xPx > width * 0.64
+  const side = openToLeft ? 'left' : 'right'
+  const baseLeft = (containerRect?.left || 0) + xPx + (side === 'left' ? -25 - readoutWidth : 25)
+  const clampedLeft = Math.min(
+    Math.max(12, baseLeft),
+    Math.max(12, window.innerWidth - readoutWidth - 12),
+  )
+  const baseTop = (containerRect?.top || 0) + yPx - 44
+  const clampedTop = Math.min(
+    Math.max(12, baseTop),
+    Math.max(12, window.innerHeight - readoutHeight - 12),
+  )
 
   el.style.transform = `translate3d(${xPx}px, ${yPx}px, 0)`
   el.style.setProperty('--lnl-cobe-visible', String(markerVisibility))
@@ -283,9 +315,11 @@ function syncClusterOverlayPosition(
   el.style.pointerEvents = interactive.value && isFrontFacing ? 'auto' : 'none'
   el.tabIndex = interactive.value && isFrontFacing ? 0 : -1
   el.setAttribute('aria-hidden', isFrontFacing ? 'false' : 'true')
-  el.dataset.side = xPx > width * 0.62 ? 'left' : 'right'
+  el.dataset.side = side
+  el.style.setProperty('--lnl-readout-shift-x', `${clampedLeft - baseLeft}px`)
+  el.style.setProperty('--lnl-readout-shift-y', `${clampedTop - baseTop}px`)
   if (!isFrontFacing && activeRegionCode.value === cluster.code)
-    activeRegionCode.value = null
+    resetRegionInteraction()
 }
 
 function syncClusterOverlayPositions() {
@@ -348,11 +382,13 @@ const themeColors = computed(() => {
   }
   return {
     dark: 0,
-    mapBrightness: 6,
-    mapBaseBrightness: 0.1,
+    // Light mode stays neutral: soften the original gray land dots without
+    // tinting the entire sphere green. Theme color remains on markers/glow.
+    mapBrightness: 5,
+    mapBaseBrightness: 0.07,
     baseColor: [1, 1, 1] as [number, number, number],
     markerColor: [0.08, 0.48, 0.31] as [number, number, number],
-    glowColor: [0.87, 0.97, 0.91] as [number, number, number],
+    glowColor: [0.88, 0.96, 0.91] as [number, number, number],
   }
 })
 
@@ -398,6 +434,24 @@ function updateGlobeFrame() {
 
 // phi 收敛/静止时整帧跳过 globe.update，WebGL + overlay 位置更新双双归零
 const ORIENTATION_IDLE_EPSILON = 1e-5
+const INTERACTION_ROTATION_EPSILON = 0.002
+
+function interactionRotationSettling(): boolean {
+  return Math.abs(targetInteractionRotationScale - interactionRotationScale) > INTERACTION_ROTATION_EPSILON
+}
+
+function updateInteractionRotationScale(delta: number) {
+  if (!interactionRotationSettling()) {
+    interactionRotationScale = targetInteractionRotationScale
+    return
+  }
+  const duration = targetInteractionRotationScale < interactionRotationScale ? 180 : 260
+  const progress = 1 - Math.exp(-Math.min(delta, 34) * 5 / duration)
+  interactionRotationScale += (targetInteractionRotationScale - interactionRotationScale) * progress
+  if (!interactionRotationSettling())
+    interactionRotationScale = targetInteractionRotationScale
+}
+
 const { pause: pauseRaf, resume: resumeRaf } = useRafFn(
   ({ delta }) => {
     try {
@@ -409,8 +463,9 @@ const { pause: pauseRaf, resume: resumeRaf } = useRafFn(
         return
       const prevPhi = phi
       const prevTheta = theta
+      updateInteractionRotationScale(delta)
       if (!isPointerDown && shouldAutoRotate.value) {
-        targetPhi += AUTO_ROTATION_RADIANS_PER_MS * Math.min(delta, 34)
+        targetPhi += AUTO_ROTATION_RADIANS_PER_MS * Math.min(delta, 34) * interactionRotationScale
         keepPhiPrecision()
       }
       phi += (targetPhi - phi) * 1
@@ -438,7 +493,9 @@ function syncRafState() {
   if (!globe)
     return
 
-  if ((documentVisibility.value === 'visible' && isPointerDown) || (shouldRender.value && shouldAutoRotate.value)) {
+  const shouldAnimateRotation = shouldAutoRotate.value
+    && (interactionRotationScale > INTERACTION_ROTATION_EPSILON || interactionRotationSettling())
+  if ((documentVisibility.value === 'visible' && isPointerDown) || (shouldRender.value && shouldAnimateRotation)) {
     resumeRaf()
     return
   }
@@ -499,12 +556,17 @@ function stopGlobe() {
 onMounted(() => {
   window.addEventListener('leonetlab:theme-transition-start', handleThemeTransitionStart)
   window.addEventListener('leonetlab:theme-transition-end', handleThemeTransitionEnd)
+  document.addEventListener('pointerdown', handleDocumentPointerDown)
+  document.addEventListener('keydown', handleDocumentKeydown)
   startGlobe()
 })
 
 onBeforeUnmount(() => {
   window.removeEventListener('leonetlab:theme-transition-start', handleThemeTransitionStart)
   window.removeEventListener('leonetlab:theme-transition-end', handleThemeTransitionEnd)
+  document.removeEventListener('pointerdown', handleDocumentPointerDown)
+  document.removeEventListener('keydown', handleDocumentKeydown)
+  clearRegionTimers()
   stopGlobe()
 })
 
@@ -564,6 +626,17 @@ watch(shouldAutoRotate, () => {
     syncRafState()
 })
 
+watch(() => appStore.regionalTelemetryEnabled, (enabled) => {
+  if (!enabled)
+    resetRegionInteraction()
+})
+
+watch(() => regionClusters.value.map(cluster => cluster.code).join(','), () => {
+  const activeCode = activeRegionCode.value
+  if (activeCode && !regionClusters.value.some(cluster => cluster.code === activeCode))
+    resetRegionInteraction()
+})
+
 // 仅地区集合或在线状态变化时才推送 markers；速率推送不触发
 watch(
   () => `${showMarkers.value}:${regionClusters.value.map(clusterKey).join(',')}`,
@@ -591,6 +664,7 @@ watch(shouldRender, () => {
 function onPointerDown(e: PointerEvent) {
   if (!interactive.value)
     return
+  resetRegionInteraction()
   isPointerDown = true
   dragging.value = true
   lastPointerX = e.clientX
@@ -647,30 +721,128 @@ function handleFlagLoad(event: Event) {
   image.hidden = false
 }
 
-function toggleRegion(code: string) {
+function clearRegionTimers() {
+  if (regionOpenTimer !== null) {
+    window.clearTimeout(regionOpenTimer)
+    regionOpenTimer = null
+  }
+  if (regionCloseTimer !== null) {
+    window.clearTimeout(regionCloseTimer)
+    regionCloseTimer = null
+  }
+}
+
+function syncRegionRotationState() {
+  targetInteractionRotationScale = activeRegionCode.value ? 0 : 1
+  syncRafState()
+}
+
+function activateRegion(code: string) {
   if (!appStore.regionalTelemetryEnabled)
     return
-  activeRegionCode.value = activeRegionCode.value === code ? null : code
+  activeRegionCode.value = code
+  syncRegionRotationState()
+  void nextTick(syncClusterOverlayPositions)
 }
 
-function openRegion(code: string) {
-  if (appStore.regionalTelemetryEnabled)
-    activeRegionCode.value = code
+function resetRegionInteraction() {
+  clearRegionTimers()
+  hoveredRegionCode.value = null
+  pinnedRegionCode.value = null
+  activeRegionCode.value = null
+  syncRegionRotationState()
 }
 
-function closeRegion(code: string) {
-  if (activeRegionCode.value === code)
-    activeRegionCode.value = null
+function scheduleRegionClose(code: string, delay = REGION_HOVER_CLOSE_MS) {
+  if (pinnedRegionCode.value === code)
+    return
+  if (regionCloseTimer !== null)
+    window.clearTimeout(regionCloseTimer)
+  regionCloseTimer = window.setTimeout(() => {
+    regionCloseTimer = null
+    if (pinnedRegionCode.value || hoveredRegionCode.value === code)
+      return
+    if (activeRegionCode.value === code) {
+      activeRegionCode.value = null
+      syncRegionRotationState()
+    }
+  }, delay)
 }
 
 function handleRegionPointerEnter(event: PointerEvent, code: string) {
-  if (event.pointerType !== 'touch')
-    openRegion(code)
+  if (event.pointerType === 'touch' || !hasFineHoverPointer.value)
+    return
+  if (regionCloseTimer !== null) {
+    window.clearTimeout(regionCloseTimer)
+    regionCloseTimer = null
+  }
+  hoveredRegionCode.value = code
+  if (pinnedRegionCode.value)
+    return
+  if (regionOpenTimer !== null)
+    window.clearTimeout(regionOpenTimer)
+  regionOpenTimer = window.setTimeout(() => {
+    regionOpenTimer = null
+    if (hoveredRegionCode.value === code && !pinnedRegionCode.value)
+      activateRegion(code)
+  }, REGION_HOVER_OPEN_MS)
 }
 
 function handleRegionPointerLeave(event: PointerEvent, code: string) {
-  if (event.pointerType !== 'touch')
-    closeRegion(code)
+  if (event.pointerType === 'touch' || !hasFineHoverPointer.value)
+    return
+  if (hoveredRegionCode.value === code)
+    hoveredRegionCode.value = null
+  if (regionOpenTimer !== null) {
+    window.clearTimeout(regionOpenTimer)
+    regionOpenTimer = null
+  }
+  scheduleRegionClose(code)
+}
+
+function handleRegionClick(code: string) {
+  if (!appStore.regionalTelemetryEnabled)
+    return
+
+  if (pinnedRegionCode.value === code) {
+    pinnedRegionCode.value = null
+    if (hasFineHoverPointer.value && hoveredRegionCode.value === code)
+      activateRegion(code)
+    else
+      resetRegionInteraction()
+    return
+  }
+
+  clearRegionTimers()
+  pinnedRegionCode.value = code
+  activateRegion(code)
+}
+
+function handleRegionFocus(code: string) {
+  if (!pinnedRegionCode.value)
+    activateRegion(code)
+}
+
+function handleRegionBlur(event: FocusEvent, code: string) {
+  const root = event.currentTarget as HTMLElement | null
+  if (root?.contains(event.relatedTarget as Node | null))
+    return
+  hoveredRegionCode.value = null
+  scheduleRegionClose(code, 100)
+}
+
+function handleDocumentPointerDown(event: PointerEvent) {
+  const root = containerRef.value
+  if (!root || root.contains(event.target as Node))
+    return
+  resetRegionInteraction()
+}
+
+function handleDocumentKeydown(event: KeyboardEvent) {
+  if (event.key === 'Escape' && activeRegionCode.value) {
+    event.preventDefault()
+    resetRegionInteraction()
+  }
 }
 
 function formatThroughput(value: number): string {
@@ -704,6 +876,18 @@ const offlineServers = computed(() => totalServers.value - onlineServers.value)
     />
 
     <div
+      v-if="variant === 'dashboard' && dashboardPulseId && !appStore.disablePageAnimation && !prefersReducedMotion"
+      :key="dashboardPulseId"
+      class="lnl-dashboard-halo"
+      :class="`is-${dashboardPulseOrigin || 'landing'}`"
+      aria-hidden="true"
+    >
+      <span class="lnl-dashboard-halo-aura" />
+      <span class="lnl-dashboard-halo-ring is-one" />
+      <span class="lnl-dashboard-halo-ring is-two" />
+    </div>
+
+    <div
       v-if="variant === 'intro'"
       class="lnl-intro-halo"
       :class="{ 'is-releasing': introReleasing }"
@@ -727,8 +911,9 @@ const offlineServers = computed(() => totalServers.value - onlineServers.value)
         @pointerdown.stop
         @pointerenter="handleRegionPointerEnter($event, cluster.code)"
         @pointerleave="handleRegionPointerLeave($event, cluster.code)"
-        @blur="closeRegion(cluster.code)"
-        @click.stop="toggleRegion(cluster.code)"
+        @focus="handleRegionFocus(cluster.code)"
+        @blur="handleRegionBlur($event, cluster.code)"
+        @click.stop="handleRegionClick(cluster.code)"
       >
         <span class="lnl-earth-flag absolute -bottom-2 -left-2 z-3" aria-hidden="true">
           <span>{{ cluster.code }}</span>
@@ -796,16 +981,68 @@ const offlineServers = computed(() => totalServers.value - onlineServers.value)
 <style scoped>
 .earth-globe-canvas {
   contain: layout paint;
+  z-index: 1;
 }
 
 .node-earth-globe {
   width: min(100%, clamp(360px, 32vw, 500px));
   max-width: 500px;
+  isolation: isolate;
 }
 
 .node-earth-globe.is-intro {
   width: 100%;
   max-width: none;
+}
+
+.lnl-dashboard-halo,
+.lnl-dashboard-halo > span {
+  position: absolute;
+  pointer-events: none;
+}
+
+.lnl-dashboard-halo {
+  z-index: 0;
+  inset: 5%;
+  border-radius: 50%;
+}
+
+.lnl-dashboard-halo > span {
+  inset: 0;
+  border-radius: 50%;
+  opacity: 0;
+  will-change: transform, opacity;
+}
+
+.lnl-dashboard-halo-aura {
+  background: radial-gradient(
+    circle,
+    transparent 56%,
+    color-mix(in srgb, var(--lnl-green) 11%, transparent) 72%,
+    color-mix(in srgb, var(--lnl-cyan) 18%, transparent) 88%,
+    transparent 100%
+  );
+  animation: dashboard-halo-aura 1.2s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+.lnl-dashboard-halo-ring {
+  border: 1px solid color-mix(in srgb, var(--lnl-green) 54%, transparent);
+  box-shadow: 0 0 20px color-mix(in srgb, var(--lnl-green) 12%, transparent);
+  animation: dashboard-halo-ripple 1.2s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+.lnl-dashboard-halo-ring.is-two {
+  border-color: color-mix(in srgb, var(--lnl-cyan) 38%, transparent);
+  animation-delay: 110ms;
+}
+
+.lnl-dashboard-halo.is-route .lnl-dashboard-halo-aura,
+.lnl-dashboard-halo.is-route .lnl-dashboard-halo-ring {
+  animation-duration: 900ms;
+}
+
+.lnl-dashboard-halo.is-route .lnl-dashboard-halo-ring.is-two {
+  animation-delay: 80ms;
 }
 
 .lnl-intro-halo,
@@ -914,6 +1151,14 @@ const offlineServers = computed(() => totalServers.value - onlineServers.value)
   will-change: transform, opacity;
 }
 
+.lnl-earth-overlay::before {
+  content: '';
+  position: absolute;
+  z-index: 0;
+  inset: -13px -11px;
+  background: transparent;
+}
+
 .lnl-earth-overlay[data-front='false'] {
   visibility: hidden;
   opacity: 0 !important;
@@ -992,8 +1237,8 @@ const offlineServers = computed(() => totalServers.value - onlineServers.value)
 .lnl-earth-readout {
   position: absolute;
   z-index: 8;
-  top: -30px;
-  left: 25px;
+  top: calc(-30px + var(--lnl-readout-shift-y, 0px));
+  left: calc(25px + var(--lnl-readout-shift-x, 0px));
   width: min(260px, calc(100vw - 42px));
   padding: 14px;
   border: 1px solid color-mix(in srgb, var(--lnl-green) 42%, var(--lnl-line));
@@ -1005,7 +1250,7 @@ const offlineServers = computed(() => totalServers.value - onlineServers.value)
 }
 
 .lnl-earth-overlay[data-side='left'] .lnl-earth-readout {
-  right: 25px;
+  right: calc(25px - var(--lnl-readout-shift-x, 0px));
   left: auto;
   transform-origin: top right;
 }
@@ -1119,6 +1364,34 @@ const offlineServers = computed(() => totalServers.value - onlineServers.value)
   transform: translate3d(9px, 5px, 0) scale(0.965);
 }
 
+@keyframes dashboard-halo-aura {
+  0% {
+    opacity: 0;
+    transform: scale(0.94);
+  }
+  24% {
+    opacity: 0.72;
+  }
+  100% {
+    opacity: 0;
+    transform: scale(1.18);
+  }
+}
+
+@keyframes dashboard-halo-ripple {
+  0% {
+    opacity: 0;
+    transform: scale(0.93);
+  }
+  18% {
+    opacity: 0.78;
+  }
+  100% {
+    opacity: 0;
+    transform: scale(1.3);
+  }
+}
+
 @keyframes intro-halo-breathe {
   0%,
   100% {
@@ -1174,6 +1447,8 @@ const offlineServers = computed(() => totalServers.value - onlineServers.value)
   .region-readout-enter-active,
   .region-readout-leave-active,
   .lnl-earth-readout dd i,
+  .lnl-dashboard-halo-aura,
+  .lnl-dashboard-halo-ring,
   .lnl-intro-halo-ring,
   .lnl-intro-halo-wave {
     transition: none;

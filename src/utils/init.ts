@@ -7,7 +7,6 @@ import type { Client, KomariRpc, NodeStatus } from '@/utils/rpc'
 import { useAppStore } from '@/stores/app'
 import { useNodesStore } from '@/stores/nodes'
 import { getSharedApi } from '@/utils/api'
-import { isMobileLike, MOBILE_POLL_INTERVAL_FLOOR_MS } from '@/utils/mobilePerf'
 import { getSharedRpc, RpcError } from '@/utils/rpc'
 
 /** 初始化配置 */
@@ -29,6 +28,9 @@ const DEFAULT_CONFIG: Required<InitConfig> = {
   postFailureThreshold: 3,
 }
 
+const POLL_INTERVAL_FLOOR_MS = 5000
+const CLIENT_METADATA_REFRESH_INTERVAL_MS = 60_000
+
 /** 初始化状态管理 */
 class InitManager {
   private config: Required<InitConfig>
@@ -44,6 +46,8 @@ class InitManager {
   private wsErrorUnsubscribe: (() => void) | null = null
   /** POST 轮询连续失败次数（达到 postFailureThreshold 才亮错误） */
   private consecutivePollFailures = 0
+  /** 节点静态信息不随实时状态高频刷新，避免每位访客持续放大服务端负载。 */
+  private lastClientRefreshAt = 0
   constructor(config: InitConfig = {}) {
     this.config = { ...DEFAULT_CONFIG, ...config }
     this.rpc = getSharedRpc()
@@ -53,8 +57,8 @@ class InitManager {
 
   /**
    * 获取轮询间隔（毫秒）
-   * 从 publicSettings.theme_settings.dataUpdateInterval 读取，默认 3 秒。
-   * 移动端（触屏/小视口）设置 5 秒下限以降低常驻网络与渲染负载，桌面行为不变。
+   * 从 publicSettings.theme_settings.dataUpdateInterval 读取，默认 5 秒。
+   * 所有设备统一设置 5 秒下限，避免过密轮询放大服务端与客户端负载。
    */
   private getPollInterval(): number {
     const settings = this.appStore.publicSettings?.theme_settings
@@ -62,31 +66,34 @@ class InitManager {
     // 确保值在合理范围内（1-60秒）
     const base = typeof interval === 'number' && interval >= 1 && interval <= 60
       ? interval * 1000 // 转换为毫秒
-      : 3000 // 默认 3 秒
-    return isMobileLike ? Math.max(base, MOBILE_POLL_INTERVAL_FLOOR_MS) : base
+      : POLL_INTERVAL_FLOOR_MS
+    return Math.max(base, POLL_INTERVAL_FLOOR_MS)
   }
 
   /**
    * 执行初始化流程
    */
-  async init(): Promise<void> {
+  async init(onPublicSettingsReady?: () => void | Promise<void>): Promise<void> {
     if (this.isInitialized) {
       console.warn('[InitManager] Already initialized')
       return
     }
 
     try {
-      // 1. 测试后端服务是否正常
-      await this.healthCheck()
+      // 健康检查和公开设置互不依赖，并行执行可缩短首屏空白等待。
+      await Promise.all([
+        this.healthCheck(),
+        this.fetchPublicSettings(),
+      ])
 
-      // 2. 获取服务端公开属性
-      await this.fetchPublicSettings()
+      // 公开设置到位后即可决定是否展示首访动画，无需继续等待节点 RPC。
+      await onPublicSettingsReady?.()
 
-      // 3. 获取用户信息
-      await this.fetchUserInfo()
-
-      // 4. 获取节点信息和最新状态
-      await this.fetchNodesData()
+      // 用户状态与节点数据互不依赖，并行完成剩余初始化。
+      await Promise.all([
+        this.fetchUserInfo(),
+        this.fetchNodesData(),
+      ])
 
       // 5. 解除加载状态
       this.appStore.loading = false
@@ -173,6 +180,7 @@ class InitManager {
 
       // 初始化节点数据
       this.nodesStore.initNodes(clientsResult, statusesResult)
+      this.lastClientRefreshAt = Date.now()
     }
     catch (error) {
       console.error('[InitManager] Failed to fetch nodes data:', error)
@@ -368,20 +376,25 @@ class InitManager {
     this.isPolling = true
 
     try {
-      // 并行执行三个请求
-      const [, clientsResult, statusesResult] = await Promise.all([
-        // 1. Ping 测试服务器状态
-        this.rpc.ping(),
-        // 2. 获取节点信息
-        this.rpc.getNodes() as Promise<Record<string, Client>>,
-        // 3. 获取节点最新状态
+      const shouldRefreshClients = Date.now() - this.lastClientRefreshAt >= CLIENT_METADATA_REFRESH_INTERVAL_MS
+      const clientsPromise = shouldRefreshClients
+        ? (this.rpc.getNodes() as Promise<Record<string, Client>>).catch((error) => {
+            // 静态信息刷新失败不应阻断已成功返回的实时状态。
+            console.warn('[InitManager] Node metadata refresh failed:', error)
+            return null
+          })
+        : Promise.resolve(null)
+
+      const [statusesResult, clientsResult] = await Promise.all([
         this.rpc.getNodesLatestStatus() as Promise<Record<string, NodeStatus>>,
+        clientsPromise,
       ])
 
-      // 更新节点信息（会智能合并，不会重建数组）
-      this.nodesStore.updateNodeClients(clientsResult)
+      if (clientsResult) {
+        this.nodesStore.updateNodeClients(clientsResult)
+        this.lastClientRefreshAt = Date.now()
+      }
 
-      // 更新节点状态
       this.nodesStore.updateNodeStatuses(statusesResult)
 
       // 连接恢复正常，清零连续失败计数并重置错误状态
@@ -439,12 +452,12 @@ let initManager: InitManager | null = null
 /**
  * 初始化应用
  */
-export async function initApp(): Promise<void> {
+export async function initApp(onPublicSettingsReady?: () => void | Promise<void>): Promise<void> {
   if (!initManager) {
     initManager = new InitManager()
   }
 
-  await initManager.init()
+  await initManager.init(onPublicSettingsReady)
 }
 
 /**

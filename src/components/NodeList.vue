@@ -109,8 +109,11 @@ const sortedNodes = computed(() => {
   })
 })
 
-const formatBytes = (bytes: number) => formatBytesWithConfig(bytes)
-const formatBytesPerSecond = (bytes: number) => formatBytesPerSecondWithConfig(bytes)
+const METRIC_WHITESPACE_PATTERN = /\s+/g
+const compactMetric = (value: string) => value.replace(METRIC_WHITESPACE_PATTERN, '')
+const formatBytes = (bytes: number) => compactMetric(formatBytesWithConfig(bytes))
+const formatBytesPerSecond = (bytes: number) => compactMetric(formatBytesPerSecondWithConfig(bytes))
+const formatMetricPair = (used: number, total: number) => `${formatBytes(used)}/${formatBytes(total)}`
 const formatUptime = (seconds: number) => formatUptimeWithFormat(seconds, 'hour')
 
 const columnKeys = computed(() => columns.map(c => c.key))
@@ -196,6 +199,11 @@ function getTrafficUsed(node: NodeData): number {
   }
 }
 
+function formatTrafficPair(node: NodeData): string {
+  const limit = showTrafficProgress(node) ? formatBytes(node.traffic_limit) : '∞'
+  return `${formatBytes(getTrafficUsed(node))}/${limit}`
+}
+
 function formatOfflineTime(node: NodeData): string {
   return formatDateTime(node.time)
 }
@@ -276,8 +284,8 @@ function getCustomTags(node: NodeData): Array<string> {
           role="link"
           tabindex="0"
           :aria-label="`查看节点 ${node.name} 详情`"
-          class="relative flex h-16 cursor-pointer flex-col justify-center rounded-lg px-2 shadow-[0_0_4px,0_0_0_1px] shadow-transparent transition-all bg-background/60 hover:bg-background hover:shadow-emerald-600/10"
-          :class="[pickSurfaceClass('', 'backdrop-blur-sm'), !node.online && '!shadow-red-600/10']"
+          class="lnl-node-row relative flex h-16 cursor-pointer flex-col justify-center rounded-lg px-2 shadow-[0_0_4px,0_0_0_1px] shadow-transparent bg-background/60 hover:bg-background hover:shadow-emerald-600/10"
+          :class="[pickSurfaceClass('', 'backdrop-blur-sm'), !node.online && '!shadow-red-600/10', appStore.disablePageAnimation && 'is-motion-reduced']"
           :style="getRowTransitionStyle(index)"
           @click="handleClick(node)"
           @keydown.enter="handleClick(node)"
@@ -344,7 +352,7 @@ function getCustomTags(node: NodeData): Array<string> {
                   role="button"
                   tabindex="0"
                   class="outline-none"
-                  :aria-label="`${node.name} 延迟 / 丢包`"
+                  :aria-label="`${node.name} 延迟/丢包`"
                   @click.stop="openPingDialog(node)"
                   @keydown.enter.stop.prevent="openPingDialog(node)"
                   @keydown.space.stop.prevent="openPingDialog(node)"
@@ -381,7 +389,7 @@ function getCustomTags(node: NodeData): Array<string> {
                         {{ ((node.ram ?? 0) / (node.mem_total || 1) * 100).toFixed(1) }}%
                       </span>
                       <span class="hidden group-hover:inline">
-                        {{ formatBytes(node.ram ?? 0) }} / {{ formatBytes(node.mem_total ?? 0) }}
+                        {{ formatMetricPair(node.ram ?? 0, node.mem_total ?? 0) }}
                       </span>
                     </div>
                     <ProgressThin
@@ -406,7 +414,7 @@ function getCustomTags(node: NodeData): Array<string> {
                       {{ ((node.disk ?? 0) / (node.disk_total || 1) * 100).toFixed(1) }}%
                     </span>
                     <span class="hidden group-hover:inline">
-                      {{ formatBytes(node.disk ?? 0) }} / {{ formatBytes(node.disk_total ?? 0) }}
+                      {{ formatMetricPair(node.disk ?? 0, node.disk_total ?? 0) }}
                     </span>
                   </div>
                   <ProgressThin
@@ -425,9 +433,7 @@ function getCustomTags(node: NodeData): Array<string> {
                         {{ getTrafficUsedPercentage(node).toFixed(1) }}%
                       </span>
                       <span class="hidden group-hover:inline">
-                        {{ formatBytes(getTrafficUsed(node)) }} /
-                        <template v-if="showTrafficProgress(node)">{{ formatBytes(node.traffic_limit) }}</template>
-                        <template v-else>∞</template>
+                        {{ formatTrafficPair(node) }}
                       </span>
                     </div>
                     <TrafficProgress
@@ -487,6 +493,18 @@ function getCustomTags(node: NodeData): Array<string> {
 </template>
 
 <style scoped>
+.lnl-node-row {
+  transition:
+    transform var(--lnl-motion-standard) var(--lnl-ease-out),
+    box-shadow var(--lnl-motion-standard) ease,
+    background-color var(--lnl-motion-fast) ease,
+    opacity var(--lnl-motion-fast) ease;
+}
+
+.lnl-node-row.is-motion-reduced {
+  transition: none;
+}
+
 .node-row-switch-enter-active,
 .node-row-switch-leave-active {
   transition:

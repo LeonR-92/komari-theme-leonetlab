@@ -24,8 +24,11 @@ const emit = defineEmits<{
 const appStore = useAppStore()
 const { pickSurfaceClass } = useBackgroundSurface()
 
-const formatBytes = (bytes: number) => formatBytesWithConfig(bytes, appStore.byteDecimals)
-const formatBytesPerSecond = (bytes: number) => formatBytesPerSecondWithConfig(bytes, appStore.byteDecimals)
+const METRIC_WHITESPACE_PATTERN = /\s+/g
+const compactMetric = (value: string) => value.replace(METRIC_WHITESPACE_PATTERN, '')
+const formatBytes = (bytes: number) => compactMetric(formatBytesWithConfig(bytes, appStore.byteDecimals))
+const formatBytesPerSecond = (bytes: number) => compactMetric(formatBytesPerSecondWithConfig(bytes, appStore.byteDecimals))
+const formatMetricPair = (used: number, total: number) => `${formatBytes(used)}/${formatBytes(total)}`
 const formatUptime = (seconds: number) => formatUptimeWithFormat(seconds, 'hour')
 const offlineTime = computed(() => formatDateTime(props.node.time))
 const expiredDate = computed(() => formatDateTime(props.node.expired_at, 'YYYY-MM-DD'))
@@ -82,6 +85,7 @@ const trafficUsed = computed(() => {
     default: return net_total_up + net_total_down
   }
 })
+const trafficDisplay = computed(() => `${formatBytes(trafficUsed.value)}/${showTrafficProgress(props.node) ? formatBytes(props.node.traffic_limit) : '∞'}`)
 
 interface PriceTagItem {
   text: string
@@ -110,7 +114,7 @@ const priceTags = computed<PriceTagItem[]>(() => {
   }
   else if (status !== 'none' && days !== null) {
     if (lang === 'zh-CN')
-      tags.push({ text: `余 ${days} 天`, prefix: '余 ', highlightValue: String(days), suffix: ' 天' })
+      tags.push({ text: `余${days}天`, prefix: '余', highlightValue: String(days), suffix: '天' })
     else
       tags.push({ text: `${days} days left`, highlightValue: String(days), suffix: ' days left' })
   }
@@ -209,7 +213,7 @@ function openPingDialog() {
             <ProgressThin :percentage="memPercentage" :status="memStatus" :height="4" />
             <DataTooltip placement="top" class="block" :content-class="[!props.node.swap && '!hidden']">
               <div class="text-[11px] text-muted-foreground truncate">
-                {{ formatBytes(props.node.ram ?? 0) }} / {{ formatBytes(props.node.mem_total ?? 0) }}
+                {{ formatMetricPair(props.node.ram ?? 0, props.node.mem_total ?? 0) }}
               </div>
               <template #content>
                 <div class="flex items-center justify-between gap-3 whitespace-nowrap">
@@ -230,7 +234,7 @@ function openPingDialog() {
             </div>
             <ProgressThin :percentage="diskPercentage" :status="diskStatus" :height="4" />
             <div class="text-[11px] text-muted-foreground truncate">
-              {{ formatBytes(props.node.disk ?? 0) }} / {{ formatBytes(props.node.disk_total ?? 0) }}
+              {{ formatMetricPair(props.node.disk ?? 0, props.node.disk_total ?? 0) }}
             </div>
           </div>
 
@@ -245,13 +249,7 @@ function openPingDialog() {
             <ProgressThin :percentage="trafficUsedPercentage" status="success" :height="4" />
             <DataTooltip placement="top" class="block">
               <div class="text-[11px] text-muted-foreground truncate">
-                {{ formatBytes(trafficUsed) }} /
-                <template v-if="showTrafficProgress(node)">
-                  {{ formatBytes(props.node.traffic_limit) }}
-                </template>
-                <template v-else>
-                  ∞
-                </template>
+                {{ trafficDisplay }}
               </div>
               <template #content>
                 <div class="flex items-center justify-between gap-3 whitespace-nowrap">
@@ -320,9 +318,9 @@ function openPingDialog() {
                   :content-class="['whitespace-nowrap right-0 mr-0', !props.node.expired_at && '!hidden']"
                   class="min-w-0 w-full"
                 >
-                  <span class="lnl-node-finance-value flex min-w-0 flex-row justify-end gap-1">
+                  <span class="lnl-node-finance-value flex min-w-0 flex-row justify-end">
                     <template v-for="(tag, index) in priceTags" :key="tag">
-                      <span class="inline-flex flex-row gap-1 items-center">
+                      <span class="inline-flex flex-row items-center">
                         <template v-if="tag.highlightValue">
                           <span>{{ tag.prefix }}</span>
                           <span :class="remainingTimeTagClass">{{ tag.highlightValue }}</span>

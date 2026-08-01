@@ -210,14 +210,14 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div class="lnl-summary" :class="wrapperClass">
+  <div class="lnl-summary" :class="[wrapperClass, { 'is-motion-reduced': appStore.disablePageAnimation }]">
     <div v-if="showEarth" id="lnl-globe-dashboard-slot" class="lnl-globe-slot col-span-12 col-start-1 row-start-1 lg:col-span-6 lg:col-start-7" />
     <NodeEarthMaps v-else-if="showMaps" :nodes="globeNodes" class="col-span-12 col-start-1 row-start-1 lg:col-span-6 lg:col-start-7" />
 
     <div class="lnl-summary-metrics" :class="cardGridClass">
       <CardX
         hoverable
-        class="group h-full border-none rounded-md transition-all"
+        class="group lnl-summary-surface-motion h-full border-none rounded-md"
         :class="[
           pickSurfaceClass('bg-background/60 hover:bg-background', 'bg-background/50 hover:bg-background backdrop-blur-xs'),
           showVisualPanel ? 'col-span-4 row-span-1 col-start-1 row-start-1' : 'col-span-1 row-start-1 col-start-1 min-h-18 lg:min-h-24 lg:row-start-1 lg:col-start-1',
@@ -238,7 +238,7 @@ onBeforeUnmount(() => {
                 {{ formattedMemoryUsed.value }}
               </span>
               <span class="text-[11px] md:text-xs font-medium text-muted-foreground truncate">
-                {{ formattedMemoryUsed.unit }} / {{ formattedMemoryTotal.value }} {{ formattedMemoryTotal.unit }}
+                {{ formattedMemoryUsed.unit }}/{{ formattedMemoryTotal.value }}{{ formattedMemoryTotal.unit }}
               </span>
             </div>
           </Transition>
@@ -246,7 +246,7 @@ onBeforeUnmount(() => {
       </CardX>
       <CardX
         hoverable
-        class="group h-full border-none rounded-md transition-all"
+        class="group lnl-summary-surface-motion h-full border-none rounded-md"
         :class="[
           pickSurfaceClass('bg-background/60 hover:bg-background', 'bg-background/50 hover:bg-background backdrop-blur-xs'),
           showVisualPanel ? 'col-span-4 row-span-1 col-start-1 row-start-2' : 'col-span-1 row-start-2 col-start-1 min-h-18 lg:min-h-24 lg:row-start-1 lg:col-start-2',
@@ -266,7 +266,7 @@ onBeforeUnmount(() => {
               <span class="text-md md:text-2xl font-bold leading-none tracking-tight">{{ formattedDiskUsed.value
               }}</span>
               <span class="text-[11px] md:text-xs font-medium text-muted-foreground truncate">
-                {{ formattedDiskUsed.unit }} / {{ formattedDiskTotal.value }} {{ formattedDiskTotal.unit }}
+                {{ formattedDiskUsed.unit }}/{{ formattedDiskTotal.value }}{{ formattedDiskTotal.unit }}
               </span>
             </div>
           </Transition>
@@ -278,7 +278,7 @@ onBeforeUnmount(() => {
       >
         <CardX
           hoverable
-          class="group h-full border-none rounded-md transition-all"
+          class="group lnl-summary-surface-motion h-full border-none rounded-md"
           :class="pickSurfaceClass('bg-background/60 hover:bg-background', 'bg-background/50 hover:bg-background backdrop-blur-xs')"
           content-class="h-full !p-3" role="button" tabindex="0" aria-controls="lnl-finance-popover"
           :aria-expanded="openFinanceCard" data-finance-trigger
@@ -395,7 +395,7 @@ onBeforeUnmount(() => {
       </div>
       <CardX
         hoverable
-        class="group h-full border-none rounded-md transition-all"
+        class="group lnl-summary-surface-motion h-full border-none rounded-md"
         :class="[
           pickSurfaceClass('bg-background/60 hover:bg-background', 'bg-background/50 hover:bg-background backdrop-blur-xs'),
           showVisualPanel ? 'col-span-4 row-span-1 col-start-5 row-start-2' : 'col-span-1 row-start-2 col-start-2 min-h-18 lg:min-h-24 lg:row-start-1 lg:col-start-4',
@@ -431,7 +431,7 @@ onBeforeUnmount(() => {
 
       <CardX
         hoverable
-        class="group h-full border-none rounded-md transition-all"
+        class="group lnl-summary-surface-motion h-full border-none rounded-md"
         :class="[
           pickSurfaceClass('bg-background/60 hover:bg-background', 'bg-background/50 hover:bg-background backdrop-blur-xs'),
           showVisualPanel ? 'col-span-4 row-span-1 col-start-9 row-start-1' : 'col-span-1 row-start-1 col-start-3 min-h-18 lg:min-h-24 lg:row-start-1 lg:col-start-5',
@@ -457,7 +457,7 @@ onBeforeUnmount(() => {
       </CardX>
       <CardX
         hoverable
-        class="group h-full border-none rounded-md transition-all"
+        class="group lnl-summary-surface-motion h-full border-none rounded-md"
         :class="[
           pickSurfaceClass('bg-background/60 hover:bg-background', 'bg-background/50 hover:bg-background backdrop-blur-xs'),
           showVisualPanel ? 'col-span-4 row-span-1 col-start-9 row-start-2' : 'col-span-1 row-start-2 col-start-3 min-h-18 lg:min-h-24 lg:row-start-1 lg:col-start-6',
@@ -488,6 +488,18 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
+.lnl-summary-surface-motion {
+  transition:
+    transform var(--lnl-motion-standard) var(--lnl-ease-out),
+    box-shadow var(--lnl-motion-standard) ease,
+    border-color var(--lnl-motion-fast) ease,
+    background-color var(--lnl-motion-fast) ease;
+}
+
+.lnl-summary.is-motion-reduced .lnl-summary-surface-motion {
+  transition: none;
+}
+
 .lnl-metric-tag {
   display: inline-flex;
   align-items: center;

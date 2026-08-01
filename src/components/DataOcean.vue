@@ -23,12 +23,6 @@ const canvasRef = ref<HTMLCanvasElement | null>(null)
 const themeTransitioning = ref(false)
 const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches
 const saveData = (navigator as NavigatorWithConnection).connection?.saveData === true
-const currents = [
-  [0.03, 0.76, 0.34, 0.22, 0.96, 0.58, 0.05],
-  [0.12, 0.49, 0.51, 0.1, 1.03, 0.35, 0.42],
-  [-0.06, 0.31, 0.28, 0.06, 0.78, 0.19, 0.73],
-  [0.29, 0.92, 0.69, 0.48, 1.08, 0.8, 0.91],
-] as const
 
 let context: CanvasRenderingContext2D | null = null
 let points: OceanPoint[] = []
@@ -93,19 +87,6 @@ function updatePoints(time: number) {
   }
 }
 
-function pointAt(row: number, column: number) {
-  return points[row * columns + column]
-}
-
-function quadraticPoint(current: readonly number[], progress: number) {
-  const [sx = 0, sy = 0, cx = 0, cy = 0, ex = 0, ey = 0] = current
-  const inverse = 1 - progress
-  return {
-    x: (inverse * inverse * sx + 2 * inverse * progress * cx + progress * progress * ex) * width,
-    y: (inverse * inverse * sy + 2 * inverse * progress * cy + progress * progress * ey) * height,
-  }
-}
-
 function paint(time: number) {
   const ctx = context
   if (!ctx)
@@ -117,37 +98,6 @@ function paint(time: number) {
   const green = dark ? '116, 230, 178' : '35, 126, 91'
   const cyan = dark ? '117, 201, 212' : '45, 129, 143'
 
-  ctx.lineWidth = 0.7
-  for (let row = 2; row < rows; row += 3) {
-    ctx.beginPath()
-    for (let column = 0; column < columns; column++) {
-      const point = pointAt(row, column)
-      if (!point)
-        continue
-      if (column === 0)
-        ctx.moveTo(point.x, point.y)
-      else
-        ctx.lineTo(point.x, point.y)
-    }
-    ctx.strokeStyle = `rgba(${row % 2 ? cyan : green}, ${dark ? 0.065 : 0.085})`
-    ctx.stroke()
-  }
-
-  for (let column = 1; column < columns; column += 4) {
-    ctx.beginPath()
-    for (let row = 0; row < rows; row++) {
-      const point = pointAt(row, column)
-      if (!point)
-        continue
-      if (row === 0)
-        ctx.moveTo(point.x, point.y)
-      else
-        ctx.lineTo(point.x, point.y)
-    }
-    ctx.strokeStyle = `rgba(${cyan}, ${dark ? 0.045 : 0.065})`
-    ctx.stroke()
-  }
-
   for (const point of points) {
     if (point.y < -8 || point.y > height + 8)
       continue
@@ -157,35 +107,11 @@ function paint(time: number) {
     ctx.fillStyle = `rgba(${point.column % 5 === 0 ? cyan : green}, ${alpha})`
     ctx.fill()
   }
-
-  const visibleCurrents = width < 760 ? currents.slice(0, 2) : currents
-  visibleCurrents.forEach((current, index) => {
-    const [sx, sy, cx, cy, ex, ey, phase] = current
-    const gradient = ctx.createLinearGradient(sx * width, sy * height, ex * width, ey * height)
-    gradient.addColorStop(0, `rgba(${green}, 0)`)
-    gradient.addColorStop(0.42, `rgba(${index % 2 ? cyan : green}, ${dark ? 0.18 : 0.16})`)
-    gradient.addColorStop(1, `rgba(${cyan}, 0)`)
-    ctx.beginPath()
-    ctx.moveTo(sx * width, sy * height)
-    ctx.quadraticCurveTo(cx * width, cy * height, ex * width, ey * height)
-    ctx.strokeStyle = gradient
-    ctx.lineWidth = index === 0 ? 1.25 : 0.8
-    ctx.stroke()
-
-    const progress = (time * (0.000035 + index * 0.000004) + phase) % 1
-    const packet = quadraticPoint(current, progress)
-    const glow = ctx.createRadialGradient(packet.x, packet.y, 0, packet.x, packet.y, 12)
-    glow.addColorStop(0, `rgba(${index % 2 ? cyan : green}, 0.85)`)
-    glow.addColorStop(0.18, `rgba(${index % 2 ? cyan : green}, 0.34)`)
-    glow.addColorStop(1, `rgba(${green}, 0)`)
-    ctx.fillStyle = glow
-    ctx.fillRect(packet.x - 12, packet.y - 12, 24, 24)
-  })
 }
 
 function animate(time: number) {
   animationFrame = window.requestAnimationFrame(animate)
-  const targetFps = isMobileLike ? 24 : 50
+  const targetFps = isMobileLike ? 24 : 40
   if (props.paused || themeTransitioning.value || document.hidden || time - lastPaint < 1000 / targetFps)
     return
   lastPaint = time
@@ -229,8 +155,8 @@ onMounted(() => {
   window.addEventListener('leonetlab:theme-transition-start', handleThemeTransitionStart)
   window.addEventListener('leonetlab:theme-transition-end', handleThemeTransitionEnd)
   document.addEventListener('visibilitychange', handleVisibilityChange)
-  // 移动端保留与桌面一致的动态海洋，但以 24fps、1x DPR、更稀疏网格和两条
-  // 信号流运行；减少动态效果或省流量模式仍只绘制静态帧。
+  // 只保留动态点阵海洋。移动端以 24fps、1x DPR 和稀疏网格运行；
+  // 减少动态效果或省流量模式仍只绘制静态帧。
   if (!reducedMotion && !saveData)
     animationFrame = window.requestAnimationFrame(animate)
 })

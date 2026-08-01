@@ -138,9 +138,6 @@ onUnmounted(() => {
   <div class="background-container" :style="backgroundContainerStyle">
     <Transition name="fade">
       <div v-if="showDefaultBackground" class="lnl-background" aria-hidden="true">
-        <div class="lnl-background-grid" />
-        <div class="lnl-background-signal s1" />
-        <div class="lnl-background-signal s2" />
         <div class="lnl-background-depth" />
         <DataOcean :paused="paused" />
         <div class="lnl-background-ocean" />
@@ -199,38 +196,6 @@ onUnmounted(() => {
     radial-gradient(circle at 12% 36%, rgba(117, 201, 212, 0.04), transparent 24rem), var(--background);
 }
 
-.lnl-background-grid {
-  position: absolute;
-  inset: 0;
-  opacity: 0.64;
-  background-image:
-    linear-gradient(rgba(116, 230, 178, 0.028) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(116, 230, 178, 0.028) 1px, transparent 1px);
-  background-size: 48px 48px;
-  mask-image: linear-gradient(to bottom, #000, transparent 88%);
-}
-
-.lnl-background-signal {
-  position: absolute;
-  width: 52vw;
-  height: 1px;
-  background: linear-gradient(90deg, transparent, rgba(116, 230, 178, 0.18), transparent);
-  transform-origin: center;
-  animation: signal-drift 18s linear infinite;
-}
-
-.lnl-background-signal.s1 {
-  top: 23%;
-  left: -10%;
-  transform: rotate(-7deg);
-}
-.lnl-background-signal.s2 {
-  top: 65%;
-  right: -14%;
-  animation-delay: -8s;
-  transform: rotate(9deg);
-}
-
 .lnl-background-ocean {
   position: absolute;
   right: -8%;
@@ -263,19 +228,6 @@ onUnmounted(() => {
   animation: depth-drift 22s linear infinite;
 }
 
-.lnl-background-ocean::before {
-  content: '';
-  position: absolute;
-  inset: 0;
-  background: linear-gradient(90deg, transparent 35%, rgba(116, 230, 178, 0.13), transparent 65%);
-  animation: ocean-scan 9s ease-in-out infinite;
-}
-
-@keyframes signal-drift {
-  to {
-    translate: 36vw 0;
-  }
-}
 @keyframes ocean-drift {
   to {
     transform: perspective(680px) rotateX(64deg) translate3d(1.5%, -2.5%, 0);
@@ -284,20 +236,6 @@ onUnmounted(() => {
 @keyframes depth-drift {
   to {
     background-position: 36px 30px;
-  }
-}
-@keyframes ocean-scan {
-  0%,
-  100% {
-    translate: -42% 0;
-    opacity: 0;
-  }
-  45%,
-  60% {
-    opacity: 1;
-  }
-  70% {
-    translate: 42% 0;
   }
 }
 .background-loading {
@@ -344,9 +282,7 @@ onUnmounted(() => {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .lnl-background-signal,
   .lnl-background-depth,
-  .lnl-background-ocean::before,
   .lnl-background-ocean {
     animation: none;
   }

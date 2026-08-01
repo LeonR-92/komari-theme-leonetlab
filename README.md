@@ -15,13 +15,15 @@ Theme versions track Komari releases. LeoNetLab Observatory is derived from [Kom
 ## Highlights
 
 - **Optional first-visit handoff** — a live dot-matrix globe remains on one persistent canvas from the cover through its exact landing in the dashboard; administrators can skip the cover entirely.
-- **Seamless transition animations** — a single cobe engine moves from the intro stage to the dashboard without an intermediate blank frame; color changes use a full-page reveal adapted for both pointer and touch devices.
-- **Regional globe telemetry** — COBE-powered flags expose live regional server count, aggregate CPU/memory load and current throughput on hover, keyboard focus or touch.
-- **Rich particle effects** — the DataOcean ambient canvas renders perspective point fields, sparse mesh lines, drifting currents and moving signal packets on desktop and in a reduced 24 fps mobile profile.
+- **Seamless transition animations** — a single cobe engine moves from the intro stage to the dashboard without an intermediate blank frame, then releases a progressive theme halo; returning home uses a shorter one-shot ripple.
+- **Regional globe telemetry** — desktop users get hover-intent previews and click-to-pin details, while touch devices use single-tap locking; the globe eases to a stop so CPU/memory and throughput remain readable.
+- **Focused ambient motion** — the DataOcean canvas keeps a restrained perspective dot ocean on desktop and in a reduced 24 fps mobile profile, without decorative mesh lines or signal streaks competing with telemetry.
 - **Heavily remixed color scheme** — a dark-green academic instrument palette with a calm light counterpart, built on oklch design tokens, hairline borders and serif display type.
 - **Reworked Ping workspace** — selectable probe matrix, latest/loss/jitter metadata, a continuously updated timeline without recurring loading overlays, and ten-cell latency/loss rails on every node card.
 - **Mobile performance engineering** — scroll-fixed background layers, reduced-density ambient motion, capped globe DPR and frame rate, background-tab polling pause, and deferred chart animation.
 - **Controlled PWA updates** — versioned caches update automatically, with a header action that checks the service worker, clears only LeoNetLab theme caches, and reloads the current build.
+- **Extensive managed customization** — 37 validated options cover branding, copy, data transport, refresh cadence, color defaults, globe behavior, card density, backgrounds, notices and footer records without editing source code.
+- **Compatibility-first data handling** — modern Komari 1.3.2 metrics stay on the public metric APIs, while older node-response formats and approved metric-store fallbacks remain isolated behind tested normalization layers.
 
 ## Install
 
@@ -33,7 +35,7 @@ Theme versions track Komari releases. LeoNetLab Observatory is derived from [Kom
 
 **Manual ZIP upload**
 
-1. Download `komari-theme-leonetlab-build-v1.3.1-R.zip` from the latest GitHub Release.
+1. Download `komari-theme-leonetlab-build-v1.3.2.zip` from the latest GitHub Release.
 2. Upload the ZIP in Komari theme management and select **LeoNetLab Observatory**.
 
 ## Configuration
@@ -47,9 +49,9 @@ All settings are optional managed theme settings; blank brand fields fall back t
 
 ## Compatibility
 
-- **Supported Komari servers**: `1.2.5-fix1`, `1.2.5-fix2`, `1.2.6`, `1.2.7`, and `1.3.x` — interface usage verified against the official Komari 1.3.1 source.
+- **Supported Komari servers**: `1.2.5-fix1`, `1.2.5-fix2`, `1.2.6`, `1.2.7`, and `1.3.x` — current interface usage verified against the official Komari 1.3.2 source.
 - Node responses are normalized for both `1.2.5-fix1` arrays and `1.2.5-fix2`/`1.2.7` UUID-keyed objects.
-- Ping charts prefer `public:queryMetrics` / `public:getPingMetricStats`, understand Komari 1.3.1's 10-minute exact-sample window and minute rollups, consume public PING task weights when present, and fall back to `common:getRecords` only on approved compatibility errors.
+- Ping charts prefer `public:queryMetrics` / `public:getPingMetricStats`, understand Komari 1.3.2's exact-sample and minute-rollup behavior, consume public PING task weights when present, and fall back to `common:getRecords` only on approved compatibility errors.
 - Theme configuration uses the managed settings type; Komari server 1.0.5 or newer is required.
 
 ## Development
@@ -60,10 +62,11 @@ npm run lint
 npm run type-check
 npm run validate
 npm run smoke:1.2.5
+npm run smoke:1.3.2
 npm run build
 ```
 
-The build emits `dist/` and `komari-theme-leonetlab-build-v1.3.1-R.zip` with a root `komari-theme.json` and `preview.png`.
+The build emits `dist/` and `komari-theme-leonetlab-build-v1.3.2.zip` with a root `komari-theme.json` and `preview.png`.
 
 ## Theme Market
 

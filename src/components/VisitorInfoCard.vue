@@ -61,7 +61,8 @@ const presentationTimers: number[] = []
 const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches
 let presentationStarted = false
 const presentationActive = computed(() => ['entering', 'scanning', 'verified', 'collapsing'].includes(presentationState.value))
-const isExpanded = computed(() => expand.value || presentationActive.value)
+// compacting 阶段保留展开几何；移动端会先在合成层淡出，再于不可见状态切换尺寸。
+const isExpanded = computed(() => expand.value || presentationActive.value || presentationState.value === 'compacting')
 const keepExpandedRows = computed(() => isExpanded.value || presentationState.value === 'compacting')
 
 const subtitle = computed(() => loading.value ? '检测中' : location.value || '网络访客')
@@ -613,7 +614,7 @@ onUnmounted(() => presentationTimers.forEach(timer => window.clearTimeout(timer)
 
 .lnl-visitor.is-collapsing .lnl-visitor-trigger,
 .lnl-visitor.is-compacting .lnl-visitor-trigger {
-  will-change: height, transform;
+  will-change: height, transform, opacity;
 }
 
 .lnl-visitor.is-presenting .lnl-visitor-rows,
@@ -816,6 +817,11 @@ onUnmounted(() => presentationTimers.forEach(timer => window.clearTimeout(timer)
     width: 100%;
     max-width: 100%;
     align-items: flex-start;
+    transition:
+      border-color 180ms ease,
+      background-color 180ms ease,
+      opacity 220ms ease,
+      transform 280ms cubic-bezier(0.22, 1, 0.36, 1);
   }
 
   .lnl-visitor.is-presenting .lnl-visitor-trigger {
@@ -832,6 +838,23 @@ onUnmounted(() => presentationTimers.forEach(timer => window.clearTimeout(timer)
     height: min(250px, calc(100dvh - 124px));
   }
 
+  /* iOS 上逐帧补间 height/width 会反复触发布局和栅格重排。收束阶段先用
+     合成层淡出，隐藏状态下切换到紧凑几何，再淡入，视觉连续且不挤压主页。 */
+  .lnl-visitor.is-collapsing .lnl-visitor-trigger,
+  .lnl-visitor.is-compacting .lnl-visitor-trigger {
+    will-change: transform, opacity;
+  }
+
+  .lnl-visitor.is-compacting .lnl-visitor-trigger {
+    height: min(250px, calc(100dvh - 124px));
+    opacity: 0;
+    transform: translate3d(-10px, 0, 0) scale(0.985);
+  }
+
+  .lnl-visitor.is-compact .lnl-visitor-trigger {
+    animation: visitor-mobile-compact-in 260ms cubic-bezier(0.22, 1, 0.36, 1) both;
+  }
+
   .lnl-visitor.is-presenting .lnl-visitor-row p,
   .lnl-visitor.is-expanded .lnl-visitor-row p {
     max-width: min(34vw, 150px);
@@ -840,6 +863,17 @@ onUnmounted(() => presentationTimers.forEach(timer => window.clearTimeout(timer)
   .lnl-visitor.is-presenting .lnl-visitor-row.is-source p,
   .lnl-visitor.is-expanded .lnl-visitor-row.is-source p {
     max-width: calc(100vw - 116px);
+  }
+}
+
+@keyframes visitor-mobile-compact-in {
+  from {
+    opacity: 0;
+    transform: translate3d(-8px, 0, 0) scale(0.985);
+  }
+  to {
+    opacity: 1;
+    transform: none;
   }
 }
 
@@ -858,6 +892,10 @@ onUnmounted(() => presentationTimers.forEach(timer => window.clearTimeout(timer)
   .lnl-visitor-scan-head i,
   .lnl-visitor-scan-beam {
     transition: none;
+    animation: none;
+  }
+
+  .lnl-visitor.is-compact .lnl-visitor-trigger {
     animation: none;
   }
 

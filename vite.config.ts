@@ -15,12 +15,14 @@ const fs = require('node:fs')
 const archiver = require('archiver')
 const packageJson = require('./package.json')
 
+const themeVersion = packageJson.themeVersion ?? packageJson.version
+
 function getCommitHash(): string {
   try {
     return execSync('git rev-parse --short HEAD', { encoding: 'utf-8' }).trim()
   }
   catch {
-    return `v${packageJson.version}`
+    return `v${themeVersion}`
   }
 }
 
@@ -41,7 +43,7 @@ function komariThemeZip(): Plugin {
     name: 'komari-theme-zip',
     apply: 'build',
     closeBundle: async () => {
-      const zipFileName = `komari-theme-leonetlab-build-v${packageJson.version}.zip`
+      const zipFileName = `komari-theme-leonetlab-build-v${themeVersion}.zip`
       const distDir = resolve(__dirname, 'dist')
       const themeJsonPath = resolve(__dirname, 'komari-theme.json')
       const previewPath = resolve(__dirname, 'docs/preview.png')
@@ -87,7 +89,7 @@ function komariThemeZip(): Plugin {
 
 export default defineConfig({
   define: {
-    __BUILD_VERSION__: JSON.stringify(packageJson.version),
+    __BUILD_VERSION__: JSON.stringify(themeVersion),
     __BUILD_GIT_HASH__: JSON.stringify(getCommitHash()),
   },
   plugins: [

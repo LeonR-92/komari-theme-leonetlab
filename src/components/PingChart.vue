@@ -507,7 +507,7 @@ const mergedData = computed(() => {
     group[rec.task_id] = rec.value < 0 ? null : rec.value
   }
 
-  // A fully lost bucket has no latency sample in Komari 1.3.1's metric
+  // A fully lost bucket has no latency sample in Komari 1.3.2's metric
   // response. Keep an explicit null row so the line breaks at the real loss
   // timestamp and the loss marker remains aligned with the x-axis.
   for (const loss of lossData) {
@@ -1033,7 +1033,7 @@ onUnmounted(() => {
                     <Icon icon="carbon:information" :width="14" :height="14" />
                   </Button>
                   <template #content>
-                    <span>Komari 1.3.1 在最近 10 分钟保留精确样本，更长窗口由服务端分钟汇总。开启“平滑”只对连续有效片段应用 Hampel + EWMA；图表可在 1–2 个采样周期的短缺口间绘制展示线，长断线仍保持断开。原始统计、Tooltip、丢包标记和节点质量色块均不使用插值值。</span>
+                    <span>Komari 1.3.2 在最近 10 分钟保留精确样本，更长窗口由服务端分钟汇总。开启“平滑”只对连续有效片段应用 Hampel + EWMA；图表可在 1–2 个采样周期的短缺口间绘制展示线，长断线仍保持断开。原始统计、Tooltip、丢包标记和节点质量色块均不使用插值值。</span>
                   </template>
                 </DataTooltip>
               </div>

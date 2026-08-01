@@ -11,7 +11,7 @@ const config = manifest.configuration?.data
 assert.equal(typeof manifest.name, 'string')
 assert.match(manifest.short, /^[\w-]+$/)
 assert.notEqual(manifest.short, 'default')
-assert.equal(manifest.version, packageJson.version)
+assert.equal(manifest.version, packageJson.themeVersion)
 assert.equal(manifest.configuration?.type, 'managed')
 assert.ok(Array.isArray(config), 'managed configuration.data must be an array')
 
@@ -25,6 +25,55 @@ for (const item of config) {
     assert.equal(typeof item.options, 'string')
 }
 
+const expectedSettingContract = {
+  brandName: ['string', ''],
+  brandShortName: ['string', ''],
+  brandLogoUrl: ['string', ''],
+  brandHeaderSubtitle: ['string', 'NETWORK OBSERVATORY'],
+  brandStatusLabel: ['string', 'LIVE TELEMETRY'],
+  brandHeroKicker: ['string', 'GLOBAL NETWORK / LIVE OBSERVATION'],
+  brandHeroTitle: ['string', '全球节点观测'],
+  brandHeroDescription: ['string', ''],
+  brandIntroEyebrow: ['string', 'NETWORK OBSERVATORY / GLOBAL EDGE'],
+  brandIntroSubtitle: ['string', '正在同步实时节点状态'],
+  brandFooterEyebrow: ['string', 'EDGE / OBSERVATION COMPLETE'],
+  dataUpdateInterval: ['number', 5],
+  rpcTransportMode: ['select', 'websocket', 'websocket,http'],
+  defaultViewMode: ['select', 'card', 'card,list'],
+  defaultThemeMode: ['select', 'system', 'system,light,dark'],
+  introAnimationEnabled: ['switch', true],
+  earthViewMode: ['select', 'earth', 'earth,earth-stop,maps,cards,hide'],
+  regionalTelemetryEnabled: ['switch', true],
+  nodeCardDensity: ['select', 'comfortable', 'comfortable,compact'],
+  visitorInfoCardEnabled: ['switch', true],
+  hideAdminEntryWhenLoggedOut: ['switch', false],
+  disablePageAnimation: ['switch', false],
+  alertEnabled: ['switch', false],
+  alertTitle: ['string', ''],
+  alertContent: ['richtext', ''],
+  backgroundEnabled: ['switch', false],
+  backgroundType: ['select', 'image', 'image,video'],
+  lightBackgroundUrl: ['string', ''],
+  darkBackgroundUrl: ['string', ''],
+  backgroundBlur: ['number', 0],
+  backgroundOverlay: ['number', 0],
+  icpEnabled: ['switch', false],
+  icpNumber: ['string', ''],
+  icpUrl: ['string', 'https://beian.miit.gov.cn/'],
+  policeEnabled: ['switch', false],
+  policeNumber: ['string', ''],
+  policeUrl: ['string', ''],
+}
+assert.equal(keys.length, Object.keys(expectedSettingContract).length, 'managed setting contract count drifted')
+for (const [key, [type, defaultValue, options]] of Object.entries(expectedSettingContract)) {
+  const item = config.find(entry => entry.key === key)
+  assert.ok(item, `missing managed setting contract: ${key}`)
+  assert.equal(item.type, type, `managed setting type drifted: ${key}`)
+  assert.deepEqual(item.default, defaultValue, `managed setting default drifted: ${key}`)
+  if (options !== undefined)
+    assert.equal(item.options, options, `managed setting options drifted: ${key}`)
+}
+
 assert.ok(existsSync(resolve(root, 'dist/index.html')), 'dist/index.html is missing; run the build first')
 const distIndex = read('dist/index.html')
 assert.match(distIndex, /<title>Komari Monitor<\/title>/)
@@ -34,6 +83,7 @@ const rpc = read('src/utils/rpc.ts')
 const init = read('src/utils/init.ts')
 const pingChart = read('src/components/PingChart.vue')
 const nodeResponse = read('src/utils/nodeResponse.ts')
+const nodesStore = read('src/stores/nodes.ts')
 for (const method of ['common:getNodes', 'common:getNodesLatestStatus', 'common:getRecords'])
   assert.ok(`${rpc}\n${init}\n${pingChart}`.includes(method), `missing RPC compatibility method: ${method}`)
 assert.match(pingChart, /public:queryMetrics/)
@@ -49,6 +99,9 @@ assert.match(loadingCover, /brandLogoUrl/)
 assert.match(loadingCover, /object-fit:\s*contain/)
 assert.match(loadingCover, /prefers-reduced-motion/)
 assert.match(loadingCover, /LIVE TOPOLOGY SYNCHRONIZATION/)
+assert.match(loadingCover, /NODE STATUS \/ SYNCHRONIZING/)
+assert.match(loadingCover, /nodesStore\.initialized/)
+assert.match(nodesStore, /const initialized = ref\(false\)/)
 assert.match(loadingCover, /lnl-intro-ocean/)
 assert.match(loadingCover, /\.lnl-intro:not\(\.has-globe-handoff\)\.lnl-intro-exit-leave-to \.lnl-intro-globe/)
 assert.match(loadingCover, /handoffReady/)
@@ -65,19 +118,43 @@ const provider = read('src/components/Provider.vue')
 const serviceWorker = read('public/sw.js')
 const earthGlobe = read('src/components/NodeEarthGlobe.vue')
 const nodeGeneralCards = read('src/components/NodeGeneralCards.vue')
+const managedSettingsRuntime = [
+  app,
+  appStore,
+  header,
+  footer,
+  loadingCover,
+  background,
+  visitorInfo,
+  nodeGeneralCards,
+  earthGlobe,
+  read('src/components/NodeCard.vue'),
+  read('src/components/LoadChart.vue'),
+  read('src/composables/useBackgroundSurface.ts'),
+  read('src/utils/api.ts'),
+  read('src/utils/init.ts'),
+  read('src/views/HomeView.vue'),
+].join('\n')
+for (const settingKey of keys)
+  assert.match(managedSettingsRuntime, new RegExp(`\\b${settingKey}\\b`), `managed setting has no runtime consumer: ${settingKey}`)
+assert.match(appStore, /isValidEarthViewMode/)
+assert.match(appStore, /isValidViewMode/)
+assert.match(appStore, /backgroundOverlay >= -100 && settings\.backgroundOverlay <= 100/)
+assert.match(appStore, /backgroundBlur >= 0/)
 assert.match(background, /lnl-background-ocean/)
 assert.match(background, /lnl-background-depth/)
 assert.match(background, /<DataOcean/)
-assert.doesNotMatch(background, /telemetryLanes|lnl-data-lane|lnl-background-data-ocean/)
+assert.doesNotMatch(background, /telemetryLanes|lnl-data-lane|lnl-background-data-ocean|lnl-background-signal|lnl-background-grid|ocean-scan/)
 assert.match(dataOcean, /requestAnimationFrame/)
-assert.match(dataOcean, /quadraticCurveTo/)
+assert.match(dataOcean, /ctx\.arc/)
+assert.doesNotMatch(dataOcean, /quadraticCurveTo|createLinearGradient|createRadialGradient/)
 assert.match(dataOcean, /prefers-reduced-motion/)
 assert.match(dataOcean, /saveData/)
 assert.match(dataOcean, /leonetlab:theme-transition-start/)
 assert.doesNotMatch(dataOcean, /NODE:|TELEMETRY|DATA STREAM/)
 // The intro session key changes only when the intro itself is intentionally
 // redesigned; ordinary patch releases must not replay it for every visitor.
-assert.match(app, /leonetlab:intro:1\.3\.1-pre/)
+assert.match(app, /leonetlab:intro:1\.3\.2/)
 assert.match(app, /appShellMounted/)
 // 交接离场改用手动 leave 类切换（组件飞行期间保持存活，地球持续旋转）。
 assert.match(app, /introLeaving/)
@@ -92,9 +169,18 @@ assert.match(app, /globePhase === 'intro-stage'/)
 assert.match(app, /handoff-active/)
 assert.match(app, /#lnl-globe-dashboard-slot/)
 assert.match(app, /startGlobeFlight/)
-assert.match(app, /preloadHomeVisuals/)
+assert.match(app, /void Promise\.allSettled/)
+assert.match(app, /initApp\(ensureInitialShell\)/)
 assert.match(earthGlobe, /lnl-intro-halo/)
 assert.match(earthGlobe, /intro-halo-release/)
+assert.match(earthGlobe, /lnl-dashboard-halo/)
+assert.match(earthGlobe, /dashboard-halo-ripple/)
+assert.match(earthGlobe, /REGION_HOVER_OPEN_MS = 120/)
+assert.match(earthGlobe, /REGION_HOVER_CLOSE_MS = 220/)
+assert.match(earthGlobe, /pinnedRegionCode/)
+assert.match(earthGlobe, /hasFineHoverPointer/)
+assert.match(earthGlobe, /handleDocumentPointerDown/)
+assert.match(app, /requestDashboardPulse\('route'\)/)
 assert.doesNotMatch(earthGlobe, /lnl-intro-satellite/)
 assert.match(earthGlobe, /regionalTelemetryEnabled/)
 assert.match(earthGlobe, /lnl-earth-overlay\.is-active/)
@@ -123,6 +209,9 @@ assert.match(header, /resolveThemeMode/)
 assert.match(header, /lnl-theme-wipe/)
 assert.match(header, /lnl-route-cover/)
 assert.match(header, /lnl-route-cover\.is-light/)
+assert.match(header, /lnl-cache-panel/)
+assert.match(header, /data-cache-phase/)
+assert.match(header, /cachePanelPhase\.value = 'reloading'/)
 assert.match(footer, /<VisitorInfoCard/)
 assert.match(visitorInfo, /position:\s*fixed/)
 assert.match(visitorInfo, /aria-expanded/)
@@ -155,13 +244,17 @@ assert.match(mobilePerf, /export const MOBILE_NO_MOVE_CLASS/)
 assert.match(mobilePerf, /export const MOBILE_POLL_INTERVAL_FLOOR_MS/)
 assert.match(earthGlobe, /isMobileLike \? 1\.5 : 2/)
 assert.match(earthGlobe, /fpsLimit: isMobileLike \? 30 : null/)
-assert.match(dataOcean, /targetFps = isMobileLike \? 24 : 50/)
+assert.match(dataOcean, /targetFps = isMobileLike \? 24 : 40/)
 assert.match(dataOcean, /!reducedMotion && !saveData/)
 assert.match(dataOcean, /mobile \? 1 : 1\.3/)
 const initManager = read('src/utils/init.ts')
 assert.match(initManager, /document\.visibilityState === 'hidden'/)
-assert.match(initManager, /isMobileLike \? Math\.max\(base, MOBILE_POLL_INTERVAL_FLOOR_MS\) : base/)
+assert.match(initManager, /POLL_INTERVAL_FLOOR_MS = 5000/)
+assert.match(initManager, /return Math\.max\(base, POLL_INTERVAL_FLOOR_MS\)/)
+assert.match(initManager, /CLIENT_METADATA_REFRESH_INTERVAL_MS = 60_000/)
 assert.match(read('src/views/HomeView.vue'), /MOBILE_NO_MOVE_CLASS/)
+assert.match(read('src/views/HomeView.vue'), /freezeLeavingNodeRect/)
+assert.match(read('src/views/HomeView.vue'), /@before-leave="freezeLeavingNodeRect"/)
 assert.match(read('src/components/NodeList.vue'), /MOBILE_NO_MOVE_CLASS/)
 // 封面只保留布局槽位与 HUD，引擎由 App.vue 的 Teleport 放入（intro 变体自动旋转）。
 assert.doesNotMatch(loadingCover, /NodeEarthGlobe/)
@@ -171,6 +264,7 @@ assert.match(earthGlobe, /dashboard-marker-in/)
 assert.match(earthGlobe, /REGION TELEMETRY/)
 assert.match(earthGlobe, /id: cluster\.code/)
 assert.match(earthGlobe, /mapBaseBrightness/)
+assert.match(earthGlobe, /baseColor:\s*\[1, 1, 1\]/)
 assert.match(earthGlobe, /handleFlagError/)
 assert.match(earthGlobe, /object-fit:\s*contain/)
 assert.match(earthGlobe, /is-dragging[\s\S]*transition:\s*none/)
@@ -198,8 +292,8 @@ assert.match(provider, /application\/manifest\+json/)
 assert.match(provider, /brandLogoUrl/)
 assert.match(provider, /toAbsoluteAppUrl/)
 assert.match(provider, /start_url:\s*appRootUrl/)
-// Service Worker 缓存名必须与 package.json 版本保持同步，避免硬编码漂移。
-assert.match(serviceWorker, new RegExp(`leonetlab-observatory-v${packageJson.version.replaceAll('.', '\\.')}`))
+// Service Worker 缓存名必须与 Komari 外显版本保持同步，避免 npm 内部 SemVer 泄漏到安装包。
+assert.match(serviceWorker, new RegExp(`leonetlab-observatory-v${packageJson.themeVersion.replaceAll('.', '\\.')}`))
 assert.match(serviceWorker, /function cacheFirst/)
 assert.match(serviceWorker, /function networkFirst/)
 assert.match(serviceWorker, /Promise\.allSettled/)
@@ -259,6 +353,8 @@ assert.match(smokeTest, /auditMobileProbeMatrix/)
 assert.match(smokeTest, /auditVisitorCollapse/)
 assert.match(smokeTest, /auditPingDialogCloseAnimation/)
 assert.match(smokeTest, /auditIntroGlobeHandoff/)
+assert.match(smokeTest, /auditGlobeRegionInteraction/)
+assert.match(smokeTest, /auditGlobeRouteRipple/)
 assert.match(smokeTest, /canvasIdentity/)
 assert.match(smokeTest, /maxDistanceJump/)
 assert.match(smokeTest, /landErrorX < 2/)
@@ -275,7 +371,11 @@ assert.ok(existsSync(resolve(root, 'dist/sw.js')), 'dist/sw.js is missing')
 assert.ok(existsSync(resolve(root, 'dist/offline.html')), 'dist/offline.html is missing')
 assert.ok(keys.includes('introAnimationEnabled'))
 assert.match(read('src/utils/pwa.ts'), /CLEAR_THEME_CACHE/)
+assert.doesNotMatch(read('src/utils/pwa.ts'), /location\.reload/)
 assert.match(serviceWorker, /CLEAR_THEME_CACHE/)
+assert.match(packageJson.scripts['smoke:1.3.2'], /--komari-version=1\.3\.2/)
+assert.match(smokeTest, /usesModernKomariFixture/)
+assert.match(smokeTest, /public:getPingMetricStats/)
 const compiledCss = readdirSync(resolve(root, 'dist/assets'))
   .filter(file => file.endsWith('.css'))
   .map(file => read(`dist/assets/${file}`))

@@ -239,10 +239,10 @@ const trafficProgressStyle = computed(() => ({
 </script>
 
 <template>
-  <div class="instance-detail lnl-detail space-y-5">
+  <div class="instance-detail lnl-detail space-y-5" :class="{ 'is-motion-reduced': appStore.disablePageAnimation }">
     <div v-if="!data" class="p-4">
       <CardX
-        class="border-none transition-all rounded-md"
+        class="lnl-panel-motion border-none rounded-md"
         :class="pickSurfaceClass('bg-background/60 hover:bg-background', 'bg-background/50 hover:bg-background backdrop-blur-xs')"
       >
         <Empty description="节点不存在或已被删除">
@@ -275,7 +275,7 @@ const trafficProgressStyle = computed(() => ({
       <div class="lnl-detail-metrics px-4 grid grid-cols-2 gap-4 lg:grid-cols-4">
         <CardX
           v-for="item in metricCards" :key="item.label" hoverable size="small"
-          class="lnl-detail-metric group h-full border-none transition-all rounded-md"
+          class="lnl-detail-metric lnl-panel-motion group h-full border-none rounded-md"
           :class="pickSurfaceClass('bg-background/60 hover:bg-background', 'bg-background/50 hover:bg-background backdrop-blur-xs')"
           content-class="h-full !p-3"
         >
@@ -305,7 +305,7 @@ const trafficProgressStyle = computed(() => ({
       <div class="lnl-detail-info-grid px-4 gap-4 grid grid-cols-1 lg:grid-cols-2">
         <CardX
           title="硬件信息" size="small"
-          class="lnl-detail-panel group h-full border-none transition-all rounded-md"
+          class="lnl-detail-panel lnl-panel-motion group h-full border-none rounded-md"
           :class="pickSurfaceClass('bg-background/60 hover:bg-background', 'bg-background/50 hover:bg-background backdrop-blur-xs')"
         >
           <div class="gap-3 grid grid-cols-3">
@@ -324,7 +324,7 @@ const trafficProgressStyle = computed(() => ({
 
         <CardX
           title="系统信息" size="small"
-          class="lnl-detail-panel group h-full border-none transition-all rounded-md"
+          class="lnl-detail-panel lnl-panel-motion group h-full border-none rounded-md"
           :class="pickSurfaceClass('bg-background/60 hover:bg-background', 'bg-background/50 hover:bg-background backdrop-blur-xs')"
         >
           <div class="gap-3 grid grid-cols-1 sm:grid-cols-2">
@@ -351,7 +351,7 @@ const trafficProgressStyle = computed(() => ({
 
         <CardX
           title="存储信息" size="small"
-          class="lnl-detail-panel group h-full border-none transition-all rounded-md"
+          class="lnl-detail-panel lnl-panel-motion group h-full border-none rounded-md"
           :class="pickSurfaceClass('bg-background/60 hover:bg-background', 'bg-background/50 hover:bg-background backdrop-blur-xs')"
         >
           <div class="gap-3 grid grid-cols-3">
@@ -370,7 +370,7 @@ const trafficProgressStyle = computed(() => ({
 
         <CardX
           title="网络信息" size="small"
-          class="lnl-detail-panel group h-full border-none transition-all rounded-md"
+          class="lnl-detail-panel lnl-panel-motion group h-full border-none rounded-md"
           :class="pickSurfaceClass('bg-background/60 hover:bg-background', 'bg-background/50 hover:bg-background backdrop-blur-xs')"
           content-class="pt-0"
         >

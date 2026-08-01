@@ -158,8 +158,12 @@ body {
     background-color 0.52s cubic-bezier(0.22, 1, 0.36, 1);
 }
 #app {
+  display: flex;
+  min-height: 100vh;
+  min-height: 100svh;
   min-width: 0;
   max-width: 100%;
+  flex-direction: column;
   overflow-x: clip;
 }
 button,
@@ -197,6 +201,7 @@ textarea {
   position: relative;
   z-index: 1;
   width: 100%;
+  min-height: calc(100svh - 137px);
 }
 
 /* v1.2.8 单实例地球：dashboard 槽位复刻 .node-earth-globe 非 intro 尺寸
@@ -612,6 +617,18 @@ textarea {
   width: 28px;
   height: 1px;
   background: var(--lnl-green);
+}
+
+.lnl-panel-motion {
+  transition:
+    transform var(--lnl-motion-standard) var(--lnl-ease-out),
+    box-shadow var(--lnl-motion-standard) ease,
+    border-color var(--lnl-motion-fast) ease,
+    background-color var(--lnl-motion-fast) ease;
+}
+
+.is-motion-reduced .lnl-panel-motion {
+  transition: none !important;
 }
 
 .lnl-page-enter-active {

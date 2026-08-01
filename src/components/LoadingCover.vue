@@ -19,6 +19,21 @@ const phases = computed(() => [
 const totalNodes = computed(() => nodesStore.nodes.length)
 const onlineNodes = computed(() => nodesStore.nodes.filter(node => node.online).length)
 const offlineNodes = computed(() => Math.max(0, totalNodes.value - onlineNodes.value))
+const nodeStatusState = computed<'syncing' | 'ready' | 'unavailable'>(() => {
+  if (nodesStore.initialized)
+    return 'ready'
+  if (appStore.connectionError)
+    return 'unavailable'
+  return 'syncing'
+})
+const nodeStatusHeadline = computed(() => {
+  if (nodeStatusState.value === 'ready')
+    return `${onlineNodes.value} ONLINE · ${totalNodes.value} NODES`
+  return nodeStatusState.value === 'unavailable'
+    ? 'NODE STATUS / UNAVAILABLE'
+    : 'NODE STATUS / SYNCHRONIZING'
+})
+const nodeStatusMeta = computed(() => nodeStatusState.value === 'unavailable' ? 'OFFLINE' : 'SYNC')
 
 // v1.2.8 起封面不再持有自己的地球组件：.lnl-intro-globe 只是布局槽位，
 // 唯一的 cobe 引擎由 App.vue 经 Teleport 放入槽位，交接时随飞行壳迁往
@@ -62,7 +77,9 @@ onUnmounted(() => timers.forEach(timer => window.clearTimeout(timer)))
 
     <div class="lnl-intro-top" aria-hidden="true">
       <span>{{ appStore.brandShortName.toUpperCase() }} / MONITOR SESSION</span>
-      <span>{{ onlineNodes }} ONLINE · {{ totalNodes }} NODES</span>
+      <Transition name="telemetry-value" mode="out-in">
+        <span :key="nodeStatusHeadline">{{ nodeStatusHeadline }}</span>
+      </Transition>
     </div>
 
     <div class="lnl-intro-scene">
@@ -87,8 +104,22 @@ onUnmounted(() => timers.forEach(timer => window.clearTimeout(timer)))
       </div>
 
       <dl class="lnl-intro-telemetry">
-        <div><dt>ONLINE</dt><dd>{{ onlineNodes }}<small>/{{ totalNodes }}</small></dd></div>
-        <div><dt>OFFLINE</dt><dd>{{ offlineNodes }}</dd></div>
+        <div>
+          <dt>ONLINE</dt>
+          <Transition name="telemetry-value" mode="out-in">
+            <dd :key="`online-${nodeStatusState}`" :class="{ 'is-pending': nodeStatusState !== 'ready' }">
+              {{ nodeStatusState === 'ready' ? onlineNodes : '—' }}<small>{{ nodeStatusState === 'ready' ? `/${totalNodes}` : nodeStatusMeta }}</small>
+            </dd>
+          </Transition>
+        </div>
+        <div>
+          <dt>OFFLINE</dt>
+          <Transition name="telemetry-value" mode="out-in">
+            <dd :key="`offline-${nodeStatusState}`" :class="{ 'is-pending': nodeStatusState !== 'ready' }">
+              {{ nodeStatusState === 'ready' ? offlineNodes : '—' }}
+            </dd>
+          </Transition>
+        </div>
         <div>
           <dt>TRANSPORT</dt><dd class="is-text">
             {{ appStore.rpcTransportMode.toUpperCase() }}
@@ -335,10 +366,29 @@ onUnmounted(() => timers.forEach(timer => window.clearTimeout(timer)))
   font-size: 10px;
   line-height: 20px;
 }
+.lnl-intro-telemetry dd.is-pending {
+  font-size: 13px;
+  letter-spacing: 0.08em;
+}
 .lnl-intro-telemetry small {
   margin-left: 3px;
   color: var(--intro-muted);
   font-size: 9px;
+}
+
+.telemetry-value-enter-active,
+.telemetry-value-leave-active {
+  transition:
+    opacity 160ms ease,
+    transform 220ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+.telemetry-value-enter-from {
+  opacity: 0;
+  transform: translate3d(0, 5px, 0);
+}
+.telemetry-value-leave-to {
+  opacity: 0;
+  transform: translate3d(0, -4px, 0);
 }
 
 .lnl-intro-progress {
@@ -577,7 +627,9 @@ onUnmounted(() => timers.forEach(timer => window.clearTimeout(timer)))
     transform: none;
   }
   .phase-enter-active,
-  .phase-leave-active {
+  .phase-leave-active,
+  .telemetry-value-enter-active,
+  .telemetry-value-leave-active {
     transition: none;
   }
 }

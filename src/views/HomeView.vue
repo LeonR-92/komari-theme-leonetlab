@@ -111,14 +111,38 @@ onMounted(async () => {
 const searchText = ref('')
 const debouncedSearchText = ref('')
 const searchOpen = ref(false)
+const searchReorderMotionActive = ref(false)
+let searchReorderMotionTimer: number | null = null
+const nodeMoveClass = computed(() =>
+  isMobileLike && !searchReorderMotionActive.value ? MOBILE_NO_MOVE_CLASS : undefined,
+)
 const selectedPingNodeUuid = ref<string | null>(null)
 const pingDialogOpen = ref(false)
 let pingDialogCleanupTimer: number | null = null
 const onlineNodeCount = computed(() => nodesStore.nodes.filter(node => node.online).length)
 const totalNodeCount = computed(() => nodesStore.nodes.length)
 
+function beginSearchReorderMotion() {
+  if (searchReorderMotionTimer !== null) {
+    window.clearTimeout(searchReorderMotionTimer)
+    searchReorderMotionTimer = null
+  }
+  searchReorderMotionActive.value = true
+}
+
+function finishSearchReorderMotionLater() {
+  if (searchReorderMotionTimer !== null)
+    window.clearTimeout(searchReorderMotionTimer)
+  searchReorderMotionTimer = window.setTimeout(() => {
+    searchReorderMotionActive.value = false
+    searchReorderMotionTimer = null
+  }, 520)
+}
+
 const updateDebouncedSearch = useDebounceFn((value: string) => {
+  beginSearchReorderMotion()
   debouncedSearchText.value = value
+  finishSearchReorderMotionLater()
 }, 300)
 
 watch(searchText, (value) => {
@@ -127,12 +151,15 @@ watch(searchText, (value) => {
 
 async function toggleNodeSearch() {
   if (searchOpen.value) {
+    beginSearchReorderMotion()
     searchText.value = ''
     debouncedSearchText.value = ''
     searchOpen.value = false
+    finishSearchReorderMotionLater()
     return
   }
 
+  beginSearchReorderMotion()
   searchOpen.value = true
   await nextTick()
   document.querySelector<HTMLInputElement>('#node-search')?.focus()
@@ -235,6 +262,8 @@ function handlePingClick(node: NodeData) {
 onBeforeUnmount(() => {
   if (pingDialogCleanupTimer !== null)
     window.clearTimeout(pingDialogCleanupTimer)
+  if (searchReorderMotionTimer !== null)
+    window.clearTimeout(searchReorderMotionTimer)
 })
 
 function getNodeItemTransitionKey(node: typeof nodesStore.nodes[number]): string {
@@ -245,6 +274,24 @@ function getNodeItemTransitionStyle(index: number): Record<string, string> {
   return {
     '--node-item-delay': `${Math.min(index, nodeItemStaggerLimit) * nodeItemStaggerMs}ms`,
   }
+}
+
+function freezeLeavingNodeRect(element: Element) {
+  const item = element as HTMLElement
+  const { offsetHeight, offsetLeft, offsetTop, offsetWidth } = item
+  item.style.position = 'absolute'
+  item.style.inset = 'auto'
+  item.style.top = `${offsetTop}px`
+  item.style.left = `${offsetLeft}px`
+  item.style.width = `${offsetWidth}px`
+  item.style.height = `${offsetHeight}px`
+  item.style.pointerEvents = 'none'
+}
+
+function clearLeavingNodeRect(element: Element) {
+  const item = element as HTMLElement
+  for (const property of ['position', 'inset', 'top', 'left', 'width', 'height', 'pointer-events'])
+    item.style.removeProperty(property)
 }
 </script>
 
@@ -371,10 +418,12 @@ function getNodeItemTransitionStyle(index: number): Record<string, string> {
               v-if="nodeList.length !== 0 && appStore.nodeViewMode === 'card'"
               :appear="!appStore.disablePageAnimation"
               :css="!appStore.disablePageAnimation"
-              :move-class="isMobileLike ? MOBILE_NO_MOVE_CLASS : undefined"
+              :move-class="nodeMoveClass"
               name="node-card-switch"
               tag="div"
-              class="gap-4 grid grid-cols-1 sm:grid-cols-[repeat(auto-fill,minmax(344px,1fr))]"
+              class="relative gap-4 grid grid-cols-1 sm:grid-cols-[repeat(auto-fill,minmax(344px,1fr))]"
+              @before-leave="freezeLeavingNodeRect"
+              @leave-cancelled="clearLeavingNodeRect"
             >
               <div
                 v-for="(node, index) in nodeList"
@@ -576,7 +625,11 @@ function getNodeItemTransitionStyle(index: number): Record<string, string> {
 }
 
 .node-card-switch-move {
-  transition: transform 220ms cubic-bezier(0.22, 1, 0.36, 1);
+  transition: transform 360ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.node-card-switch-leave-active {
+  z-index: 0;
 }
 
 .node-card-switch-enter-from {

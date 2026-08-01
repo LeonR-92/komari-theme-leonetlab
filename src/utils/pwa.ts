@@ -1,5 +1,7 @@
 const THEME_CACHE_PREFIX = 'leonetlab-observatory-'
 
+export type ThemeCacheRefreshPhase = 'checking' | 'clearing'
+
 async function deleteThemeCaches(): Promise<void> {
   if (!('caches' in window))
     return
@@ -24,10 +26,11 @@ async function requestWorkerCacheClear(worker: ServiceWorker | null): Promise<vo
   })
 }
 
-export async function refreshThemeCache(): Promise<void> {
+export async function refreshThemeCache(onPhase?: (phase: ThemeCacheRefreshPhase) => void): Promise<void> {
+  onPhase?.('checking')
   if (!('serviceWorker' in navigator)) {
+    onPhase?.('clearing')
     await deleteThemeCaches()
-    location.reload()
     return
   }
 
@@ -40,12 +43,12 @@ export async function refreshThemeCache(): Promise<void> {
     // Session storage can be unavailable in strict privacy modes.
   }
 
-  const registration = await navigator.serviceWorker.getRegistration('/')
+  const registration = await navigator.serviceWorker.getRegistration()
   await registration?.update()
   const worker = registration?.waiting
     ?? registration?.active
     ?? navigator.serviceWorker.controller
+  onPhase?.('clearing')
   await requestWorkerCacheClear(worker)
   await deleteThemeCaches()
-  location.reload()
 }

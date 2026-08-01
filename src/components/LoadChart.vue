@@ -876,7 +876,7 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <div class="flex flex-col gap-4">
+  <div class="flex flex-col gap-4" :class="{ 'is-motion-reduced': appStore.disablePageAnimation }">
     <!-- 时间选择器 -->
     <Tabs v-model="selectedView" class="w-full items-center">
       <TabsList :class="pickSurfaceClass('h-8 bg-background/60 pointer-events-auto rounded-md', 'h-8 bg-background/50 backdrop-blur-xl pointer-events-auto rounded-md')">
@@ -903,7 +903,7 @@ onUnmounted(() => {
         <!-- CPU 卡片 -->
         <CardX
           size="small"
-          class="border-none transition-all rounded-md"
+          class="lnl-panel-motion border-none rounded-md"
           :class="pickSurfaceClass('bg-background/60 hover:bg-background', 'bg-background/50 hover:bg-background backdrop-blur-xs')"
         >
           <template #header>
@@ -924,7 +924,7 @@ onUnmounted(() => {
         <!-- 内存卡片 -->
         <CardX
           size="small"
-          class="border-none transition-all rounded-md"
+          class="lnl-panel-motion border-none rounded-md"
           :class="pickSurfaceClass('bg-background/60 hover:bg-background', 'bg-background/50 hover:bg-background backdrop-blur-xs')"
         >
           <template #header>
@@ -954,7 +954,7 @@ onUnmounted(() => {
         <!-- 磁盘卡片 -->
         <CardX
           size="small"
-          class="border-none transition-all rounded-md"
+          class="lnl-panel-motion border-none rounded-md"
           :class="pickSurfaceClass('bg-background/60 hover:bg-background', 'bg-background/50 hover:bg-background backdrop-blur-xs')"
         >
           <template #header>
@@ -983,7 +983,7 @@ onUnmounted(() => {
         <!-- 网络卡片 -->
         <CardX
           size="small"
-          class="border-none transition-all rounded-md"
+          class="lnl-panel-motion border-none rounded-md"
           :class="pickSurfaceClass('bg-background/60 hover:bg-background', 'bg-background/50 hover:bg-background backdrop-blur-xs')"
         >
           <template #header>
@@ -1017,7 +1017,7 @@ onUnmounted(() => {
         <!-- 连接数卡片 -->
         <CardX
           size="small"
-          class="border-none transition-all rounded-md"
+          class="lnl-panel-motion border-none rounded-md"
           :class="pickSurfaceClass('bg-background/60 hover:bg-background', 'bg-background/50 hover:bg-background backdrop-blur-xs')"
         >
           <template #header>
@@ -1038,7 +1038,7 @@ onUnmounted(() => {
         <!-- 进程卡片 -->
         <CardX
           size="small"
-          class="border-none transition-all rounded-md"
+          class="lnl-panel-motion border-none rounded-md"
           :class="pickSurfaceClass('bg-background/60 hover:bg-background', 'bg-background/50 hover:bg-background backdrop-blur-xs')"
         >
           <template #header>

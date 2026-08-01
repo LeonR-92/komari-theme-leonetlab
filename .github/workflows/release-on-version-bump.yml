@@ -78,16 +78,16 @@ jobs:
           const packageJson = JSON.parse(readFileSync('package.json', 'utf8'))
           const themeJson = JSON.parse(readFileSync('komari-theme.json', 'utf8'))
 
-          if (packageJson.version !== themeJson.version) {
-            throw new Error(`Version mismatch: package.json=${packageJson.version}, komari-theme.json=${themeJson.version}`)
+          if (packageJson.themeVersion !== themeJson.version) {
+            throw new Error(`Theme version mismatch: package.json.themeVersion=${packageJson.themeVersion}, komari-theme.json=${themeJson.version}`)
           }
 
-          const currentVersion = packageJson.version
+          const currentVersion = themeJson.version
           let versionChanged = true
 
           if (beforeSha && beforeSha !== zeroSha) {
             try {
-              const previous = JSON.parse(execFileSync('git', ['show', `${beforeSha}:package.json`], { encoding: 'utf8' }))
+              const previous = JSON.parse(execFileSync('git', ['show', `${beforeSha}:komari-theme.json`], { encoding: 'utf8' }))
               versionChanged = previous.version !== currentVersion
             }
             catch {
