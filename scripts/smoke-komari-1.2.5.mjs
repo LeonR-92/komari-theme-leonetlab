@@ -11,9 +11,11 @@ const root = resolve(import.meta.dirname, '..')
 const dist = resolve(root, 'dist')
 const komariVersionArgument = process.argv.find(argument => argument.startsWith('--komari-version='))
 const fixtureKomariVersion = komariVersionArgument?.split('=', 2)[1] || '1.2.5-fix1'
-const usesModernKomariFixture = fixtureKomariVersion === '1.3.2'
+const usesModernKomariFixture = ['1.3.2', '1.4.2'].includes(fixtureKomariVersion)
+const usesKomari142Fixture = fixtureKomariVersion === '1.4.2'
 const visualAuditEnabled = Boolean(process.env.SMOKE_SCREENSHOT_DIR)
 const financeDetailsLabelPattern = /查看财务汇率详情/
+const visitorResolvedInfoPattern = /Fixture Network|Test Region|Observatory/
 const pingSectionInPattern = /ping-section-in/
 const pingChartInPattern = /ping-chart-in/
 const ewmaPattern = /EWMA/
@@ -21,7 +23,7 @@ const regionCpuPattern = /CPU 总体负载/
 const regionThroughputPattern = /LIVE THROUGHPUT/
 const freeFinancePattern = /免费/
 const fixedFinanceLabelPattern = /^费用/
-const missingFinancePattern = /请在后台填写费用详情/
+const missingFinancePattern = /未填写/
 const introSyncingPattern = /SYNCHRONIZING/
 const introReadyNodesPattern = /2 ONLINE · 2 NODES/
 const layoutTransitionPropertyPattern = /height|width|padding/
@@ -173,22 +175,26 @@ const dialogPingRecords = [
 const metricSeries = dialogPingTasks.flatMap(task => [
   {
     metric_key: 'ping.latency_ms',
-    tags: { task_id: String(task.id) },
+    tags: usesKomari142Fixture ? undefined : { task_id: String(task.id) },
+    interval_seconds: usesKomari142Fixture ? task.interval : undefined,
     points: dialogPingRecords
       .filter(record => record.task_id === task.id)
       .map(record => ({
         time: record.time,
         value: record.value < 0 ? null : record.value,
+        labels: usesKomari142Fixture ? { task_id: String(task.id) } : undefined,
       })),
   },
   {
     metric_key: 'ping.loss',
-    tags: { task_id: String(task.id) },
+    tags: usesKomari142Fixture ? undefined : { task_id: String(task.id) },
+    interval_seconds: usesKomari142Fixture ? task.interval : undefined,
     points: dialogPingRecords
       .filter(record => record.task_id === task.id)
       .map(record => ({
         time: record.time,
         value: record.value < 0 ? 1 : 0,
+        labels: usesKomari142Fixture ? { task_id: String(task.id) } : undefined,
       })),
   },
 ])
@@ -197,7 +203,8 @@ const metricTaskStats = dialogPingTasks.map(task => ({
   name: task.name,
   type: task.type,
   interval: task.interval,
-  loss: task.loss / 100,
+  loss: usesKomari142Fixture ? task.loss : task.loss / 100,
+  loss_approximate: usesKomari142Fixture && task.id === 2,
   min: task.min,
   max: task.max,
   avg: task.avg,
@@ -212,6 +219,7 @@ let visitorInfoEnabledFixture = false
 let introAnimationEnabledFixture = true
 let metricStoreUninitializedFixture = false
 let nodeResponseDelayMsFixture = 0
+let publicSettingsDelayMsFixture = 0
 const leadingSlashesPattern = /^\/+/
 const lineBreakPattern = /\r?\n/
 
@@ -249,7 +257,7 @@ function json(response, payload) {
 const server = createServer((request, response) => {
   const url = new URL(request.url || '/', 'http://127.0.0.1')
   if (url.pathname === '/api/public') {
-    json(response, {
+    const sendPublicSettings = () => json(response, {
       status: 'success',
       message: '',
       data: {
@@ -274,6 +282,10 @@ const server = createServer((request, response) => {
         },
       },
     })
+    if (publicSettingsDelayMsFixture > 0)
+      setTimeout(sendPublicSettings, publicSettingsDelayMsFixture)
+    else
+      sendPublicSettings()
     return
   }
   if (url.pathname === '/api/me') {
@@ -295,10 +307,17 @@ const server = createServer((request, response) => {
         'common:getNodes': usesModernKomariFixture
           ? Object.fromEntries(clients.map(item => [item.uuid, item]))
           : clients,
+        'public:getNodesInformation': usesKomari142Fixture
+          ? Object.fromEntries(clients.map(item => [item.uuid, { ...item, ipv4: '', ipv6: '', remark: '', version: '' }]))
+          : undefined,
         'common:getNodesLatestStatus': statuses,
         'common:getNodeRecentStatus': { count: historyRecords.length, records: historyRecords },
-        'public:queryMetrics': usesModernKomariFixture ? { series: metricSeries } : undefined,
-        'public:getPingMetricStats': usesModernKomariFixture ? { stats: metricTaskStats } : undefined,
+        'public:queryMetrics': usesModernKomariFixture
+          ? { interval_seconds: usesKomari142Fixture ? 60 : undefined, series: metricSeries }
+          : undefined,
+        'public:getPingMetricStats': usesModernKomariFixture
+          ? { interval_seconds: usesKomari142Fixture ? 60 : undefined, stats: metricTaskStats }
+          : undefined,
         'public:getPublicPingTasks': usesModernKomariFixture
           ? dialogPingTasks.map((task, index) => ({ id: task.id, weight: index + 1 }))
           : undefined,
@@ -551,7 +570,7 @@ async function runInteractivePage(name, width, height, expression, screenshotNam
 const pingDialogOpenExpression = `new Promise((resolve) => {
   const deadline = Date.now() + 12000;
   const timer = setInterval(() => {
-    const button = document.querySelector('[role="button"][aria-label^="Tokyo Fixture"]');
+    const button = document.querySelector('button[aria-label^="Tokyo Fixture 延迟"]');
     if (button) {
       clearInterval(timer);
       button.click();
@@ -752,6 +771,20 @@ const globeFlagThemeAuditExpression = `new Promise((resolve) => {
         }
         const overlayTransformBeforeDrag = document.querySelector('.node-earth-globe:not(.is-intro) .lnl-earth-overlay')?.style.transform || '';
         const rect = canvas.getBoundingClientRect();
+        const frontOverlay = [...document.querySelectorAll('.node-earth-globe:not(.is-intro) .lnl-earth-overlay')]
+          .find(overlay => getComputedStyle(overlay).pointerEvents !== 'none');
+        const flagImage = frontOverlay?.querySelector('.lnl-earth-flag img');
+        const flagRect = flagImage?.getBoundingClientRect();
+        const nativeFlagDragPrevented = flagImage
+          ? !flagImage.dispatchEvent(new DragEvent('dragstart', { bubbles: true, cancelable: true }))
+          : false;
+        const flagTransformBeforeDrag = frontOverlay?.style.transform || '';
+        if (flagImage && flagRect) {
+          flagImage.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, cancelable: true, pointerId: 6, pointerType: 'mouse', buttons: 1, button: 0, clientX: flagRect.left + flagRect.width / 2, clientY: flagRect.top + flagRect.height / 2 }));
+          globeContainer.dispatchEvent(new PointerEvent('pointermove', { bubbles: true, cancelable: true, pointerId: 6, pointerType: 'mouse', buttons: 1, clientX: flagRect.left + flagRect.width / 2 + 80, clientY: flagRect.top + flagRect.height / 2 + 8 }));
+          globeContainer.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, cancelable: true, pointerId: 6, pointerType: 'mouse', button: 0, clientX: flagRect.left + flagRect.width / 2 + 80, clientY: flagRect.top + flagRect.height / 2 + 8 }));
+        }
+        const flagTransformAfterDrag = frontOverlay?.style.transform || '';
         globeContainer.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, pointerId: 7, clientX: rect.left + rect.width * 0.5, clientY: rect.top + rect.height * 0.5 }));
         const draggingStarted = globeContainer.classList.contains('is-dragging');
         globeContainer.dispatchEvent(new PointerEvent('pointermove', { bubbles: true, pointerId: 7, clientX: rect.left + rect.width * 0.7, clientY: rect.top + rect.height * 0.52 }));
@@ -776,6 +809,9 @@ const globeFlagThemeAuditExpression = `new Promise((resolve) => {
               minCount: Math.min(...samples.map(item => item.count)),
               allLoaded: samples.every(item => item.loaded),
               allDisplayed: samples.every(item => item.displayed),
+              flagsNotDraggable: [...document.querySelectorAll('.node-earth-globe:not(.is-intro) .lnl-earth-flag img')].every(image => image.draggable === false),
+              nativeFlagDragPrevented,
+              flagDragMoved: Boolean(flagTransformBeforeDrag && flagTransformBeforeDrag !== flagTransformAfterDrag),
               draggingStarted,
               transformBefore: overlayTransformBeforeDrag,
               transformAfterMove: overlayTransformAfterMove,
@@ -915,7 +951,7 @@ const globeRouteRippleAuditExpression = `new Promise((resolve) => {
 const pingDialogCloseAuditExpression = `new Promise((resolve) => {
   const deadline = Date.now() + 12000;
   const timer = setInterval(() => {
-    const trigger = document.querySelector('[role="button"][aria-label^="Tokyo Fixture"]');
+    const trigger = document.querySelector('button[aria-label^="Tokyo Fixture 延迟"]');
     if (!trigger) {
       if (Date.now() >= deadline) {
         clearInterval(timer);
@@ -1151,7 +1187,7 @@ const globeMotionAuditExpression = `new Promise((resolve) => {
 const pingContentMotionAuditExpression = `new Promise((resolve) => {
   const deadline = Date.now() + 12000;
   const timer = setInterval(() => {
-    const trigger = document.querySelector('[role="button"][aria-label^="Tokyo Fixture"]');
+    const trigger = document.querySelector('button[aria-label^="Tokyo Fixture 延迟"]');
     if (!trigger) {
       if (Date.now() >= deadline) {
         clearInterval(timer);
@@ -1220,7 +1256,9 @@ const mobileChromeLayoutAuditExpression = `new Promise((resolve) => {
           setTimeout(() => {
             const activeTab = document.querySelector('[role="tab"][data-state="active"]');
             const search = document.querySelector('.lnl-node-search-drawer.is-open');
+            const searchField = document.querySelector('.lnl-node-search-field');
             const searchRect = search?.getBoundingClientRect();
+            const searchFieldRect = searchField?.getBoundingClientRect();
             const activeTabRect = activeTab?.getBoundingClientRect();
             const touchOpened = earthOverlay.getAttribute('aria-expanded') === 'true';
             earthOverlay.click();
@@ -1232,6 +1270,9 @@ const mobileChromeLayoutAuditExpression = `new Promise((resolve) => {
                 expandedOverlap: intersects(expandedVisitorRect, expandedBackRect),
                 searchTabOverlap: intersects(searchRect, activeTabRect),
                 searchInsideViewport: Boolean(searchRect && searchRect.left >= 0 && searchRect.right <= document.documentElement.clientWidth + 0.5),
+                searchFieldInsideViewport: Boolean(searchFieldRect && searchFieldRect.left >= 0 && searchFieldRect.right <= document.documentElement.clientWidth + 0.5),
+                searchFieldWidth: searchFieldRect?.width || 0,
+                searchFieldRadius: searchField ? getComputedStyle(searchField).borderRadius : '',
                 touchOpened,
                 touchClosed: earthOverlay.getAttribute('aria-expanded') === 'false',
                 greetingVisible,
@@ -1292,7 +1333,7 @@ const earlyIntroAuditExpression = `new Promise((resolve) => {
           initialHeadline,
           readyHeadline: document.querySelector('.lnl-intro-top span:last-child')?.textContent?.trim() || '',
         });
-      }, 2850);
+      }, 3600);
     }
     else if (performance.now() >= deadline) {
       clearInterval(timer);
@@ -1346,7 +1387,7 @@ const mobileSearchMoveAuditExpression = `new Promise((resolve) => {
 const mobileProbeMatrixAuditExpression = `new Promise((resolve) => {
   const deadline = Date.now() + 12000;
   const timer = setInterval(() => {
-    const button = document.querySelector('[role="button"][aria-label^="Tokyo Fixture"]');
+    const button = document.querySelector('button[aria-label^="Tokyo Fixture 延迟"]');
     if (button) {
       clearInterval(timer);
       button.click();
@@ -1392,6 +1433,11 @@ const visitorCollapseAuditExpression = `new Promise((resolve) => {
   let compactingSeen = false;
   let collapseTransitionProperty = '';
   let minCompactingOpacity = 1;
+  let maxCompactLayerOpacity = 0;
+  let compactLayerText = '';
+  let compactReachedAt = 0;
+  let lastState = '';
+  const stateTransitions = [];
   let observer;
   if ('PerformanceObserver' in window) {
     observer = new PerformanceObserver((list) => {
@@ -1409,6 +1455,11 @@ const visitorCollapseAuditExpression = `new Promise((resolve) => {
       compactingSeen,
       collapseTransitionProperty,
       minCompactingOpacity,
+      maxCompactLayerOpacity,
+      compactLayerText,
+      stateTransitions,
+      scanningEntries: stateTransitions.filter(value => value === 'scanning').length,
+      postCompactTransitions: stateTransitions.slice(stateTransitions.indexOf('compact') + 1),
       frames: frameDeltas.length,
       maxFrame: frameDeltas.length ? Math.max(...frameDeltas) : 0,
       maxLongTask: longTasks.length ? Math.max(...longTasks) : 0,
@@ -1432,9 +1483,13 @@ const visitorCollapseAuditExpression = `new Promise((resolve) => {
   const frame = (now) => {
     const visitor = document.querySelector('.lnl-visitor');
     const state = visitor?.getAttribute('data-presentation-state');
-    if (state === 'collapsing' || state === 'compacting') {
+    if (state && state !== lastState) {
+      stateTransitions.push(state);
+      lastState = state;
+    }
+    if (state === 'morphing') {
       observingCollapse = true;
-      compactingSeen ||= state === 'compacting';
+      compactingSeen = true;
     }
     if (observingCollapse) {
       frameDeltas.push(now - previousFrame);
@@ -1443,8 +1498,15 @@ const visitorCollapseAuditExpression = `new Promise((resolve) => {
       if (rect) {
         const style = getComputedStyle(trigger);
         collapseTransitionProperty ||= style.transitionProperty;
-        if (state === 'compacting')
-          minCompactingOpacity = Math.min(minCompactingOpacity, Number(style.opacity));
+        if (state === 'morphing') {
+          const expandedLayer = visitor?.querySelector('.lnl-visitor-expanded-layer');
+          minCompactingOpacity = Math.min(minCompactingOpacity, Number(getComputedStyle(expandedLayer).opacity));
+        }
+        const compactLayer = visitor?.querySelector('.lnl-visitor-compact-layer');
+        if (compactLayer) {
+          maxCompactLayerOpacity = Math.max(maxCompactLayerOpacity, Number(getComputedStyle(compactLayer).opacity));
+          compactLayerText = compactLayer.textContent?.trim() || compactLayerText;
+        }
         widths.push(rect.width);
         heights.push(rect.height);
         heightSamples.push({ state, height: rect.height, time: now });
@@ -1452,8 +1514,11 @@ const visitorCollapseAuditExpression = `new Promise((resolve) => {
     }
     previousFrame = now;
     if (observingCollapse && state === 'compact') {
-      finish('compact');
-      return;
+      compactReachedAt ||= now;
+      if (now - compactReachedAt >= 900) {
+        finish('compact');
+        return;
+      }
     }
     if (now >= deadline) {
       finish(state || 'timeout');
@@ -1464,7 +1529,92 @@ const visitorCollapseAuditExpression = `new Promise((resolve) => {
   requestAnimationFrame(frame);
 })`
 
+const visitorReopenAuditExpression = `new Promise((resolve) => {
+  const deadline = Date.now() + 16000;
+  const timer = setInterval(() => {
+    const visitor = document.querySelector('.lnl-visitor[data-presentation-state="compact"]');
+    const trigger = visitor?.querySelector('.lnl-visitor-trigger');
+    if (visitor && trigger) {
+      clearInterval(timer);
+      trigger.click();
+      setTimeout(() => {
+        const expandedLayer = visitor.querySelector('.lnl-visitor-expanded-layer');
+        const compactLayer = visitor.querySelector('.lnl-visitor-compact-layer');
+        const rows = [...visitor.querySelectorAll('.lnl-visitor-row')];
+        resolve({
+          expanded: visitor.classList.contains('is-expanded'),
+          expandedOpacity: expandedLayer ? Number(getComputedStyle(expandedLayer).opacity) : -1,
+          compactOpacity: compactLayer ? Number(getComputedStyle(compactLayer).opacity) : -1,
+          rowCount: rows.length,
+          labels: rows.map(row => row.querySelector('small')?.textContent?.trim() || ''),
+          text: expandedLayer?.textContent?.replace(/\\s+/g, ' ').trim() || '',
+        });
+      }, 620);
+    }
+    else if (Date.now() >= deadline) {
+      clearInterval(timer);
+      resolve({ state: 'timeout' });
+    }
+  }, 80);
+})`
+
+const searchGeometryAuditExpression = `new Promise((resolve) => {
+  const deadline = Date.now() + 10000;
+  const timer = setInterval(() => {
+    const toggle = document.querySelector('[aria-label="打开节点搜索"]');
+    if (toggle) {
+      clearInterval(timer);
+      toggle.click();
+      setTimeout(() => {
+        const drawer = document.querySelector('.lnl-node-search-drawer.is-open');
+        const inner = document.querySelector('.lnl-node-search-drawer-inner');
+        const field = document.querySelector('.lnl-node-search-field');
+        const input = document.querySelector('.lnl-node-search-input');
+        const drawerRect = drawer?.getBoundingClientRect();
+        const fieldRect = field?.getBoundingClientRect();
+        resolve({
+          viewportWidth: document.documentElement.clientWidth,
+          documentWidth: Math.max(document.documentElement.scrollWidth, document.body.scrollWidth),
+          drawerContained: Boolean(drawerRect && drawerRect.left >= -0.5 && drawerRect.right <= document.documentElement.clientWidth + 0.5),
+          fieldContained: Boolean(fieldRect && drawerRect && fieldRect.left >= drawerRect.left - 0.5 && fieldRect.right <= drawerRect.right + 0.5),
+          fieldWidth: fieldRect?.width || 0,
+          drawerOverflow: drawer ? drawer.scrollWidth - drawer.clientWidth : -1,
+          innerOverflow: inner ? inner.scrollWidth - inner.clientWidth : -1,
+          inputBorderWidth: input ? getComputedStyle(input).borderWidth : '',
+        });
+      }, 480);
+    }
+    else if (Date.now() >= deadline) {
+      clearInterval(timer);
+      resolve({ state: 'timeout' });
+    }
+  }, 80);
+})`
+
+const slowPublicSettingsShellAuditExpression = `new Promise((resolve) => {
+  const deadline = performance.now() + 1800;
+  const timer = setInterval(() => {
+    const shell = document.querySelector('.lnl-shell');
+    const header = document.querySelector('header');
+    if (shell && header) {
+      clearInterval(timer);
+      resolve({
+        mounted: true,
+        navigationElapsed: performance.now(),
+        introVisible: Boolean(document.querySelector('.lnl-intro')),
+        bootFallbackVisible: Boolean(document.querySelector('#lnl-boot-fallback')),
+      });
+    }
+    else if (performance.now() >= deadline) {
+      clearInterval(timer);
+      resolve({ mounted: false, navigationElapsed: performance.now(), bootFallbackVisible: Boolean(document.querySelector('#lnl-boot-fallback')) });
+    }
+  }, 20);
+})`
+
 const visitorFixtureInitScript = `(() => {
+  sessionStorage.setItem('leonetlab:intro:1.4.2pre3', 'seen');
+  sessionStorage.removeItem('leonetlab:visitor-presentation:1.4.2pre3');
   const nativeFetch = window.fetch.bind(window);
   window.fetch = (input, init) => {
     const url = typeof input === 'string' ? input : input.url;
@@ -1482,7 +1632,7 @@ const visitorFixtureInitScript = `(() => {
 })()`
 
 async function capturePingDialogScreenshot(name, width, height) {
-  const result = await runInteractivePage(name, width, height, pingDialogOpenExpression, name, `sessionStorage.setItem('leonetlab:intro:1.3.2', 'seen');`)
+  const result = await runInteractivePage(name, width, height, pingDialogOpenExpression, name, `sessionStorage.setItem('leonetlab:intro:1.4.2pre3', 'seen');`)
   assert.equal(result?.state, 'opened')
   assert.ok(result?.left >= -0.5 && result?.right <= result?.viewportWidth + 0.5, `Ping dialog escaped viewport: ${JSON.stringify(result)}`)
   assert.ok(result?.centerError <= 1, `Ping dialog is not centered: ${JSON.stringify(result)}`)
@@ -1490,7 +1640,7 @@ async function capturePingDialogScreenshot(name, width, height) {
 
 async function auditMobileFinanceOverflow(width) {
   const screenshotName = process.env.SMOKE_SCREENSHOT_DIR && width === 390 ? 'mobile-finance-open' : undefined
-  const result = await runInteractivePage(`mobile-finance-audit-${width}`, width, 844, financeOverflowAuditExpression, screenshotName, `sessionStorage.setItem('leonetlab:intro:1.3.2', 'seen');`)
+  const result = await runInteractivePage(`mobile-finance-audit-${width}`, width, 844, financeOverflowAuditExpression, screenshotName, `sessionStorage.setItem('leonetlab:intro:1.4.2pre3', 'seen');`)
   assert.equal(result?.state, 'opened')
   assert.doesNotMatch(result?.triggerText ?? '', financeDetailsLabelPattern)
   assert.equal(result?.assistiveHintHidden, true, `Finance assistive hint became visible: ${JSON.stringify(result)}`)
@@ -1501,7 +1651,7 @@ async function auditMobileFinanceOverflow(width) {
 }
 
 async function auditNodeFinanceStates(width) {
-  const initScript = `sessionStorage.setItem('leonetlab:intro:1.3.2', 'seen');`
+  const initScript = `sessionStorage.setItem('leonetlab:intro:1.4.2pre3', 'seen');`
   const defaultResult = await runInteractivePage(
     `node-finance-states-default-${width}`,
     width,
@@ -1547,7 +1697,7 @@ async function auditPingBarGeometry() {
     900,
     pingBarGeometryAuditExpression,
     undefined,
-    `sessionStorage.setItem('leonetlab:intro:1.3.2', 'seen');`,
+    `sessionStorage.setItem('leonetlab:intro:1.4.2pre3', 'seen');`,
   )
   reportBrowserAudit('node-ping-bar-geometry', result)
   assert.equal(result?.length, 2, `Expected latency and loss panels: ${JSON.stringify(result)}`)
@@ -1587,7 +1737,7 @@ async function auditGlobeFlagsAcrossThemeChange() {
     780,
     globeFlagThemeAuditExpression,
     undefined,
-    `sessionStorage.setItem('leonetlab:intro:1.3.2', 'seen'); localStorage.setItem('appearance', 'light'); localStorage.setItem('leonetlab:appearance:user-override', '1');`,
+    `sessionStorage.setItem('leonetlab:intro:1.4.2pre3', 'seen'); localStorage.setItem('appearance', 'light'); localStorage.setItem('leonetlab:appearance:user-override', '1');`,
   )
   reportBrowserAudit('globe-flags-theme-change', result)
   assert.equal(result?.initialCount, 2, `Expected two globe flag overlays: ${JSON.stringify(result)}`)
@@ -1596,6 +1746,9 @@ async function auditGlobeFlagsAcrossThemeChange() {
   assert.equal(result?.minCount, 2, `Globe flags disappeared during theme switch: ${JSON.stringify(result)}`)
   assert.equal(result?.allLoaded, true, `A globe flag asset failed to load: ${JSON.stringify(result)}`)
   assert.equal(result?.allDisplayed, true, `A globe flag was hidden: ${JSON.stringify(result)}`)
+  assert.equal(result?.flagsNotDraggable, true, `Globe flag images still expose native dragging: ${JSON.stringify(result)}`)
+  assert.equal(result?.nativeFlagDragPrevented, true, `Native flag dragging was not cancelled: ${JSON.stringify(result)}`)
+  assert.equal(result?.flagDragMoved, true, `Dragging from a flag did not rotate the globe: ${JSON.stringify(result)}`)
   assert.equal(result?.overlayMoved, true, `Globe drag did not change the projected flag position: ${JSON.stringify(result)}`)
   assert.equal(result?.draggingEnded, true, `Globe drag state did not settle: ${JSON.stringify(result)}`)
   assert.ok(result?.activeOverlayZ > result?.maxSiblingZ, `Regional readout did not rise above sibling flags: ${JSON.stringify(result)}`)
@@ -1611,7 +1764,7 @@ async function auditGlobeRegionInteraction() {
     780,
     globeRegionInteractionAuditExpression,
     undefined,
-    `window.__lnlGlobeProbe = {}; sessionStorage.setItem('leonetlab:intro:1.3.2', 'seen');`,
+    `window.__lnlGlobeProbe = {}; sessionStorage.setItem('leonetlab:intro:1.4.2pre3', 'seen');`,
   )
   reportBrowserAudit('globe-region-interaction', result)
   assert.equal(result?.openedTooEarly, false, `Region preview skipped hover intent delay: ${JSON.stringify(result)}`)
@@ -1632,7 +1785,7 @@ async function auditGlobeRouteRipple() {
     780,
     globeRouteRippleAuditExpression,
     undefined,
-    `sessionStorage.setItem('leonetlab:intro:1.3.2', 'seen');`,
+    `sessionStorage.setItem('leonetlab:intro:1.4.2pre3', 'seen');`,
   )
   reportBrowserAudit('globe-route-ripple', result)
   assert.equal(result?.routeRipple, true, `Returning home did not trigger the route ripple: ${JSON.stringify(result)}`)
@@ -1648,7 +1801,7 @@ async function auditPingDialogCloseAnimation() {
     780,
     pingDialogCloseAuditExpression,
     undefined,
-    `sessionStorage.setItem('leonetlab:intro:1.3.2', 'seen');`,
+    `sessionStorage.setItem('leonetlab:intro:1.4.2pre3', 'seen');`,
   )
   reportBrowserAudit('ping-dialog-close-animation', result)
   assert.equal(result?.closedSeen, true, `Ping dialog skipped its closed state: ${JSON.stringify(result)}`)
@@ -1717,7 +1870,7 @@ async function auditMetricStoreFallback() {
       780,
       pingDialogOpenExpression,
       undefined,
-      `sessionStorage.setItem('leonetlab:intro:1.3.2', 'seen');`,
+      `sessionStorage.setItem('leonetlab:intro:1.4.2pre3', 'seen');`,
     )
     reportBrowserAudit('metric-store-fallback', result)
     assert.equal(result?.state, 'opened', `Ping dialog did not open behind an uninitialized metric store: ${JSON.stringify(result)}`)
@@ -1742,7 +1895,7 @@ async function auditGlobeMotionMode(mode, expectedMoved) {
       780,
       globeMotionAuditExpression.replace('__EARTH_MODE__', mode),
       undefined,
-      `sessionStorage.setItem('leonetlab:intro:1.3.2', 'seen');`,
+      `sessionStorage.setItem('leonetlab:intro:1.4.2pre3', 'seen');`,
     )
     reportBrowserAudit(`globe-motion-${mode}`, result)
     assert.equal(result?.moved, expectedMoved, `Unexpected ${mode} globe motion: ${JSON.stringify(result)}`)
@@ -1759,7 +1912,7 @@ async function auditPingContentMotion() {
     780,
     pingContentMotionAuditExpression,
     undefined,
-    `sessionStorage.setItem('leonetlab:intro:1.3.2', 'seen');`,
+    `sessionStorage.setItem('leonetlab:intro:1.4.2pre3', 'seen');`,
   )
   reportBrowserAudit('ping-content-motion', result)
   assert.match(result?.toolbarAnimation || '', pingSectionInPattern, `Ping toolbar has no entrance transition: ${JSON.stringify(result)}`)
@@ -1785,22 +1938,79 @@ async function auditVisitorCollapse() {
     const result = await runInteractivePage('visitor-collapse-mobile', 390, 844, visitorCollapseAuditExpression, undefined, visitorFixtureInitScript)
     reportBrowserAudit('visitor-collapse', result)
     assert.equal(result?.state, 'compact', `Visitor presentation did not finish: ${JSON.stringify(result)}`)
-    assert.equal(result?.compactingSeen, true, `Visitor compacting phase was skipped: ${JSON.stringify(result)}`)
+    assert.equal(result?.compactingSeen, true, `Visitor morphing phase was skipped: ${JSON.stringify(result)}`)
     assert.ok(result?.frames >= 20, `Visitor collapse produced too few animation frames: ${JSON.stringify(result)}`)
     assert.ok(result?.maxFrame < 160, `Visitor collapse stalled for too long: ${JSON.stringify(result)}`)
     assert.ok(result?.maxLongTask < longTaskHardLimitMs, `Visitor collapse produced a main-thread task over ${longTaskHardLimitMs}ms (observed: ${JSON.stringify(result?.longTaskDurations ?? [])}): ${JSON.stringify(result)}`)
     assert.doesNotMatch(result?.collapseTransitionProperty ?? '', layoutTransitionPropertyPattern, `Mobile visitor still animates layout properties: ${JSON.stringify(result)}`)
-    assert.ok(result?.minCompactingOpacity <= 0.05, `Mobile visitor did not hide before changing compact geometry: ${JSON.stringify(result)}`)
+    assert.ok(result?.minCompactingOpacity <= 0.12, `Mobile visitor expanded layer did not cross-fade during compact morph: ${JSON.stringify(result)}`)
+    assert.ok(result?.maxCompactLayerOpacity >= 0.9, `Mobile visitor compact bar never became visible during morph: ${JSON.stringify(result)}`)
+    assert.match(result?.compactLayerText ?? '', visitorResolvedInfoPattern, `Mobile visitor compact bar lost resolved information: ${JSON.stringify(result)}`)
+    assert.equal(result?.scanningEntries, 1, `Visitor scan phase replayed: ${JSON.stringify(result)}`)
+    assert.deepEqual(result?.postCompactTransitions, [], `Visitor restarted after reaching compact state: ${JSON.stringify(result)}`)
   }
   finally {
     visitorInfoEnabledFixture = false
   }
 }
 
+async function auditVisitorReopen() {
+  visitorInfoEnabledFixture = true
+  try {
+    const result = await runInteractivePage('visitor-reopen-mobile', 390, 844, visitorReopenAuditExpression, undefined, visitorFixtureInitScript)
+    reportBrowserAudit('visitor-reopen', result)
+    assert.equal(result?.expanded, true, `Visitor card did not reopen after compacting: ${JSON.stringify(result)}`)
+    assert.ok(result?.expandedOpacity >= 0.95, `Visitor expanded content stayed hidden: ${JSON.stringify(result)}`)
+    assert.ok(result?.compactOpacity <= 0.05, `Visitor compact layer covered reopened details: ${JSON.stringify(result)}`)
+    assert.ok(result?.rowCount >= 7, `Visitor details are incomplete: ${JSON.stringify(result)}`)
+    assert.deepEqual(result?.labels, ['来源', '设备', '地址', '浏览器', '网络', 'ASN', '访问时间'])
+    assert.match(result?.text ?? '', visitorResolvedInfoPattern, `Visitor details lost resolved information: ${JSON.stringify(result)}`)
+  }
+  finally {
+    visitorInfoEnabledFixture = false
+  }
+}
+
+async function auditSearchGeometry(width) {
+  const result = await runInteractivePage(
+    `search-geometry-${width}`,
+    width,
+    width <= 760 ? 844 : 900,
+    searchGeometryAuditExpression,
+    undefined,
+    `sessionStorage.setItem('leonetlab:intro:1.4.2pre3', 'seen');`,
+  )
+  reportBrowserAudit(`search-geometry-${width}`, result)
+  assert.equal(result?.drawerContained, true, `Search drawer escaped its viewport: ${JSON.stringify(result)}`)
+  assert.equal(result?.fieldContained, true, `Search field escaped its drawer: ${JSON.stringify(result)}`)
+  assert.ok(result?.fieldWidth <= Math.min(728, width), `Search field exceeded its intended width: ${JSON.stringify(result)}`)
+  assert.ok(result?.drawerOverflow <= 1, `Search drawer still overflows horizontally: ${JSON.stringify(result)}`)
+  assert.ok(result?.innerOverflow <= 1, `Search drawer inner area still overflows: ${JSON.stringify(result)}`)
+  assert.equal(result?.inputBorderWidth, '0px', `Nested search input still renders a second border: ${JSON.stringify(result)}`)
+  assert.ok(result?.documentWidth <= result?.viewportWidth, `Search opened horizontal document overflow: ${JSON.stringify(result)}`)
+}
+
+async function auditSlowPublicSettingsShell() {
+  publicSettingsDelayMsFixture = 2600
+  introAnimationEnabledFixture = false
+  try {
+    const result = await runInteractivePage('slow-public-settings-shell', 1100, 780, slowPublicSettingsShellAuditExpression)
+    reportBrowserAudit('slow-public-settings-shell', result)
+    assert.equal(result?.mounted, true, `Slow public settings left the PWA shell blank: ${JSON.stringify(result)}`)
+    assert.ok(result?.navigationElapsed < 1700, `Safe shell mounted too late: ${JSON.stringify(result)}`)
+    assert.equal(result?.introVisible, false, `A late settings response started the intro halfway through boot: ${JSON.stringify(result)}`)
+    assert.equal(result?.bootFallbackVisible, false, `Static boot fallback was not replaced by Vue: ${JSON.stringify(result)}`)
+  }
+  finally {
+    publicSettingsDelayMsFixture = 0
+    introAnimationEnabledFixture = true
+  }
+}
+
 async function auditMobileChromeLayout() {
   visitorInfoEnabledFixture = true
   try {
-    const initScript = `${visitorFixtureInitScript}\nsessionStorage.setItem('leonetlab:intro:1.3.2', 'seen');`
+    const initScript = `${visitorFixtureInitScript}\nsessionStorage.setItem('leonetlab:intro:1.4.2pre3', 'seen');`
     const result = await runInteractivePage('mobile-chrome-layout', 390, 844, mobileChromeLayoutAuditExpression, undefined, initScript)
     reportBrowserAudit('mobile-chrome-layout', result)
     assert.ok(Math.abs(result?.logoWidth - result?.logoHeight) < 0.5, `Mobile logo frame is not square: ${JSON.stringify(result)}`)
@@ -1808,6 +2018,9 @@ async function auditMobileChromeLayout() {
     assert.equal(result?.expandedOverlap, false, `Expanded visitor card overlaps back-to-top: ${JSON.stringify(result)}`)
     assert.equal(result?.searchTabOverlap, false, `Mobile search overlaps the active group tab: ${JSON.stringify(result)}`)
     assert.equal(result?.searchInsideViewport, true, `Mobile search escaped the viewport: ${JSON.stringify(result)}`)
+    assert.equal(result?.searchFieldInsideViewport, true, `Mobile search field escaped the viewport: ${JSON.stringify(result)}`)
+    assert.ok(result?.searchFieldWidth <= result?.viewportWidth, `Mobile search field is wider than the viewport: ${JSON.stringify(result)}`)
+    assert.notEqual(result?.searchFieldRadius, '0px', `Mobile search field lost the rounded design language: ${JSON.stringify(result)}`)
     assert.equal(result?.touchOpened, true, `A single touch did not open regional telemetry: ${JSON.stringify(result)}`)
     assert.equal(result?.touchClosed, true, `A second touch did not close regional telemetry: ${JSON.stringify(result)}`)
     assert.equal(result?.greetingVisible, true, `Expanded visitor card has no time greeting: ${JSON.stringify(result)}`)
@@ -1848,7 +2061,7 @@ async function auditMobileSearchMove() {
     844,
     mobileSearchMoveAuditExpression,
     undefined,
-    `sessionStorage.setItem('leonetlab:intro:1.3.2', 'seen');`,
+    `sessionStorage.setItem('leonetlab:intro:1.4.2pre3', 'seen');`,
   )
   reportBrowserAudit('mobile-search-move', result)
   assert.ok(result?.after < result?.before - 100, `Filtered card did not move to the first slot: ${JSON.stringify(result)}`)
@@ -1893,10 +2106,14 @@ try {
   await auditIntroGlobeHandoff()
   await auditMobileProbeMatrix()
   await auditVisitorCollapse()
+  await auditVisitorReopen()
   await auditMobileChromeLayout()
   await auditMobileIntroTypography()
+  await auditSearchGeometry(390)
+  await auditSearchGeometry(1440)
   await auditMobileSearchMove()
   await auditEarlyIntroBeforeSlowNodes()
+  await auditSlowPublicSettingsShell()
 
   const detailHtml = await dumpDom('detail', `/instance/${nodeUuid}`, 8000)
   assert.match(detailHtml, /资源与系统记录/)

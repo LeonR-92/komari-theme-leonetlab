@@ -1,11 +1,15 @@
 <script setup lang="ts">
 import { Icon } from '@iconify/vue'
-import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
+import { useAppStore } from '@/stores/app'
 
 const props = defineProps<{
   introComplete: boolean
   presentOnReady: boolean
 }>()
+
+const appStore = useAppStore()
+const VISITOR_PRESENTATION_SESSION_KEY = 'leonetlab:visitor-presentation:1.4.2'
 
 interface VisitorGeoData {
   ip: string
@@ -24,7 +28,6 @@ interface VisitorInfoRow {
   label: string
   value: string
   icon: string
-  expandOnly?: boolean
   wide?: boolean
 }
 
@@ -44,26 +47,41 @@ const IPV6_SEGMENT_REGEX = /^[\dA-F]{1,4}$/i
 const IPV6_DOUBLE_COLON = '::'
 
 const loading = ref(true)
-const device = ref('检测中')
-const browser = ref('检测中')
-const ip = ref('获取中')
-const isp = ref('获取中')
-const asn = ref('获取中')
-const location = ref('正在定位访客来源')
+const device = ref('当前设备')
+const browser = ref('当前浏览器')
+const ip = ref('正在识别')
+const isp = ref('正在识别网络')
+const asn = ref('识别中')
+const location = ref('网络访客')
 const countryCode = ref('')
 const visitTime = ref(formatVisitTime(new Date()))
 const flagVisible = ref(true)
 const expand = ref(false)
-const presentationState = ref<'waiting' | 'entering' | 'scanning' | 'verified' | 'collapsing' | 'compacting' | 'compact'>(
-  props.presentOnReady ? 'waiting' : 'compact',
+const systemReducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches
+const motionReduced = computed(() => systemReducedMotion || appStore.disablePageAnimation)
+
+function isPresentationSessionEligible(): boolean {
+  if (!props.presentOnReady || motionReduced.value)
+    return false
+  try {
+    return sessionStorage.getItem(VISITOR_PRESENTATION_SESSION_KEY) !== 'seen'
+  }
+  catch {
+    return true
+  }
+}
+
+const presentationEligible = isPresentationSessionEligible()
+const presentationState = ref<'waiting' | 'entering' | 'scanning' | 'verified' | 'morphing' | 'compact'>(
+  presentationEligible ? 'waiting' : 'compact',
 )
-const presentationTimers: number[] = []
-const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches
+const presentationSettling = ref(false)
+let presentationTimer: number | null = null
+let presentationRun = 0
 let presentationStarted = false
-const presentationActive = computed(() => ['entering', 'scanning', 'verified', 'collapsing'].includes(presentationState.value))
-// compacting 阶段保留展开几何；移动端会先在合成层淡出，再于不可见状态切换尺寸。
-const isExpanded = computed(() => expand.value || presentationActive.value || presentationState.value === 'compacting')
-const keepExpandedRows = computed(() => isExpanded.value || presentationState.value === 'compacting')
+const presentationActive = computed(() => ['entering', 'scanning', 'verified', 'morphing'].includes(presentationState.value))
+const isExpanded = computed(() => expand.value || presentationActive.value)
+const keepExpandedRows = computed(() => isExpanded.value)
 
 const subtitle = computed(() => loading.value ? '检测中' : location.value || '网络访客')
 const flagSrc = computed(() => countryCode.value ? `/images/flags/${countryCode.value}.svg` : '')
@@ -81,7 +99,6 @@ const visitorRows = computed<VisitorInfoRow[]>(() => [
     label: '设备',
     value: device.value,
     icon: 'tabler:device-desktop',
-    expandOnly: true,
   },
   {
     label: '地址',
@@ -97,48 +114,96 @@ const visitorRows = computed<VisitorInfoRow[]>(() => [
     label: '网络',
     value: isp.value,
     icon: 'tabler:building-skyscraper',
-    expandOnly: true,
   },
   {
     label: 'ASN',
     value: asn.value,
     icon: 'tabler:network',
-    expandOnly: true,
   },
   {
     label: '访问时间',
     value: visitTime.value,
     icon: 'tabler:clock-hour-4',
-    expandOnly: true,
   },
 ])
-const visibleRows = computed(() => visitorRows.value.filter(item => keepExpandedRows.value || !item.expandOnly))
+function clearPresentationTimer() {
+  if (presentationTimer !== null) {
+    window.clearTimeout(presentationTimer)
+    presentationTimer = null
+  }
+}
+
+function settlePresentation(runId: number) {
+  if (runId !== presentationRun)
+    return
+  clearPresentationTimer()
+  presentationSettling.value = true
+  presentationState.value = 'compact'
+  expand.value = false
+  void nextTick(() => {
+    window.requestAnimationFrame(() => {
+      if (runId === presentationRun)
+        presentationSettling.value = false
+    })
+  })
+}
+
+function schedulePresentationStep(
+  runId: number,
+  delay: number,
+  nextState: 'scanning' | 'verified' | 'morphing',
+  next: () => void,
+) {
+  clearPresentationTimer()
+  presentationTimer = window.setTimeout(() => {
+    presentationTimer = null
+    if (runId !== presentationRun)
+      return
+    if (document.hidden) {
+      settlePresentation(runId)
+      return
+    }
+    presentationState.value = nextState
+    next()
+  }, delay)
+}
 
 function startPresentation() {
-  if (presentationStarted || !props.presentOnReady || reducedMotion || !props.introComplete || loading.value)
+  if (motionReduced.value) {
+    presentationRun += 1
+    clearPresentationTimer()
+    presentationState.value = 'compact'
+    expand.value = false
+    return
+  }
+  if (presentationStarted || !presentationEligible || !props.introComplete)
     return
 
   presentationStarted = true
+  try {
+    sessionStorage.setItem(VISITOR_PRESENTATION_SESSION_KEY, 'seen')
+  }
+  catch {
+  }
+  const runId = ++presentationRun
   presentationState.value = 'entering'
-  presentationTimers.push(window.setTimeout(() => {
-    presentationState.value = 'scanning'
-  }, 680))
-  presentationTimers.push(window.setTimeout(() => {
-    presentationState.value = 'verified'
-  }, 2380))
-  presentationTimers.push(window.setTimeout(() => {
-    presentationState.value = 'collapsing'
-  }, 3580))
-  presentationTimers.push(window.setTimeout(() => {
-    presentationState.value = 'compacting'
-  }, 4080))
-  presentationTimers.push(window.setTimeout(() => {
-    presentationState.value = 'compact'
-    expand.value = false
-  }, 4520))
+  schedulePresentationStep(runId, 680, 'scanning', () => {
+    schedulePresentationStep(runId, 1700, 'verified', () => {
+      schedulePresentationStep(runId, 1200, 'morphing', () => {
+        clearPresentationTimer()
+        presentationTimer = window.setTimeout(settlePresentation, 720, runId)
+      })
+    })
+  })
 }
 
-watch([() => props.introComplete, loading], startPresentation, { immediate: true })
+watch([() => props.introComplete, motionReduced], startPresentation, { immediate: true })
+
+function handleToggle() {
+  if (presentationActive.value)
+    return
+  expand.value = !expand.value
+}
 
 function getItemTransitionStyle(index: number): Record<string, string> {
   return {
@@ -281,12 +346,18 @@ function detectClient(): VisitorClientData {
   }
 }
 
+let visitorGeoDeadline = Number.POSITIVE_INFINITY
+
 async function fetchJson<T>(url: string, timeoutMs: number): Promise<T> {
+  const remainingBudget = Math.max(1, visitorGeoDeadline - performance.now())
+  const requestTimeout = Math.min(timeoutMs, remainingBudget)
   const controller = new AbortController()
-  const timeoutId = window.setTimeout(() => controller.abort(), timeoutMs)
+  const timeoutId = window.setTimeout(() => controller.abort(), requestTimeout)
 
   try {
-    const response = await fetch(url, { signal: controller.signal })
+    const response = await fetch(url, {
+      signal: controller.signal,
+    })
     if (!response.ok) {
       throw new Error(`Request failed: ${response.status}`)
     }
@@ -298,6 +369,7 @@ async function fetchJson<T>(url: string, timeoutMs: number): Promise<T> {
 }
 
 async function fetchVisitorGeo(): Promise<VisitorGeoData | null> {
+  visitorGeoDeadline = performance.now() + 4500
   const loaders = [
     async (): Promise<VisitorGeoData> => {
       const data = await fetchJson<{
@@ -447,13 +519,18 @@ async function fetchVisitorGeo(): Promise<VisitorGeoData | null> {
   ]
 
   for (const load of loaders) {
+    if (performance.now() >= visitorGeoDeadline)
+      break
     try {
-      return await load()
+      const result = await load()
+      visitorGeoDeadline = Number.POSITIVE_INFINITY
+      return result
     }
     catch {
     }
   }
 
+  visitorGeoDeadline = Number.POSITIVE_INFINITY
   return null
 }
 
@@ -461,31 +538,41 @@ function handleFlagError(): void {
   flagVisible.value = false
 }
 
-onMounted(async () => {
+onMounted(() => {
   const client = detectClient()
   device.value = client.device
   browser.value = client.browser
   visitTime.value = formatVisitTime(new Date())
 
-  const geo = await fetchVisitorGeo()
-  if (geo) {
+  void fetchVisitorGeo().then((geo) => {
+    if (!geo) {
+      ip.value = '识别失败'
+      isp.value = '网络识别暂不可用'
+      asn.value = '未知'
+      return
+    }
     ip.value = geo.ip
     isp.value = geo.isp
     asn.value = geo.asn
     location.value = geo.location
     countryCode.value = geo.countryCode.toUpperCase()
-  }
-  else {
-    ip.value = '暂无法获取'
-    isp.value = '网络信息不可用'
-    asn.value = '未知'
-    location.value = '网络访客'
-  }
+  }).finally(() => {
+    loading.value = false
+  })
 
-  loading.value = false
+  document.addEventListener('visibilitychange', handleVisibilityChange)
 })
 
-onUnmounted(() => presentationTimers.forEach(timer => window.clearTimeout(timer)))
+function handleVisibilityChange() {
+  if (document.hidden && presentationActive.value)
+    settlePresentation(presentationRun)
+}
+
+onUnmounted(() => {
+  presentationRun += 1
+  clearPresentationTimer()
+  document.removeEventListener('visibilitychange', handleVisibilityChange)
+})
 </script>
 
 <template>
@@ -494,7 +581,11 @@ onUnmounted(() => presentationTimers.forEach(timer => window.clearTimeout(timer)
     :data-presentation-state="presentationState"
     :class="[
       `is-${presentationState}`,
-      { 'is-presenting': presentationActive, 'is-expanded': isExpanded },
+      {
+        'is-presenting': presentationActive,
+        'is-expanded': isExpanded,
+        'is-presentation-snap': presentationSettling,
+      },
     ]"
     aria-label="访客网络信息"
   >
@@ -503,46 +594,55 @@ onUnmounted(() => presentationTimers.forEach(timer => window.clearTimeout(timer)
       class="lnl-visitor-trigger"
       :class="{ 'is-expanded': isExpanded }"
       :aria-expanded="isExpanded"
-      @click="expand = !expand"
+      :aria-label="isExpanded ? '收起访客网络信息' : '查看访客网络信息详情'"
+      @click="handleToggle"
     >
-      <span v-if="keepExpandedRows" class="lnl-visitor-scan-head">
-        <span><i :class="{ 'is-live': presentationActive }" /> {{ greeting }} · 身份信息扫描</span>
-        <b>{{ presentationActive ? (presentationState === 'verified' ? '验证完成' : presentationState === 'collapsing' ? '凭证已收束' : presentationState === 'entering' ? '建立会话' : '解析中') : '访客会话' }}</b>
-      </span>
-      <TransitionGroup
-        tag="div"
-        name="visitor-pill"
-        class="lnl-visitor-rows"
-        :class="[keepExpandedRows ? 'grid grid-cols-2 items-start justify-start gap-x-3 gap-y-2' : 'flex flex-nowrap items-center justify-center gap-x-3 gap-y-1']"
-      >
+      <div class="lnl-visitor-expanded-layer" :aria-hidden="!isExpanded">
+        <span v-if="keepExpandedRows" class="lnl-visitor-scan-head">
+          <span><i :class="{ 'is-live': presentationActive }" /> {{ greeting }} · 身份信息扫描</span>
+          <b>{{ presentationActive ? (presentationState === 'verified' ? '验证完成' : presentationState === 'morphing' ? '凭证已收束' : presentationState === 'entering' ? '建立会话' : '解析中') : '访客会话' }}</b>
+        </span>
         <div
-          v-for="(item, index) in visibleRows" :key="item.icon"
-          class="lnl-visitor-row flex min-w-0 items-center gap-2"
-          :class="{ 'is-source': item.wide }"
-          :style="getItemTransitionStyle(index)"
+          class="lnl-visitor-rows"
+          :class="[keepExpandedRows ? 'grid grid-cols-2 items-start justify-start gap-x-3 gap-y-2' : 'flex flex-nowrap items-center justify-center gap-x-3 gap-y-1']"
         >
-          <img
-            v-if="item.icon === 'tabler:world-pin' && flagSrc && flagVisible" :src="flagSrc" :alt="countryCode"
-            class="h-4 w-4 object-cover" @error="handleFlagError"
-          >
           <div
-            v-else
-            class="flex h-4 w-4 shrink-0 items-center justify-center rounded bg-emerald-500/10 text-emerald-600"
+            v-for="(item, index) in visitorRows" :key="item.icon"
+            class="lnl-visitor-row flex min-w-0 items-center gap-2"
+            :class="{ 'is-source': item.wide }"
+            :style="getItemTransitionStyle(index)"
           >
-            <Icon :icon="item.icon" :width="14" :height="14" />
-          </div>
-          <div
-            class="min-w-0 transition-[opacity,transform] duration-220 ease-[cubic-bezier(0.22,1,0.36,1)]"
-            :class="[isExpanded || !index ? 'block opacity-100 translate-y-0' : 'hidden md:block md:opacity-100', !isExpanded && index ? 'md:translate-y-0' : '']"
-          >
-            <div v-if="loading" class="h-2 w-15 animate-pulse motion-reduce:animate-none rounded-full bg-muted/70" />
-            <template v-else>
-              <small>{{ item.label }}</small>
-              <p>{{ item.value }}</p>
-            </template>
+            <img
+              v-if="item.icon === 'tabler:world-pin' && flagSrc && flagVisible" :src="flagSrc" :alt="countryCode"
+              class="h-4 w-4 object-cover" @error="handleFlagError"
+            >
+            <div
+              v-else
+              class="flex h-4 w-4 shrink-0 items-center justify-center rounded bg-emerald-500/10 text-emerald-600"
+            >
+              <Icon :icon="item.icon" :width="14" :height="14" />
+            </div>
+            <div
+              class="min-w-0 transition-[opacity,transform] duration-220 ease-[cubic-bezier(0.22,1,0.36,1)]"
+              :class="[isExpanded || !index ? 'block opacity-100 translate-y-0' : 'hidden md:block md:opacity-100', !isExpanded && index ? 'md:translate-y-0' : '']"
+            >
+              <div v-if="loading" class="h-2 w-15 animate-pulse motion-reduce:animate-none rounded-full bg-muted/70" />
+              <template v-else>
+                <small>{{ item.label }}</small>
+                <p>{{ item.value }}</p>
+              </template>
+            </div>
           </div>
         </div>
-      </TransitionGroup>
+      </div>
+      <span class="lnl-visitor-compact-layer" aria-hidden="true">
+        <span class="lnl-visitor-compact-source">
+          <img v-if="flagSrc && flagVisible" :src="flagSrc" :alt="countryCode" @error="handleFlagError">
+          <Icon v-else icon="tabler:world-pin" :width="14" :height="14" />
+          <b>{{ subtitle }}</b>
+        </span>
+        <span>{{ displayIp }}</span>
+      </span>
       <span class="lnl-visitor-action" aria-hidden="true">
         {{ isExpanded ? '收起' : '详情' }}
         <Icon :icon="isExpanded ? 'tabler:chevron-up' : 'tabler:chevron-down'" :width="13" :height="13" />
@@ -581,7 +681,7 @@ onUnmounted(() => presentationTimers.forEach(timer => window.clearTimeout(timer)
   gap: 14px;
   padding: 9px 11px 9px 13px;
   border: 1px solid var(--lnl-line);
-  border-radius: 0;
+  border-radius: var(--lnl-radius-card);
   background: var(--background);
   box-shadow: 0 12px 38px rgb(0 0 0 / 18%);
   contain: layout paint style;
@@ -593,9 +693,18 @@ onUnmounted(() => presentationTimers.forEach(timer => window.clearTimeout(timer)
     border-color 240ms ease,
     background-color 240ms ease,
     transform 320ms cubic-bezier(0.22, 1, 0.36, 1),
+    clip-path 520ms cubic-bezier(0.16, 1, 0.3, 1),
     width 440ms cubic-bezier(0.22, 1, 0.36, 1),
     height 440ms cubic-bezier(0.22, 1, 0.36, 1),
     padding 360ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+:global(.dark) .lnl-visitor-trigger {
+  border-color: var(--lnl-line-strong);
+  background: var(--lnl-surface-raised);
+  box-shadow:
+    0 16px 44px rgb(0 0 0 / 36%),
+    0 0 24px color-mix(in srgb, var(--lnl-green) 5%, transparent);
 }
 
 .lnl-visitor.is-presenting .lnl-visitor-trigger,
@@ -612,9 +721,33 @@ onUnmounted(() => presentationTimers.forEach(timer => window.clearTimeout(timer)
   height: 238px;
 }
 
-.lnl-visitor.is-collapsing .lnl-visitor-trigger,
-.lnl-visitor.is-compacting .lnl-visitor-trigger {
-  will-change: height, transform, opacity;
+.lnl-visitor.is-morphing .lnl-visitor-trigger {
+  border-color: transparent;
+  background: transparent;
+  box-shadow: none;
+  will-change: transform, opacity, clip-path;
+}
+
+/* The compact layer is already visible at its final bottom anchor. Collapse
+   only the transparent shell on this render so no second size animation plays
+   after the scan has visibly completed. */
+.lnl-visitor.is-presentation-snap .lnl-visitor-trigger {
+  transition: none;
+}
+
+.lnl-visitor.is-morphing .lnl-visitor-compact-layer {
+  right: 0;
+  left: 0;
+  padding: 0 64px 0 13px;
+  border: 1px solid color-mix(in srgb, var(--lnl-green) 42%, var(--lnl-line));
+  border-radius: var(--lnl-radius-card);
+  background: var(--background);
+  box-shadow: 0 12px 38px rgb(0 0 0 / 18%);
+}
+
+:global(.dark) .lnl-visitor.is-morphing .lnl-visitor-compact-layer {
+  background: var(--lnl-surface-raised);
+  box-shadow: 0 16px 44px rgb(0 0 0 / 34%);
 }
 
 .lnl-visitor.is-presenting .lnl-visitor-rows,
@@ -635,16 +768,75 @@ onUnmounted(() => presentationTimers.forEach(timer => window.clearTimeout(timer)
   max-width: min(450px, calc(100vw - 120px));
 }
 
-.lnl-visitor.is-collapsing .lnl-visitor-rows,
-.lnl-visitor.is-collapsing .lnl-visitor-scan-head {
+.lnl-visitor.is-morphing .lnl-visitor-expanded-layer,
+.lnl-visitor.is-compact:not(.is-expanded) .lnl-visitor-expanded-layer {
   opacity: 0;
   transform: translate3d(-14px, 0, 0);
 }
 
-.lnl-visitor.is-compacting .lnl-visitor-rows,
-.lnl-visitor.is-compacting .lnl-visitor-action {
+.lnl-visitor-expanded-layer {
+  display: grid;
+  min-width: 0;
+  gap: 10px;
+  transition:
+    opacity 360ms ease,
+    transform 540ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.lnl-visitor.is-expanded:not(.is-morphing) .lnl-visitor-expanded-layer {
+  opacity: 1;
+  transform: none;
+}
+
+.lnl-visitor-compact-layer {
+  position: absolute;
+  right: 52px;
+  bottom: 0;
+  left: 13px;
+  display: flex;
+  height: 54px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  overflow: hidden;
   opacity: 0;
-  transform: translate3d(-8px, 0, 0);
+  transform: translate3d(10px, 0, 0);
+  transition:
+    opacity 320ms ease,
+    transform 480ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.lnl-visitor.is-morphing .lnl-visitor-compact-layer,
+.lnl-visitor.is-compact:not(.is-expanded) .lnl-visitor-compact-layer {
+  opacity: 1;
+  transform: none;
+}
+
+.lnl-visitor.is-expanded:not(.is-morphing) .lnl-visitor-compact-layer {
+  opacity: 0;
+  transform: translate3d(10px, 0, 0);
+}
+
+.lnl-visitor-compact-source {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 7px;
+}
+
+.lnl-visitor-compact-source img {
+  width: 16px;
+  height: 16px;
+  object-fit: cover;
+}
+
+.lnl-visitor-compact-source b,
+.lnl-visitor-compact-layer > span:last-child {
+  overflow: hidden;
+  font-size: 12px;
+  font-weight: 560;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .lnl-visitor-scan-head {
@@ -761,26 +953,9 @@ onUnmounted(() => presentationTimers.forEach(timer => window.clearTimeout(timer)
     transform 320ms cubic-bezier(0.22, 1, 0.36, 1);
 }
 
-.visitor-pill-enter-active,
-.visitor-pill-leave-active,
-.visitor-pill-move {
-  transition:
-    opacity 220ms ease,
-    transform 280ms cubic-bezier(0.22, 1, 0.36, 1);
-}
-
-.visitor-pill-enter-active {
-  transition-delay: var(--visitor-pill-delay, 0ms);
-}
-
-.visitor-pill-enter-from,
-.visitor-pill-leave-to {
-  opacity: 0;
-  transform: translateY(8px) scale(0.96);
-}
-
-.visitor-pill-leave-active {
-  position: absolute;
+.lnl-visitor.is-entering .lnl-visitor-row {
+  animation: visitor-row-enter 420ms cubic-bezier(0.22, 1, 0.36, 1) backwards;
+  animation-delay: var(--visitor-pill-delay, 0ms);
 }
 
 @keyframes visitor-scan-beam {
@@ -807,6 +982,13 @@ onUnmounted(() => presentationTimers.forEach(timer => window.clearTimeout(timer)
   }
 }
 
+@keyframes visitor-row-enter {
+  from {
+    opacity: 0;
+    transform: translate3d(0, 7px, 0) scale(0.98);
+  }
+}
+
 @media (max-width: 760px) {
   .lnl-visitor {
     right: 14px;
@@ -821,7 +1003,8 @@ onUnmounted(() => presentationTimers.forEach(timer => window.clearTimeout(timer)
       border-color 180ms ease,
       background-color 180ms ease,
       opacity 220ms ease,
-      transform 280ms cubic-bezier(0.22, 1, 0.36, 1);
+      transform 280ms cubic-bezier(0.22, 1, 0.36, 1),
+      clip-path 520ms cubic-bezier(0.16, 1, 0.3, 1);
   }
 
   .lnl-visitor.is-presenting .lnl-visitor-trigger {
@@ -840,19 +1023,8 @@ onUnmounted(() => presentationTimers.forEach(timer => window.clearTimeout(timer)
 
   /* iOS 上逐帧补间 height/width 会反复触发布局和栅格重排。收束阶段先用
      合成层淡出，隐藏状态下切换到紧凑几何，再淡入，视觉连续且不挤压主页。 */
-  .lnl-visitor.is-collapsing .lnl-visitor-trigger,
-  .lnl-visitor.is-compacting .lnl-visitor-trigger {
+  .lnl-visitor.is-morphing .lnl-visitor-trigger {
     will-change: transform, opacity;
-  }
-
-  .lnl-visitor.is-compacting .lnl-visitor-trigger {
-    height: min(250px, calc(100dvh - 124px));
-    opacity: 0;
-    transform: translate3d(-10px, 0, 0) scale(0.985);
-  }
-
-  .lnl-visitor.is-compact .lnl-visitor-trigger {
-    animation: visitor-mobile-compact-in 260ms cubic-bezier(0.22, 1, 0.36, 1) both;
   }
 
   .lnl-visitor.is-presenting .lnl-visitor-row p,
@@ -866,24 +1038,7 @@ onUnmounted(() => presentationTimers.forEach(timer => window.clearTimeout(timer)
   }
 }
 
-@keyframes visitor-mobile-compact-in {
-  from {
-    opacity: 0;
-    transform: translate3d(-8px, 0, 0) scale(0.985);
-  }
-  to {
-    opacity: 1;
-    transform: none;
-  }
-}
-
 @media (prefers-reduced-motion: reduce) {
-  .visitor-pill-enter-active,
-  .visitor-pill-leave-active,
-  .visitor-pill-move {
-    transition: none;
-  }
-
   .lnl-visitor-trigger {
     transition: none;
   }
@@ -895,14 +1050,8 @@ onUnmounted(() => presentationTimers.forEach(timer => window.clearTimeout(timer)
     animation: none;
   }
 
-  .lnl-visitor.is-compact .lnl-visitor-trigger {
+  .lnl-visitor.is-entering .lnl-visitor-row {
     animation: none;
-  }
-
-  .visitor-pill-enter-from,
-  .visitor-pill-leave-to {
-    opacity: 1;
-    transform: none;
   }
 }
 </style>

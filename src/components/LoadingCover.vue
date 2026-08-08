@@ -51,7 +51,7 @@ function handleLogoError(event: Event) {
 }
 
 onMounted(() => {
-  ;[760, 1720, 2860].forEach((delay, index) => {
+  ;[620, 1460, 2440].forEach((delay, index) => {
     timers.push(window.setTimeout(() => {
       phaseIndex.value = index + 1
     }, delay))
@@ -407,7 +407,7 @@ onUnmounted(() => timers.forEach(timer => window.clearTimeout(timer)))
   background: linear-gradient(90deg, var(--intro-accent), var(--intro-cyan));
   transform: scaleX(0);
   transform-origin: left;
-  animation: intro-track 4.1s cubic-bezier(0.2, 0.72, 0.2, 1) forwards;
+  animation: intro-track 3.05s cubic-bezier(0.2, 0.72, 0.2, 1) forwards;
 }
 .lnl-intro-skip {
   position: absolute;
@@ -416,7 +416,7 @@ onUnmounted(() => timers.forEach(timer => window.clearTimeout(timer)))
   bottom: max(42px, calc(env(safe-area-inset-bottom) + 27px));
   padding: 7px 10px;
   border: 1px solid color-mix(in srgb, var(--intro-accent) 24%, transparent);
-  border-radius: 0;
+  border-radius: var(--lnl-radius-control);
   background: color-mix(in srgb, var(--intro-bg) 78%, transparent);
   color: var(--intro-muted);
   font: 9px/1 var(--font-mono);

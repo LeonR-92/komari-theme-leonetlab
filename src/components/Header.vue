@@ -1,15 +1,17 @@
 <script setup lang="ts">
 import type { ThemeCacheRefreshPhase } from '@/utils/pwa'
 import { Icon } from '@iconify/vue'
-import { computed, inject, onUnmounted, ref } from 'vue'
+import { computed, inject, onMounted, onUnmounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { Button } from '@/components/ui/button'
 import { DataTooltip } from '@/components/ui/data-tooltip'
+import { usePwaInstall } from '@/composables/usePwaInstall'
 import { useAppStore } from '@/stores/app'
 import { refreshThemeCache } from '@/utils/pwa'
 
 const router = useRouter()
 const appStore = useAppStore()
+const { canPromptInstall, showIosInstructions, installAvailable, promptInstall } = usePwaInstall()
 const isScrolled = inject<ReturnType<typeof ref<boolean>>>('isScrolled', ref(false))
 const themeTransition = ref<{ target: 'light' | 'dark' } | null>(null)
 const themeTransitionActive = ref(false)
@@ -18,12 +20,17 @@ const transitionTimers: number[] = []
 const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches
 const logoVisible = ref(true)
 const refreshingCache = ref(false)
-type CachePanelPhase = 'idle' | ThemeCacheRefreshPhase | 'reloading' | 'error'
+type CachePanelPhase = 'idle' | 'update-ready' | ThemeCacheRefreshPhase | 'reloading' | 'error'
 const cachePanelPhase = ref<CachePanelPhase>('idle')
 let cacheReloadTimer: number | null = null
+const pwaPanelOpen = ref(false)
+const pwaInstallBusy = ref(false)
+const pwaInstallResult = ref<'idle' | 'dismissed' | 'error'>('idle')
 
 const cachePanelCopy = computed(() => {
   switch (cachePanelPhase.value) {
+    case 'update-ready':
+      return { step: 'NEW', title: '发现新的主题版本', detail: '确认后刷新缓存并载入新版本；当前页面不会自动重载。' }
     case 'checking':
       return { step: '01', title: '正在检查主题更新', detail: '正在与当前主题版本同步。' }
     case 'clearing':
@@ -48,6 +55,13 @@ const actionButtons = computed(() => {
     icon: 'tabler:refresh',
     action: 'refreshThemeCache',
   })
+  if (installAvailable.value) {
+    buttons.push({
+      title: '安装为应用',
+      icon: 'tabler:device-mobile-down',
+      action: 'installPwa',
+    })
+  }
   if (appStore.isLoggedIn || !appStore.hideAdminEntryWhenLoggedOut)
     buttons.push({ title: '管理后台', icon: 'icon-park-outline:setting', action: 'jumpToSetting' })
   return buttons
@@ -121,6 +135,41 @@ function dismissCachePanel() {
   cachePanelPhase.value = 'idle'
 }
 
+function handlePwaUpdateReady() {
+  if (!refreshingCache.value)
+    cachePanelPhase.value = 'update-ready'
+}
+
+onMounted(() => window.addEventListener('leonetlab:pwa-update-ready', handlePwaUpdateReady))
+
+async function handlePwaInstall() {
+  if (showIosInstructions.value) {
+    pwaPanelOpen.value = true
+    return
+  }
+  if (!canPromptInstall.value || pwaInstallBusy.value)
+    return
+  pwaInstallBusy.value = true
+  pwaInstallResult.value = 'idle'
+  try {
+    const outcome = await promptInstall()
+    if (outcome === 'dismissed') {
+      pwaInstallResult.value = 'dismissed'
+      pwaPanelOpen.value = true
+    }
+    else {
+      pwaPanelOpen.value = false
+    }
+  }
+  catch {
+    pwaInstallResult.value = 'error'
+    pwaPanelOpen.value = true
+  }
+  finally {
+    pwaInstallBusy.value = false
+  }
+}
+
 function jumpToSetting() {
   if (leavingForAdmin.value)
     return
@@ -139,11 +188,14 @@ function handleButtonClick(action: string) {
     toggleTheme()
   if (action === 'refreshThemeCache')
     void handleThemeCacheRefresh()
+  if (action === 'installPwa')
+    void handlePwaInstall()
   if (action === 'jumpToSetting')
     jumpToSetting()
 }
 
 onUnmounted(() => {
+  window.removeEventListener('leonetlab:pwa-update-ready', handlePwaUpdateReady)
   transitionTimers.forEach(timer => window.clearTimeout(timer))
   if (cacheReloadTimer !== null)
     window.clearTimeout(cacheReloadTimer)
@@ -218,7 +270,7 @@ function handleLogoError(event: Event) {
         <div class="lnl-cache-panel-head">
           <span>CACHE CONTROL / {{ cachePanelCopy.step }}</span>
           <button
-            v-if="cachePanelPhase === 'error'"
+            v-if="cachePanelPhase === 'error' || cachePanelPhase === 'update-ready'"
             type="button"
             aria-label="关闭缓存提示"
             @click="dismissCachePanel"
@@ -229,7 +281,7 @@ function handleLogoError(event: Event) {
         <div class="lnl-cache-panel-body">
           <span class="lnl-cache-panel-icon" aria-hidden="true">
             <Icon
-              :icon="cachePanelPhase === 'error' ? 'tabler:alert-triangle' : 'tabler:refresh'"
+              :icon="cachePanelPhase === 'error' ? 'tabler:alert-triangle' : cachePanelPhase === 'update-ready' ? 'tabler:sparkles' : 'tabler:refresh'"
               :width="19"
               :height="19"
             />
@@ -245,12 +297,48 @@ function handleLogoError(event: Event) {
           <i :class="{ active: cachePanelPhase === 'reloading' }" />
         </div>
         <button
-          v-if="cachePanelPhase === 'error'"
+          v-if="cachePanelPhase === 'error' || cachePanelPhase === 'update-ready'"
           class="lnl-cache-retry"
           type="button"
           @click="handleThemeCacheRefresh"
         >
-          重新尝试
+          {{ cachePanelPhase === 'update-ready' ? '载入新版本' : '重新尝试' }}
+        </button>
+      </section>
+    </Transition>
+    <Transition name="lnl-cache-panel">
+      <section
+        v-if="pwaPanelOpen"
+        class="lnl-pwa-panel"
+        role="dialog"
+        aria-labelledby="lnl-pwa-title"
+      >
+        <div class="lnl-pwa-panel-head">
+          <span class="lnl-pwa-panel-icon"><Icon icon="tabler:device-mobile-down" :width="19" :height="19" /></span>
+          <div>
+            <strong id="lnl-pwa-title">安装为应用</strong>
+            <p v-if="showIosInstructions">
+              在 Safari 中点按“分享”，再选择“添加到主屏幕”。
+            </p>
+            <p v-else-if="pwaInstallResult === 'error'">
+              安装提示暂时不可用，请稍后重试。
+            </p>
+            <p v-else>
+              安装已取消；监控页面仍可正常使用。
+            </p>
+          </div>
+          <button type="button" aria-label="关闭安装提示" @click="pwaPanelOpen = false">
+            <Icon icon="tabler:x" :width="16" :height="16" />
+          </button>
+        </div>
+        <button
+          v-if="canPromptInstall"
+          class="lnl-pwa-install-button"
+          type="button"
+          :disabled="pwaInstallBusy"
+          @click="handlePwaInstall"
+        >
+          {{ pwaInstallBusy ? '正在打开安装提示…' : '再次安装' }}
         </button>
       </section>
     </Transition>
@@ -342,20 +430,80 @@ function handleLogoError(event: Event) {
   width: min(360px, calc(100vw - 32px));
   padding: 14px;
   border: 1px solid color-mix(in srgb, var(--lnl-green) 44%, var(--border));
+  border-radius: var(--lnl-radius-card);
   background: color-mix(in srgb, var(--background) 96%, var(--lnl-green) 4%);
   box-shadow: 0 18px 50px color-mix(in srgb, #000 22%, transparent);
   color: var(--foreground);
   contain: layout paint;
+  overflow: hidden;
+}
+
+.lnl-pwa-panel {
+  position: fixed;
+  z-index: 130;
+  top: calc(env(safe-area-inset-top, 0px) + 76px);
+  right: max(18px, env(safe-area-inset-right, 0px));
+  width: min(380px, calc(100vw - 32px));
+  padding: 14px;
+  border: 1px solid color-mix(in srgb, var(--lnl-green) 32%, var(--border));
+  border-radius: var(--lnl-radius-card);
+  background: color-mix(in srgb, var(--background) 97%, var(--lnl-green) 3%);
+  box-shadow: var(--lnl-shadow-card-hover);
+  color: var(--foreground);
+}
+
+.lnl-pwa-panel-head {
+  display: grid;
+  grid-template-columns: 36px minmax(0, 1fr) 28px;
+  gap: 11px;
+  align-items: start;
+}
+
+.lnl-pwa-panel-icon {
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  border-radius: var(--lnl-radius-control);
+  background: color-mix(in srgb, var(--lnl-green) 10%, transparent);
+  color: var(--lnl-green);
+}
+
+.lnl-pwa-panel strong {
+  display: block;
+  font: 650 14px/1.35 var(--font-sans);
+}
+
+.lnl-pwa-panel p {
+  margin: 4px 0 0;
+  color: var(--muted-foreground);
+  font: 12px/1.55 var(--font-sans);
+}
+
+.lnl-pwa-panel-head > button {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--muted-foreground);
+}
+
+.lnl-pwa-install-button {
+  width: 100%;
+  margin-top: 13px;
+  padding: 9px 12px;
+  border: 1px solid color-mix(in srgb, var(--lnl-green) 42%, var(--border));
+  border-radius: var(--lnl-radius-control);
+  background: color-mix(in srgb, var(--lnl-green) 10%, transparent);
+  color: var(--foreground);
+  font: 650 13px/1.2 var(--font-sans);
 }
 
 .lnl-cache-panel::before {
-  position: absolute;
-  top: -1px;
-  left: -1px;
-  width: 38px;
-  height: 2px;
-  background: var(--lnl-green);
-  content: '';
+  content: none;
 }
 
 .lnl-cache-panel.is-error {
@@ -404,10 +552,13 @@ function handleLogoError(event: Event) {
   width: 34px;
   height: 34px;
   border: 1px solid color-mix(in srgb, var(--lnl-green) 30%, var(--border));
+  border-radius: var(--lnl-radius-control);
   color: var(--lnl-green);
 }
 
-.lnl-cache-panel:not(.is-error) .lnl-cache-panel-icon svg {
+.lnl-cache-panel[data-cache-phase='checking'] .lnl-cache-panel-icon svg,
+.lnl-cache-panel[data-cache-phase='clearing'] .lnl-cache-panel-icon svg,
+.lnl-cache-panel[data-cache-phase='reloading'] .lnl-cache-panel-icon svg {
   animation: lnl-cache-orbit 1.25s linear infinite;
 }
 
@@ -435,6 +586,7 @@ function handleLogoError(event: Event) {
 
 .lnl-cache-progress i {
   height: 2px;
+  border-radius: 999px;
   background: color-mix(in srgb, var(--muted-foreground) 18%, transparent);
   transform: scaleX(0.22);
   transform-origin: left;
@@ -452,6 +604,7 @@ function handleLogoError(event: Event) {
   margin-top: 12px;
   padding: 6px 9px;
   border: 1px solid color-mix(in srgb, #ef6b6b 38%, var(--border));
+  border-radius: var(--lnl-radius-control);
   color: var(--foreground);
   font: 600 10px/1 var(--font-mono);
 }
@@ -568,6 +721,7 @@ function handleLogoError(event: Event) {
   height: 68px;
   padding: 7px;
   border: 1px solid color-mix(in srgb, var(--route-accent) 45%, transparent);
+  border-radius: var(--lnl-radius-inner);
   background: var(--route-surface);
   transform: translate(-50%, -50%);
 }
@@ -728,6 +882,13 @@ function handleLogoError(event: Event) {
 
 @media (max-width: 640px) {
   .lnl-cache-panel {
+    top: calc(env(safe-area-inset-top, 0px) + 66px);
+    right: max(10px, env(safe-area-inset-right, 0px));
+    left: max(10px, env(safe-area-inset-left, 0px));
+    width: auto;
+  }
+
+  .lnl-pwa-panel {
     top: calc(env(safe-area-inset-top, 0px) + 66px);
     right: max(10px, env(safe-area-inset-right, 0px));
     left: max(10px, env(safe-area-inset-left, 0px));

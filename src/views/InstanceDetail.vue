@@ -304,7 +304,7 @@ const trafficProgressStyle = computed(() => ({
 
       <div class="lnl-detail-info-grid px-4 gap-4 grid grid-cols-1 lg:grid-cols-2">
         <CardX
-          title="硬件信息" size="small"
+          title="硬件信息" size="small" segmented
           class="lnl-detail-panel lnl-panel-motion group h-full border-none rounded-md"
           :class="pickSurfaceClass('bg-background/60 hover:bg-background', 'bg-background/50 hover:bg-background backdrop-blur-xs')"
         >
@@ -323,7 +323,7 @@ const trafficProgressStyle = computed(() => ({
         </CardX>
 
         <CardX
-          title="系统信息" size="small"
+          title="系统信息" size="small" segmented
           class="lnl-detail-panel lnl-panel-motion group h-full border-none rounded-md"
           :class="pickSurfaceClass('bg-background/60 hover:bg-background', 'bg-background/50 hover:bg-background backdrop-blur-xs')"
         >
@@ -350,7 +350,7 @@ const trafficProgressStyle = computed(() => ({
         </CardX>
 
         <CardX
-          title="存储信息" size="small"
+          title="存储信息" size="small" segmented
           class="lnl-detail-panel lnl-panel-motion group h-full border-none rounded-md"
           :class="pickSurfaceClass('bg-background/60 hover:bg-background', 'bg-background/50 hover:bg-background backdrop-blur-xs')"
         >
@@ -369,10 +369,9 @@ const trafficProgressStyle = computed(() => ({
         </CardX>
 
         <CardX
-          title="网络信息" size="small"
+          title="网络信息" size="small" segmented
           class="lnl-detail-panel lnl-panel-motion group h-full border-none rounded-md"
           :class="pickSurfaceClass('bg-background/60 hover:bg-background', 'bg-background/50 hover:bg-background backdrop-blur-xs')"
-          content-class="pt-0"
         >
           <div class="gap-3 grid grid-cols-2">
             <div class="lnl-detail-field relative min-w-0 overflow-hidden rounded-sm bg-slate-500/5 p-2">

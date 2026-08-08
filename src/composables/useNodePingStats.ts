@@ -1,5 +1,4 @@
 import type { MaybeRefOrGetter } from 'vue'
-import { useThrottleFn } from '@vueuse/core'
 import { computed, onScopeDispose, ref, shallowRef, toValue, watch } from 'vue'
 import { getPingTaskIdsWithSamples, summarizePingSamples } from '@/utils/pingMetrics'
 import { getSharedRpc } from '@/utils/rpc'
@@ -44,8 +43,6 @@ interface SharedPingRecordsEntry {
 }
 
 export const NODE_PING_BAR_COUNT = 10
-const CACHE_VERSION = 6
-const CACHE_KEY_PREFIX = 'komari-theme-emerald:node-ping-stats'
 const FULL_LOSS_EPSILON = 1e-6
 const PING_RECORD_REFRESH_INTERVAL_MS = 15_000
 const sharedPingRecordsCache = new Map<number, SharedPingRecordsEntry>()
@@ -68,74 +65,6 @@ function average(values: number[]): number {
 
 function isFiniteNumber(value: unknown): value is number {
   return typeof value === 'number' && Number.isFinite(value)
-}
-
-function getCacheKey(uuid: string, hours: number): string {
-  return `${CACHE_KEY_PREFIX}:${uuid}:${hours}`
-}
-
-function isValidHistoryPoint(value: unknown): value is NodePingHistoryPoint {
-  if (!value || typeof value !== 'object')
-    return false
-
-  const point = value as Record<string, unknown>
-  const latency = point.latency
-  const loss = point.loss
-
-  return typeof point.time === 'string'
-    && (latency === null || typeof latency === 'number')
-    && (loss === null || typeof loss === 'number')
-}
-
-function isValidStatsState(value: unknown): value is NodePingStatsState {
-  if (!value || typeof value !== 'object')
-    return false
-
-  const state = value as Record<string, unknown>
-  return typeof state.avgLatency === 'number'
-    && typeof state.avgLoss === 'number'
-    && typeof state.avgVolatility === 'number'
-    && typeof state.hasData === 'boolean'
-    && Array.isArray(state.history)
-    && state.history.every(isValidHistoryPoint)
-}
-
-function readStatsCache(uuid: string, hours: number): NodePingStatsState | null {
-  if (typeof window === 'undefined')
-    return null
-
-  try {
-    const raw = window.localStorage.getItem(getCacheKey(uuid, hours))
-    if (!raw)
-      return null
-
-    const parsed = JSON.parse(raw) as { version?: number, stats?: unknown }
-    if (parsed.version !== CACHE_VERSION || !isValidStatsState(parsed.stats))
-      return null
-
-    return parsed.stats
-  }
-  catch {
-    return null
-  }
-}
-
-function writeStatsCache(uuid: string, hours: number, value: NodePingStatsState): void {
-  if (typeof window === 'undefined')
-    return
-
-  try {
-    window.localStorage.setItem(
-      getCacheKey(uuid, hours),
-      JSON.stringify({
-        version: CACHE_VERSION,
-        updatedAt: new Date().toISOString(),
-        stats: value,
-      }),
-    )
-  }
-  catch {
-  }
 }
 
 function createSharedPingRecordsEntry(): SharedPingRecordsEntry {
@@ -413,7 +342,7 @@ export function useNodePingStats(
     const entry = getSharedPingRecordsEntry(hours)
     const state = entry.data.value
     if (!state)
-      return readStatsCache(nodeUuid, hours) ?? createEmptyStats()
+      return createEmptyStats()
 
     const records = state.recordsByClient.get(nodeUuid) ?? []
     return records.length ? buildStats(records) : createEmptyStats()
@@ -465,24 +394,6 @@ export function useNodePingStats(
     },
     { immediate: true },
   )
-
-  // 共享记录会定时刷新，节流回写 localStorage，避免多节点同时重算时密集写盘。
-  const persistStats = useThrottleFn(
-    (nodeUuid: string, hours: number, value: NodePingStatsState) => {
-      writeStatsCache(nodeUuid, hours, value)
-    },
-    PING_RECORD_REFRESH_INTERVAL_MS,
-    true,
-    true,
-  )
-
-  watch(stats, (value) => {
-    if (!value.hasData)
-      return
-    const { uuid: nodeUuid, hours, enabled } = resolved.value
-    if (enabled && nodeUuid.trim())
-      persistStats(nodeUuid, hours, value)
-  })
 
   return {
     stats,

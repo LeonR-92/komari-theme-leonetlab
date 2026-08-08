@@ -2,7 +2,7 @@
 import type { NodeData } from '@/stores/nodes'
 import { Icon } from '@iconify/vue'
 import { useDebounceFn, useIntervalFn, useNow } from '@vueuse/core'
-import { computed, defineAsyncComponent, nextTick, onActivated, onBeforeUnmount, onDeactivated, onMounted, ref, watch } from 'vue'
+import { computed, defineAsyncComponent, nextTick, onActivated, onBeforeUnmount, onDeactivated, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import MarkdownRenderer from '@/components/MarkdownRenderer.vue'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
@@ -13,6 +13,7 @@ import { Empty } from '@/components/ui/empty'
 import { Input } from '@/components/ui/input'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { useBackgroundSurface } from '@/composables/useBackgroundSurface'
+import { useFinanceRates } from '@/composables/useFinanceRates'
 import { useAppStore } from '@/stores/app'
 import { useNodesStore } from '@/stores/nodes'
 import * as financeHelper from '@/utils/financeHelper'
@@ -34,7 +35,7 @@ const appStore = useAppStore()
 const { pickSurfaceClass } = useBackgroundSurface()
 const nodesStore = useNodesStore()
 const router = useRouter()
-const exchangeRates = ref(financeHelper.DEFAULT_EXCHANGE_RATES)
+const { rates: exchangeRates, ensureFinanceRates } = useFinanceRates()
 const now = useNow({ interval: 60_000 })
 const expiryRotationIndex = ref(0)
 const EXPIRY_WARNING_MS = 3 * 24 * 60 * 60 * 1000
@@ -103,10 +104,11 @@ onDeactivated(() => {
   appStore.homeScrollPosition = window.scrollY
 })
 
-onMounted(async () => {
-  const result = await financeHelper.getDailyExchangeRates()
-  exchangeRates.value = result.rates
-})
+watch(
+  () => nodesStore.nodes.some(node => Number(node.price) > 0),
+  hasPaidNode => hasPaidNode && void ensureFinanceRates(),
+  { immediate: true },
+)
 
 const searchText = ref('')
 const debouncedSearchText = ref('')
@@ -323,10 +325,10 @@ function clearLeavingNodeRect(element: Element) {
         </Transition>
       </dl>
     </section>
-    <div v-if="appStore.connectionError" class="alert px-4">
+    <div v-if="appStore.connectionError" class="alert lnl-link-interruption px-4">
       <Alert
         variant="destructive"
-        :class="pickSurfaceClass('border-none bg-red-400/10 rounded-md', 'border-none bg-red-400/10 backdrop-blur-xs rounded-md')"
+        :class="pickSurfaceClass('border border-red-500/20 bg-red-400/8 rounded-[var(--lnl-radius-card)]', 'border border-red-400/25 bg-red-400/10 rounded-[var(--lnl-radius-card)]')"
       >
         <AlertTitle>RPC 服务错误</AlertTitle>
         <AlertDescription>连接服务器失败，请检查网络设置或刷新页面后再试。</AlertDescription>
@@ -355,7 +357,7 @@ function clearLeavingNodeRect(element: Element) {
       <div class="nodes">
         <Tabs v-model="appStore.nodeSelectedGroup" class="w-full flex-col gap-4">
           <div
-            class="lnl-node-toolbar flex gap-2 items-start flex-nowrap"
+            class="lnl-node-toolbar"
             :class="{ 'is-searching': searchOpen, 'is-motion-reduced': appStore.disablePageAnimation }"
           >
             <div class="lnl-node-tabs overflow-x-auto rounded-sm md:pointer-events-auto">
@@ -400,17 +402,22 @@ function clearLeavingNodeRect(element: Element) {
               </Button>
             </div>
             <div class="lnl-node-search-drawer" :class="{ 'is-open': searchOpen }">
-              <Input
-                id="node-search"
-                v-model="searchText"
-                name="node-search"
-                placeholder="搜索节点名称、地区、系统"
-                :tabindex="searchOpen ? 0 : -1"
-                :aria-hidden="!searchOpen"
-                class="lnl-node-search-input h-8 rounded-md border-none shadow-none focus:!ring-emerald-500/10"
-                :class="pickSurfaceClass('bg-background hover:!bg-background/95 focus:!bg-background', 'bg-background/50 hover:!bg-background/60 focus:!bg-background/80 backdrop-blur-xs')"
-                @keydown="handleSearchKeydown"
-              />
+              <div class="lnl-node-search-drawer-inner">
+                <div class="lnl-node-search-field">
+                  <Icon icon="tabler:search" :width="15" :height="15" aria-hidden="true" />
+                  <Input
+                    id="node-search"
+                    v-model="searchText"
+                    name="node-search"
+                    placeholder="搜索节点名称、地区、系统"
+                    :tabindex="searchOpen ? 0 : -1"
+                    :aria-hidden="!searchOpen"
+                    class="lnl-node-search-input h-9 rounded-[var(--lnl-radius-control)] !border-0 !bg-transparent pl-9 pr-24 !shadow-none !ring-0 focus:!ring-0"
+                    @keydown="handleSearchKeydown"
+                  />
+                  <span class="lnl-node-search-meta">{{ debouncedSearchText ? `${nodeList.length} 个结果` : `${groupNodeList.length} 个节点` }}</span>
+                </div>
+              </div>
             </div>
           </div>
           <TabsContent :key="appStore.nodeSelectedGroup" :value="appStore.nodeSelectedGroup" class="pointer-events-auto">
@@ -441,6 +448,18 @@ function clearLeavingNodeRect(element: Element) {
               @click="handleNodeClick"
               @ping-click="handlePingClick"
             />
+            <div
+              v-else-if="!nodesStore.initialized"
+              class="lnl-node-skeleton-grid"
+              aria-label="正在载入节点"
+              aria-busy="true"
+            >
+              <div v-for="index in 3" :key="index" class="lnl-node-skeleton-card" aria-hidden="true">
+                <span class="lnl-node-skeleton-line is-title" />
+                <span class="lnl-node-skeleton-line" />
+                <span class="lnl-node-skeleton-line is-short" />
+              </div>
+            </div>
             <div v-else class="text-muted-foreground text-center py-8">
               <Empty description="暂无节点" />
             </div>
@@ -452,7 +471,7 @@ function clearLeavingNodeRect(element: Element) {
     <Dialog v-model:open="pingDialogOpen">
       <DialogContent
         v-if="selectedPingNode"
-        class="lnl-ping-dialog w-[calc(100vw-1rem)] max-w-[1240px] gap-0 overflow-hidden rounded-none border-emerald-600/20 p-0 shadow-[0_0_3rem] shadow-emerald-950/20 sm:w-[calc(100vw-2rem)]"
+        class="lnl-ping-dialog w-[calc(100vw-1rem)] max-w-[1240px] gap-0 overflow-hidden rounded-[var(--lnl-radius-card)] border-emerald-600/20 p-0 shadow-[0_0_3rem] shadow-emerald-950/20 sm:w-[calc(100vw-2rem)]"
         :class="pickSurfaceClass('bg-background', 'bg-background/94')"
       >
         <DialogHeader class="lnl-ping-dialog-head flex flex-row items-center pr-12">
@@ -473,6 +492,62 @@ function clearLeavingNodeRect(element: Element) {
 </template>
 
 <style scoped>
+.lnl-node-skeleton-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(344px, 1fr));
+  gap: 1rem;
+}
+
+.lnl-node-skeleton-card {
+  display: grid;
+  min-height: 13rem;
+  align-content: start;
+  gap: 0.9rem;
+  overflow: hidden;
+  padding: 1.15rem;
+  border: 1px solid var(--lnl-line);
+  border-radius: var(--lnl-radius-card);
+  background: var(--lnl-surface-base);
+  box-shadow: var(--lnl-shadow-card);
+}
+
+.lnl-node-skeleton-line {
+  display: block;
+  width: 100%;
+  height: 3.2rem;
+  border-radius: var(--lnl-radius-control);
+  background: linear-gradient(
+    100deg,
+    var(--lnl-surface-inner) 20%,
+    var(--lnl-surface-raised) 42%,
+    var(--lnl-surface-inner) 64%
+  );
+  background-size: 220% 100%;
+  animation: lnl-node-skeleton-pulse 1.5s ease-in-out infinite;
+}
+
+.lnl-node-skeleton-line.is-title {
+  width: 54%;
+  height: 1.15rem;
+}
+
+.lnl-node-skeleton-line.is-short {
+  width: 72%;
+  height: 2rem;
+}
+
+@keyframes lnl-node-skeleton-pulse {
+  to {
+    background-position: -120% 0;
+  }
+}
+
+@media (max-width: 639px) {
+  .lnl-node-skeleton-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
 .lnl-ping-dialog-head {
   min-height: 58px;
   gap: 12px;
@@ -489,9 +564,14 @@ function clearLeavingNodeRect(element: Element) {
   flex: 0 0 38px;
   place-items: center;
   border: 1px solid color-mix(in srgb, var(--lnl-green) 52%, var(--lnl-line));
+  border-radius: var(--lnl-radius-control);
   color: var(--lnl-green);
   font: 9px var(--font-mono);
   letter-spacing: 0.08em;
+}
+
+.lnl-link-interruption :deep([role='alert']) {
+  box-shadow: 0 14px 34px color-mix(in srgb, var(--destructive) 9%, transparent);
 }
 .lnl-ping-dialog-kicker {
   display: block;
@@ -502,34 +582,94 @@ function clearLeavingNodeRect(element: Element) {
 }
 
 .lnl-node-search-drawer {
-  position: relative;
+  grid-column: 1 / -1;
+  display: grid;
   z-index: 2;
-  width: 0;
-  height: 32px;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+  grid-template-rows: 0fr;
   overflow: hidden;
-  opacity: 0;
-  transform: translateX(10px);
   pointer-events: none;
-  transition:
-    width var(--lnl-motion-standard) var(--lnl-ease-emphasis),
-    opacity var(--lnl-motion-fast) ease,
-    transform var(--lnl-motion-standard) var(--lnl-ease-emphasis);
-  will-change: width, opacity, transform;
+  transition: grid-template-rows var(--lnl-motion-standard) var(--lnl-ease-emphasis);
 }
 
 .lnl-node-search-drawer.is-open {
-  width: min(260px, 52vw);
+  grid-template-rows: 1fr;
+  pointer-events: auto;
+}
+
+.lnl-node-search-drawer-inner {
+  display: flex;
+  width: 100%;
+  max-width: 100%;
+  min-height: 0;
+  min-width: 0;
+  box-sizing: border-box;
+  justify-content: flex-end;
+  overflow: hidden;
+  opacity: 0;
+  transform: translate3d(0, -8px, 0);
+  transition:
+    opacity var(--lnl-motion-fast) ease,
+    transform var(--lnl-motion-standard) var(--lnl-ease-emphasis),
+    padding-top var(--lnl-motion-standard) var(--lnl-ease-emphasis);
+}
+
+.lnl-node-search-drawer.is-open .lnl-node-search-drawer-inner {
+  padding: 10px 4px 4px;
   opacity: 1;
   transform: none;
-  pointer-events: auto;
+}
+
+.lnl-node-search-field {
+  position: relative;
+  display: flex;
+  flex: 0 1 720px;
+  width: clamp(280px, 52vw, 720px);
+  max-width: calc(100% - 8px);
+  min-width: 0;
+  box-sizing: border-box;
+  align-items: center;
+  border: 1px solid color-mix(in srgb, var(--lnl-line) 82%, var(--foreground) 8%);
+  border-radius: var(--lnl-radius-inner);
+  background: color-mix(in srgb, var(--lnl-surface-raised, var(--card)) 92%, transparent);
+  box-shadow: var(--lnl-shadow-soft, 0 8px 24px rgb(0 0 0 / 8%));
+}
+
+.lnl-node-search-field > svg {
+  position: absolute;
+  z-index: 1;
+  left: 12px;
+  color: var(--lnl-green);
+}
+
+.lnl-node-search-field:focus-within {
+  border-color: color-mix(in srgb, var(--lnl-green) 56%, var(--lnl-line));
+  box-shadow:
+    inset 0 0 0 1px color-mix(in srgb, var(--lnl-green) 22%, transparent),
+    var(--lnl-shadow-soft, 0 8px 24px rgb(0 0 0 / 8%));
+}
+
+.lnl-node-search-meta {
+  position: absolute;
+  right: 11px;
+  color: var(--muted-foreground);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.lnl-node-toolbar {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 0 8px;
 }
 
 @media (max-width: 640px) {
   .lnl-node-toolbar {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) auto;
     width: 100%;
-    gap: 0 8px;
   }
 
   .lnl-node-toolbar .lnl-node-tabs {
@@ -543,31 +683,24 @@ function clearLeavingNodeRect(element: Element) {
     margin-left: 0;
   }
 
-  .lnl-node-search-drawer {
-    grid-column: 1 / -1;
-    width: 100%;
-    min-width: 0;
-    height: 0;
-    margin-top: 0;
-    transform: translateY(-8px);
-    transition:
-      height var(--lnl-motion-standard) var(--lnl-ease-emphasis),
-      margin-top var(--lnl-motion-standard) var(--lnl-ease-emphasis),
-      opacity var(--lnl-motion-fast) ease,
-      transform var(--lnl-motion-standard) var(--lnl-ease-emphasis);
+  .lnl-node-search-meta {
+    font-size: 10px;
   }
 
-  .lnl-node-search-drawer.is-open {
-    width: 100%;
-    height: 32px;
-    margin-top: 8px;
-    transform: none;
+  .lnl-node-search-field {
+    flex-basis: auto;
+    width: calc(100% - 8px);
+    max-width: calc(100% - 8px);
   }
 }
 
 .lnl-node-search-input {
   display: block;
   width: 100%;
+  min-width: 0;
+  border: 0 !important;
+  box-shadow: none !important;
+  outline: 0 !important;
 }
 
 .lnl-node-search-toggle {
@@ -643,6 +776,10 @@ function clearLeavingNodeRect(element: Element) {
 }
 
 @media (prefers-reduced-motion: reduce) {
+  .lnl-node-skeleton-line {
+    animation: none;
+  }
+
   :global(.lnl-ping-dialog[data-state='open']),
   :global(.lnl-ping-dialog[data-state='closed']) {
     animation: none;

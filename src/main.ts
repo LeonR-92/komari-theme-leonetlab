@@ -23,45 +23,36 @@ app.mount('#app')
 
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
-    const hadController = Boolean(navigator.serviceWorker.controller)
-    let reloadingForUpdate = false
-
-    navigator.serviceWorker.addEventListener('controllerchange', () => {
-      if (!hadController || reloadingForUpdate)
-        return
-
-      const reloadKey = `leonetlab:sw-reload:${__BUILD_VERSION__}`
-      if (sessionStorage.getItem(reloadKey) === 'done')
-        return
-
-      const reloadWithNewWorker = () => {
-        if (reloadingForUpdate)
-          return
-        reloadingForUpdate = true
-        sessionStorage.setItem(reloadKey, 'done')
-        location.reload()
-      }
-
-      // Let the handoff finish, then reload under the new worker. This keeps
-      // first-visit motion intact without leaving the tab on the old app shell.
-      if (document.querySelector('.lnl-intro')) {
-        const observer = new MutationObserver(() => {
-          if (document.querySelector('.lnl-intro'))
-            return
-          observer.disconnect()
-          window.setTimeout(reloadWithNewWorker, 80)
-        })
-        observer.observe(document.body, { childList: true, subtree: true })
-        return
-      }
-
-      reloadWithNewWorker()
-    })
-
     navigator.serviceWorker.register('/sw.js', {
       scope: '/',
       updateViaCache: 'none',
-    }).then(registration => registration.update()).catch(() => {
+    }).then((registration) => {
+      const announceReadyWorker = () => {
+        const worker = registration.installing
+        if (!worker)
+          return
+        worker.addEventListener('statechange', () => {
+          if (worker.state === 'installed' && navigator.serviceWorker.controller)
+            window.dispatchEvent(new CustomEvent('leonetlab:pwa-update-ready'))
+        })
+      }
+      registration.addEventListener('updatefound', announceReadyWorker)
+      if (registration.waiting && navigator.serviceWorker.controller)
+        window.dispatchEvent(new CustomEvent('leonetlab:pwa-update-ready'))
+
+      const idle = window.requestIdleCallback
+        ? (callback: () => void) => window.requestIdleCallback(callback, { timeout: 8000 })
+        : (callback: () => void) => window.setTimeout(callback, 4000)
+      idle(() => {
+        registration.active?.postMessage({ type: 'WARM_THEME_ASSETS' })
+        const key = 'leonetlab:pwa:last-update-check'
+        const lastCheck = Number(localStorage.getItem(key) || 0)
+        if (Date.now() - lastCheck < 6 * 60 * 60 * 1000)
+          return
+        localStorage.setItem(key, String(Date.now()))
+        void registration.update()
+      })
+    }).catch(() => {
       // PWA support is progressive; monitoring remains usable if registration is blocked.
     })
   }, { once: true })

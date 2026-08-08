@@ -1,19 +1,21 @@
 <script setup lang="ts">
 import type { NodeData } from '@/stores/nodes'
 import { Icon } from '@iconify/vue'
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 import NodePingListCell from '@/components/NodePingListCell.vue'
 import TrafficProgress from '@/components/TrafficProgress.vue'
 import { Badge } from '@/components/ui/badge'
 import { DataTooltip } from '@/components/ui/data-tooltip'
 import { ProgressThin } from '@/components/ui/progress-thin'
 import { useBackgroundSurface } from '@/composables/useBackgroundSurface'
+import { useFinanceRates } from '@/composables/useFinanceRates'
 import { useAppStore } from '@/stores/app'
+import { formatNodeMonthlyCost, resolveCurrency } from '@/utils/financeHelper'
 import { formatBytesPerSecondWithConfig, formatBytesWithConfig, formatDateTime, formatUptimeWithFormat, getStatus } from '@/utils/helper'
 import { isMobileLike, MOBILE_NO_MOVE_CLASS } from '@/utils/mobilePerf'
 import { getOSImage, getOSName } from '@/utils/osImageHelper'
 import { getRegionCode, getRegionDisplayName } from '@/utils/regionHelper'
-import { formatPriceWithCycle, getDaysUntilExpired, getExpireStatus, getExpireTextClass, parseTags } from '@/utils/tagHelper'
+import { getDaysUntilExpired, getExpireStatus, getExpireTextClass, parseTags } from '@/utils/tagHelper'
 
 interface ColumnConfig {
   key: string
@@ -44,18 +46,18 @@ const rowStaggerLimit = 12
 
 const appStore = useAppStore()
 const { pickSurfaceClass } = useBackgroundSurface()
+const { rates: exchangeRates, conversionAvailable, ensureFinanceRates } = useFinanceRates()
 
 const columns: ColumnConfig[] = [
-  { key: 'status', label: '状态', width: '40px', sortable: false },
-  { key: 'os', label: '系统', width: '40px', sortable: false },
-  { key: 'name', label: '节点', width: 'minmax(160px, 0.8fr)', sortable: true },
-  { key: 'tags', label: '标签', width: 'minmax(200px, 1fr)', sortable: false },
+  { key: 'status', label: '状态', width: '34px', sortable: false },
+  { key: 'name', label: '节点信息', width: 'minmax(250px, 1.4fr)', sortable: true },
+  { key: 'finance', label: '月付', width: '112px', sortable: false },
   { key: 'uptime', label: '运行时间', width: '116px', sortable: true },
-  { key: 'cpu', label: 'CPU', width: '100px', sortable: false },
-  { key: 'mem', label: '内存', width: '100px', sortable: false },
-  { key: 'disk', label: '硬盘', width: '100px', sortable: false },
-  { key: 'traffic', label: '流量', width: '100px', sortable: false },
-  { key: 'rate', label: '速率', width: '80px', sortable: true },
+  { key: 'cpu', label: 'CPU', width: '96px', sortable: false },
+  { key: 'mem', label: '内存', width: '96px', sortable: false },
+  { key: 'disk', label: '硬盘', width: '96px', sortable: false },
+  { key: 'traffic', label: '流量', width: '96px', sortable: false },
+  { key: 'rate', label: '速率', width: '86px', sortable: true },
 ]
 
 const sortKey = ref<string>('')
@@ -208,12 +210,9 @@ function formatOfflineTime(node: NodeData): string {
   return formatDateTime(node.time)
 }
 
-function getPriceTags(node: NodeData): PriceTagItem[] {
+function getExpiryTags(node: NodeData): PriceTagItem[] {
   const tags: PriceTagItem[] = []
   const lang = appStore.lang
-  const priceText = formatPriceWithCycle(node.price, node.billing_cycle, node.currency, lang)
-  if (node.price !== 0)
-    tags.push({ text: priceText })
   // 未设置过期时间（expired_at 为 null/空）时不生成任何过期标签
   if (!node.expired_at)
     return tags
@@ -234,6 +233,36 @@ function getPriceTags(node: NodeData): PriceTagItem[] {
   return tags
 }
 
+function getMonthlyCost(node: NodeData) {
+  return formatNodeMonthlyCost(
+    node,
+    appStore.nodeCardCurrency,
+    exchangeRates.value,
+    conversionAvailable.value,
+  )
+}
+
+function getFinanceTooltip(node: NodeData): string {
+  const monthly = getMonthlyCost(node)
+  if (monthly.state === 'free')
+    return '该节点标记为免费'
+  if (monthly.state === 'missing')
+    return '请在 Komari 后台填写价格与计费周期'
+  if (monthly.state === 'invalid')
+    return '计费周期无效，无法折算月付'
+  const source = resolveCurrency(node.currency) ?? String(node.currency || '未知币种').trim()
+  return `原价 ${source} ${Number(node.price).toFixed(2)} / ${node.billing_cycle} 天`
+}
+
+const needsCurrencyConversion = computed(() => props.nodes.some(node => (
+  Number(node.price) > 0 && resolveCurrency(node.currency) !== appStore.nodeCardCurrency
+)))
+
+watch(needsCurrencyConversion, (needed) => {
+  if (needed)
+    void ensureFinanceRates()
+}, { immediate: true })
+
 function getRemainingTimeTagClass(node: NodeData): string {
   if (node.price === 0)
     return ''
@@ -250,13 +279,13 @@ function getCustomTags(node: NodeData): Array<string> {
     <div class="min-w-fit w-full flex flex-col gap-1">
       <!-- 表头 -->
       <div
-        class="grid gap-2 rounded-lg p-2"
-        :class="pickSurfaceClass('bg-background/60 hover:bg-background', 'bg-background/60 backdrop-blur-sm')"
+        class="lnl-node-list-head grid gap-2 p-2"
+        :class="pickSurfaceClass('bg-background/70', 'bg-background/72')"
         :style="gridStyle"
       >
         <div
           v-for="col in columns" :key="col.key"
-          :class="[col.sortable ? 'cursor-pointer' : '', ['status', 'os'].includes(col.key) ? 'text-center' : 'text-left']"
+          :class="[col.sortable ? 'cursor-pointer' : '', col.key === 'status' ? 'text-center' : 'text-left']"
           :role="col.sortable ? 'button' : undefined"
           :tabindex="col.sortable ? 0 : undefined"
           :aria-label="col.sortable ? `按${col.label}排序` : undefined"
@@ -276,16 +305,15 @@ function getCustomTags(node: NodeData): Array<string> {
         :move-class="isMobileLike ? MOBILE_NO_MOVE_CLASS : undefined"
         name="node-row-switch"
         tag="div"
-        class="flex flex-col gap-1"
+        class="flex flex-col gap-2"
       >
         <div
           v-for="(node, index) in sortedNodes"
           :key="getRowTransitionKey(node)"
           role="link"
           tabindex="0"
-          :aria-label="`查看节点 ${node.name} 详情`"
-          class="lnl-node-row relative flex h-16 cursor-pointer flex-col justify-center rounded-lg px-2 shadow-[0_0_4px,0_0_0_1px] shadow-transparent bg-background/60 hover:bg-background hover:shadow-emerald-600/10"
-          :class="[pickSurfaceClass('', 'backdrop-blur-sm'), !node.online && '!shadow-red-600/10', appStore.disablePageAnimation && 'is-motion-reduced']"
+          class="lnl-node-row relative flex h-[72px] cursor-pointer flex-col justify-center px-3"
+          :class="[pickSurfaceClass('', ''), !node.online && 'is-offline', appStore.disablePageAnimation && 'is-motion-reduced']"
           :style="getRowTransitionStyle(index)"
           @click="handleClick(node)"
           @keydown.enter="handleClick(node)"
@@ -304,19 +332,26 @@ function getCustomTags(node: NodeData): Array<string> {
               </div>
 
               <!-- 节点名称 -->
-              <div v-else-if="col.key === 'name'" class="space-y-0.5" :class="[!node.online && 'blur-sm opacity-30']">
-                <div class="flex gap-1 items-center text-xs font-semibold">
+              <div v-else-if="col.key === 'name'" class="min-w-0 space-y-1" :class="[!node.online && 'opacity-45']">
+                <div class="flex min-w-0 items-center gap-2 text-[13px] font-semibold">
+                  <img :src="getOSImage(node.os)" :alt="getOSName(node.os)" class="size-4 shrink-0">
                   <img
                     v-if="hasRegion(node.region)" :src="getFlagSrc(node.region)"
-                    :alt="getRegionDisplayName(node.region)" class="size-5 rounded-sm"
+                    :alt="getRegionDisplayName(node.region)" class="h-[14px] w-5 shrink-0 rounded-[3px] object-cover"
                   >
                   <span class="truncate">{{ node.name }}</span>
                 </div>
-                <div
-                  v-if="getPriceTags(node).length > 0"
-                  class="text-[11px] text-muted-foreground/70 truncate"
-                >
-                  <span v-for="(tag, tagIndex) in getPriceTags(node)" :key="tagIndex" :class="[!!tagIndex && 'ml-1']">
+                <div class="flex min-w-0 items-center gap-1.5 overflow-hidden">
+                  <Badge
+                    v-for="(tag, tagIndex) in getCustomTags(node).slice(0, 3)" :key="tagIndex" variant="outline"
+                    class="max-w-24 shrink-0 truncate rounded-full border-muted-foreground/15 px-1.5 !text-[10px] text-muted-foreground"
+                  >
+                    {{ tag }}
+                  </Badge>
+                  <span
+                    v-for="(tag, tagIndex) in getExpiryTags(node)" :key="`expiry-${tagIndex}`"
+                    class="truncate text-[10px] text-muted-foreground"
+                  >
                     <template v-if="tag.highlightValue">
                       <span>{{ tag.prefix }}</span>
                       <span :class="getRemainingTimeTagClass(node)">{{ tag.highlightValue }}</span>
@@ -329,17 +364,16 @@ function getCustomTags(node: NodeData): Array<string> {
                 </div>
               </div>
 
-              <!-- 标签 -->
-              <div v-else-if="col.key === 'tags'">
-                <div class="flex flex-wrap gap-1 items-center">
-                  <Badge
-                    v-for="(tag, tagIndex) in getCustomTags(node)" :key="tagIndex" variant="outline"
-                    class="!text-[11px] rounded text-muted-foreground border-muted-foreground/10 px-1.5"
-                  >
-                    {{ tag }}
-                  </Badge>
-                </div>
-              </div>
+              <!-- 月付 -->
+              <DataTooltip
+                v-else-if="col.key === 'finance'"
+                placement="top"
+                :content="getFinanceTooltip(node)"
+                class="lnl-node-list-finance"
+              >
+                <span>月付</span>
+                <strong>{{ getMonthlyCost(node).text }}</strong>
+              </DataTooltip>
 
               <!-- 运行时间 -->
               <div v-else-if="col.key === 'uptime'" class="flex flex-col gap-0.5">
@@ -351,17 +385,12 @@ function getCustomTags(node: NodeData): Array<string> {
                   :online="node.online"
                   role="button"
                   tabindex="0"
-                  class="outline-none"
+                  class="min-h-6 justify-center rounded-[var(--lnl-radius-control)] outline-none"
                   :aria-label="`${node.name} 延迟/丢包`"
                   @click.stop="openPingDialog(node)"
                   @keydown.enter.stop.prevent="openPingDialog(node)"
                   @keydown.space.stop.prevent="openPingDialog(node)"
                 />
-              </div>
-
-              <!-- 操作系统 -->
-              <div v-else-if="col.key === 'os'" class="flex justify-center">
-                <img :src="getOSImage(node.os)" :alt="getOSName(node.os)" class="size-4">
               </div>
 
               <!-- CPU -->
@@ -472,7 +501,7 @@ function getCustomTags(node: NodeData): Array<string> {
           </div>
 
           <div
-            v-if="!node.online" class="absolute inset-0 z-2 p-2 bg-background/10 rounded-lg flex items-center"
+            v-if="!node.online" class="absolute inset-0 z-2 flex items-center rounded-[var(--lnl-radius-inner)] bg-background/24 p-2"
             aria-hidden="true"
           >
             <div class="grid gap-2 items-center justify-center" :style="gridStyle">
@@ -493,12 +522,66 @@ function getCustomTags(node: NodeData): Array<string> {
 </template>
 
 <style scoped>
+.lnl-node-list-head {
+  border: 1px solid var(--lnl-line);
+  border-radius: var(--lnl-radius-inner);
+  background: var(--lnl-surface-inner);
+}
+
 .lnl-node-row {
+  border: 1px solid var(--lnl-line);
+  border-radius: var(--lnl-radius-inner);
+  background: var(--lnl-surface-base);
+  box-shadow: 0 8px 26px rgb(18 36 30 / 3%);
+  font-variant-numeric: tabular-nums;
   transition:
     transform var(--lnl-motion-standard) var(--lnl-ease-out),
+    border-color var(--lnl-motion-fast) ease,
     box-shadow var(--lnl-motion-standard) ease,
     background-color var(--lnl-motion-fast) ease,
     opacity var(--lnl-motion-fast) ease;
+}
+
+.lnl-node-row:hover,
+.lnl-node-row:focus-visible {
+  border-color: color-mix(in srgb, var(--lnl-green) 42%, var(--lnl-line));
+  background: var(--lnl-surface-raised);
+  box-shadow: var(--lnl-shadow-card-hover);
+  transform: translate3d(0, -2px, 0);
+  outline: none;
+}
+
+.lnl-node-row.is-offline {
+  border-color: color-mix(in srgb, var(--destructive) 28%, var(--lnl-line));
+}
+
+.lnl-node-list-finance {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+  padding: 7px 9px;
+  border: 1px solid color-mix(in srgb, var(--lnl-line) 78%, transparent);
+  border-radius: var(--lnl-radius-control);
+  background: var(--lnl-surface-inner);
+}
+
+.lnl-node-list-finance > span {
+  color: var(--muted-foreground);
+  font-size: 9px;
+}
+
+.lnl-node-list-finance > strong {
+  overflow: hidden;
+  color: var(--foreground);
+  font-size: 11px;
+  font-weight: 650;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+:global(.dark) .lnl-node-row {
+  border-color: var(--lnl-line-strong);
+  box-shadow: var(--lnl-shadow-card);
 }
 
 .lnl-node-row.is-motion-reduced {

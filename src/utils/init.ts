@@ -80,14 +80,12 @@ class InitManager {
     }
 
     try {
-      // 健康检查和公开设置互不依赖，并行执行可缩短首屏空白等待。
-      await Promise.all([
-        this.healthCheck(),
-        this.fetchPublicSettings(),
-      ])
-
-      // 公开设置到位后即可决定是否展示首访动画，无需继续等待节点 RPC。
+      // 公开设置决定首访/骨架，应尽早提交到 UI；健康检查继续并行，
+      // 不再让一个慢 ping 阻塞首帧和首访封面。
+      const healthPromise = this.healthCheck()
+      await this.fetchPublicSettings()
       await onPublicSettingsReady?.()
+      await healthPromise
 
       // 用户状态与节点数据互不依赖，并行完成剩余初始化。
       await Promise.all([

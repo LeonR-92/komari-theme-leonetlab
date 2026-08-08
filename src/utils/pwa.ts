@@ -26,6 +26,23 @@ async function requestWorkerCacheClear(worker: ServiceWorker | null): Promise<vo
   })
 }
 
+async function activateWaitingWorker(registration: ServiceWorkerRegistration): Promise<void> {
+  const waiting = registration.waiting
+  if (!waiting)
+    return
+
+  await new Promise<void>((resolve) => {
+    const timeout = window.setTimeout(resolve, 2400)
+    const handleControllerChange = () => {
+      window.clearTimeout(timeout)
+      navigator.serviceWorker.removeEventListener('controllerchange', handleControllerChange)
+      resolve()
+    }
+    navigator.serviceWorker.addEventListener('controllerchange', handleControllerChange)
+    waiting.postMessage({ type: 'SKIP_WAITING' })
+  })
+}
+
 export async function refreshThemeCache(onPhase?: (phase: ThemeCacheRefreshPhase) => void): Promise<void> {
   onPhase?.('checking')
   if (!('serviceWorker' in navigator)) {
@@ -34,19 +51,11 @@ export async function refreshThemeCache(onPhase?: (phase: ThemeCacheRefreshPhase
     return
   }
 
-  // Prevent main.ts from racing this explicit refresh with its own automatic
-  // controllerchange reload. The next build uses a different versioned key.
-  try {
-    sessionStorage.setItem(`leonetlab:sw-reload:${__BUILD_VERSION__}`, 'done')
-  }
-  catch {
-    // Session storage can be unavailable in strict privacy modes.
-  }
-
   const registration = await navigator.serviceWorker.getRegistration()
   await registration?.update()
-  const worker = registration?.waiting
-    ?? registration?.active
+  if (registration)
+    await activateWaitingWorker(registration)
+  const worker = registration?.active
     ?? navigator.serviceWorker.controller
   onPhase?.('clearing')
   await requestWorkerCacheClear(worker)

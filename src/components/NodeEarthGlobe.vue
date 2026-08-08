@@ -88,11 +88,17 @@ let targetPhi = phi
 let theta = INITIAL_THETA
 let targetTheta = INITIAL_THETA
 let isPointerDown = false
+let activePointerId: number | null = null
+let pointerStartX = 0
+let pointerStartY = 0
 let lastPointerX = 0
 let lastPointerY = 0
+let pointerDragged = false
+let suppressRegionClickUntil = 0
 let staticRedrawUntil = 0
 let interactionRotationScale = 1
 let targetInteractionRotationScale = 1
+const POINTER_DRAG_THRESHOLD = 6
 
 function normalizePhi(value: number): number {
   const circle = Math.PI * 2
@@ -556,16 +562,21 @@ function stopGlobe() {
 onMounted(() => {
   window.addEventListener('leonetlab:theme-transition-start', handleThemeTransitionStart)
   window.addEventListener('leonetlab:theme-transition-end', handleThemeTransitionEnd)
+  window.addEventListener('blur', handleInteractionInterrupted)
   document.addEventListener('pointerdown', handleDocumentPointerDown)
   document.addEventListener('keydown', handleDocumentKeydown)
+  document.addEventListener('visibilitychange', handleDocumentVisibilityChange)
   startGlobe()
 })
 
 onBeforeUnmount(() => {
   window.removeEventListener('leonetlab:theme-transition-start', handleThemeTransitionStart)
   window.removeEventListener('leonetlab:theme-transition-end', handleThemeTransitionEnd)
+  window.removeEventListener('blur', handleInteractionInterrupted)
   document.removeEventListener('pointerdown', handleDocumentPointerDown)
   document.removeEventListener('keydown', handleDocumentKeydown)
+  document.removeEventListener('visibilitychange', handleDocumentVisibilityChange)
+  finishPointerInteraction()
   clearRegionTimers()
   stopGlobe()
 })
@@ -662,11 +673,14 @@ watch(shouldRender, () => {
 // 无需额外的交接期朝向接管逻辑。
 
 function onPointerDown(e: PointerEvent) {
-  if (!interactive.value)
+  if (!interactive.value || activePointerId !== null || (e.pointerType === 'mouse' && e.button !== 0))
     return
-  resetRegionInteraction()
+
+  activePointerId = e.pointerId
   isPointerDown = true
-  dragging.value = true
+  pointerDragged = false
+  pointerStartX = e.clientX
+  pointerStartY = e.clientY
   lastPointerX = e.clientX
   lastPointerY = e.clientY
   const target = e.currentTarget as HTMLElement
@@ -679,12 +693,24 @@ function onPointerDown(e: PointerEvent) {
   syncRafState()
 }
 function onPointerMove(e: PointerEvent) {
-  if (!interactive.value || !isPointerDown)
+  if (!interactive.value || !isPointerDown || e.pointerId !== activePointerId)
     return
+
   const deltaX = e.clientX - lastPointerX
   const deltaY = e.clientY - lastPointerY
   lastPointerX = e.clientX
   lastPointerY = e.clientY
+
+  if (!pointerDragged) {
+    const distance = Math.hypot(e.clientX - pointerStartX, e.clientY - pointerStartY)
+    if (distance < POINTER_DRAG_THRESHOLD)
+      return
+    pointerDragged = true
+    dragging.value = true
+    resetRegionInteraction()
+  }
+
+  e.preventDefault()
   targetPhi += deltaX / 200
   targetTheta = clampTheta(targetTheta + deltaY / 300)
   // Pointer input should remain responsive even when IntersectionObserver has
@@ -694,14 +720,56 @@ function onPointerMove(e: PointerEvent) {
   updateGlobeFrame()
 }
 function onPointerUp(e: PointerEvent) {
-  if (!interactive.value)
+  if (!interactive.value || e.pointerId !== activePointerId)
     return
+
+  const didDrag = pointerDragged
+  finishPointerInteraction(e.pointerId, e.currentTarget as HTMLElement)
+  if (didDrag)
+    suppressRegionClickUntil = performance.now() + 80
+}
+
+function onPointerCancel(e: PointerEvent) {
+  if (e.pointerId !== activePointerId)
+    return
+
+  const didDrag = pointerDragged
+  finishPointerInteraction(e.pointerId, e.currentTarget as HTMLElement)
+  if (didDrag)
+    suppressRegionClickUntil = performance.now() + 120
+}
+
+function finishPointerInteraction(
+  pointerId: number | null = activePointerId,
+  target: HTMLElement | undefined = containerRef.value,
+) {
+  if (pointerId !== null && target?.hasPointerCapture(pointerId)) {
+    try {
+      target.releasePointerCapture(pointerId)
+    }
+    catch {
+      // Some embedded WebViews release capture before dispatching cancellation.
+    }
+  }
+  activePointerId = null
   isPointerDown = false
   dragging.value = false
-  const target = e.currentTarget as HTMLElement
-  if (target.hasPointerCapture(e.pointerId))
-    target.releasePointerCapture(e.pointerId)
+  pointerDragged = false
   syncRafState()
+}
+
+function onLostPointerCapture(e: PointerEvent) {
+  if (e.pointerId === activePointerId)
+    finishPointerInteraction(e.pointerId, e.currentTarget as HTMLElement)
+}
+
+function handleInteractionInterrupted() {
+  finishPointerInteraction()
+}
+
+function handleDocumentVisibilityChange() {
+  if (document.visibilityState !== 'visible')
+    finishPointerInteraction()
 }
 
 function handleFlagError(event: Event) {
@@ -800,9 +868,11 @@ function handleRegionPointerLeave(event: PointerEvent, code: string) {
   scheduleRegionClose(code)
 }
 
-function handleRegionClick(code: string) {
-  if (!appStore.regionalTelemetryEnabled)
+function handleRegionClick(event: MouseEvent, code: string) {
+  if (!appStore.regionalTelemetryEnabled || performance.now() < suppressRegionClickUntil) {
+    event.preventDefault()
     return
+  }
 
   if (pinnedRegionCode.value === code) {
     pinnedRegionCode.value = null
@@ -868,7 +938,12 @@ const offlineServers = computed(() => totalServers.value - onlineServers.value)
     ]"
     :role="interactive ? 'region' : undefined"
     :aria-label="interactive ? '可拖动旋转的全球节点地球' : undefined"
-    @pointerdown="onPointerDown" @pointermove="onPointerMove" @pointerup="onPointerUp" @pointercancel="onPointerUp"
+    @pointerdown.capture="onPointerDown"
+    @pointermove="onPointerMove"
+    @pointerup="onPointerUp"
+    @pointercancel="onPointerCancel"
+    @lostpointercapture="onLostPointerCapture"
+    @dragstart.capture.prevent
   >
     <canvas
       ref="canvasRef"
@@ -908,22 +983,22 @@ const offlineServers = computed(() => totalServers.value - onlineServers.value)
         :style="{ '--lnl-marker-index': clusterIndex }"
         :aria-label="`${cluster.displayName}：${cluster.onlineServers}/${cluster.servers} 台在线，查看地区负载`"
         :aria-expanded="activeRegionCode === cluster.code"
-        @pointerdown.stop
         @pointerenter="handleRegionPointerEnter($event, cluster.code)"
         @pointerleave="handleRegionPointerLeave($event, cluster.code)"
         @focus="handleRegionFocus(cluster.code)"
         @blur="handleRegionBlur($event, cluster.code)"
-        @click.stop="handleRegionClick(cluster.code)"
+        @click.stop="handleRegionClick($event, cluster.code)"
       >
         <span class="lnl-earth-flag absolute -bottom-2 -left-2 z-3" aria-hidden="true">
           <span>{{ cluster.code }}</span>
           <img
             :src="`/images/flags/${cluster.code}.svg?v=${buildVersion}`" alt=""
+            draggable="false"
             @load="handleFlagLoad"
             @error="handleFlagError"
           >
         </span>
-        <div class="lnl-earth-count relative z-2 items-start justify-center text-nowrap">
+        <div class="lnl-earth-count relative z-2 items-start justify-center text-nowrap" aria-hidden="true">
           <div v-if="cluster.onlineServers > 0" class="flex items-center gap-1">
             <span class="inline-block size-1.5 rounded-full bg-green-600" />
             <span class="text-green-600">{{ cluster.onlineServers }}</span>
@@ -1132,8 +1207,18 @@ const offlineServers = computed(() => totalServers.value - onlineServers.value)
 .lnl-earth-flag img {
   width: 100%;
   height: 100%;
+  user-select: none;
   object-fit: contain;
   transform: translateZ(0);
+  -webkit-user-drag: none;
+}
+
+.node-earth-globe,
+.node-earth-globe canvas,
+.node-earth-globe button,
+.node-earth-globe img {
+  user-select: none;
+  -webkit-user-drag: none;
 }
 
 .lnl-earth-overlay {
@@ -1242,9 +1327,13 @@ const offlineServers = computed(() => totalServers.value - onlineServers.value)
   width: min(260px, calc(100vw - 42px));
   padding: 14px;
   border: 1px solid color-mix(in srgb, var(--lnl-green) 42%, var(--lnl-line));
+  border-radius: var(--lnl-radius-card);
   background:
-    linear-gradient(135deg, color-mix(in srgb, var(--lnl-green) 7%, transparent), transparent 52%), var(--background);
-  box-shadow: 0 18px 48px rgb(0 0 0 / 22%);
+    linear-gradient(135deg, color-mix(in srgb, var(--lnl-green) 7%, transparent), transparent 52%),
+    var(--lnl-surface-raised, var(--background));
+  box-shadow:
+    0 18px 48px rgb(0 0 0 / 26%),
+    0 0 28px color-mix(in srgb, var(--lnl-green) 5%, transparent);
   text-align: left;
   transform-origin: top left;
 }
@@ -1313,12 +1402,14 @@ const offlineServers = computed(() => totalServers.value - onlineServers.value)
   margin: 5px 0 0;
   overflow: hidden;
   background: color-mix(in srgb, var(--lnl-line) 72%, transparent);
+  border-radius: 999px;
 }
 
 .lnl-earth-readout dd i {
   display: block;
   height: 100%;
   background: linear-gradient(90deg, var(--lnl-green), var(--lnl-cyan));
+  border-radius: inherit;
   box-shadow: 0 0 10px color-mix(in srgb, var(--lnl-green) 36%, transparent);
   transition: width 420ms cubic-bezier(0.22, 1, 0.36, 1);
 }

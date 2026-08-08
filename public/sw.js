@@ -1,5 +1,6 @@
-const CACHE_NAME = 'leonetlab-observatory-v1.3.2'
+const CACHE_NAME = 'leonetlab-observatory-v1.4.2'
 const OFFLINE_URL = '/offline.html'
+const PRECACHE_ASSETS = /* __LNL_PRECACHE_ASSETS__ */ []
 const CORE_ASSETS = [
   OFFLINE_URL,
   '/manifest.webmanifest',
@@ -14,22 +15,33 @@ globalThis.addEventListener('install', (event) => {
       .then(async (cache) => {
         await cache.add(OFFLINE_URL)
         await Promise.allSettled(CORE_ASSETS.slice(1).map(asset => cache.add(asset)))
-      })
-      .then(() => globalThis.skipWaiting()),
+      }),
   )
 })
 
 globalThis.addEventListener('activate', (event) => {
   event.waitUntil(
-    caches.keys()
-      .then(keys => Promise.all(keys
-        .filter(key => key.startsWith('leonetlab-observatory-') && key !== CACHE_NAME)
-        .map(key => caches.delete(key))))
-      .then(() => globalThis.clients.claim()),
+    Promise.all([
+      globalThis.registration.navigationPreload?.enable(),
+      globalThis.clients.claim(),
+    ]),
   )
 })
 
 globalThis.addEventListener('message', (event) => {
+  if (event.data?.type === 'SKIP_WAITING') {
+    event.waitUntil(globalThis.skipWaiting())
+    return
+  }
+
+  if (event.data?.type === 'WARM_THEME_ASSETS') {
+    event.waitUntil(
+      caches.open(CACHE_NAME)
+        .then(cache => Promise.allSettled(PRECACHE_ASSETS.map(asset => cache.add(asset)))),
+    )
+    return
+  }
+
   if (event.data?.type !== 'CLEAR_THEME_CACHE')
     return
 
@@ -38,7 +50,12 @@ globalThis.addEventListener('message', (event) => {
       .then(keys => Promise.all(keys
         .filter(key => key.startsWith('leonetlab-observatory-'))
         .map(key => caches.delete(key))))
-      .then(() => event.ports[0]?.postMessage({ ok: true })),
+      .then(async () => {
+        const cache = await caches.open(CACHE_NAME)
+        await cache.add(OFFLINE_URL)
+        await Promise.allSettled(CORE_ASSETS.slice(1).map(asset => cache.add(asset)))
+        event.ports[0]?.postMessage({ ok: true })
+      }),
   )
 })
 
@@ -61,7 +78,7 @@ async function cacheFirst(request) {
   const cached = await caches.match(request)
   if (cached)
     return cached
-  const response = await fetch(request)
+  const response = await fetchWithTimeout(request, 10000)
   if (isCacheable(response)) {
     const cache = await caches.open(CACHE_NAME)
     await cache.put(request, response.clone())
@@ -71,7 +88,7 @@ async function cacheFirst(request) {
 
 async function networkFirst(request) {
   try {
-    const response = await fetch(request)
+    const response = await fetchWithTimeout(request, 8000)
     if (isCacheable(response)) {
       const cache = await caches.open(CACHE_NAME)
       await cache.put(request, response.clone())
@@ -86,6 +103,24 @@ async function networkFirst(request) {
   }
 }
 
+function fetchWithTimeout(request, timeoutMs) {
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), timeoutMs)
+  return fetch(request, { signal: controller.signal })
+    .finally(() => clearTimeout(timer))
+}
+
+function promiseWithTimeout(promise, timeoutMs) {
+  let timer
+  const result = Promise.race([
+    promise,
+    new Promise((_, reject) => {
+      timer = setTimeout(() => reject(new Error('Request timed out')), timeoutMs)
+    }),
+  ])
+  return result.finally(() => clearTimeout(timer))
+}
+
 globalThis.addEventListener('fetch', (event) => {
   const request = event.request
   if (request.method !== 'GET')
@@ -96,7 +131,20 @@ globalThis.addEventListener('fetch', (event) => {
     return
 
   if (request.mode === 'navigate') {
-    event.respondWith(fetch(request).catch(async () => (await caches.match(OFFLINE_URL)) || Response.error()))
+    event.respondWith((async () => {
+      try {
+        const preloaded = await promiseWithTimeout(event.preloadResponse, 3500)
+        return preloaded || await fetchWithTimeout(request, 8000)
+      }
+      catch {
+        try {
+          return await fetchWithTimeout(request, 4500)
+        }
+        catch {
+          return (await caches.match(OFFLINE_URL)) || Response.error()
+        }
+      }
+    })())
     return
   }
 

@@ -1,8 +1,10 @@
 import type { PublicSettings } from '@/utils/api'
+import type { CurrencyCode } from '@/utils/financeHelper'
 import type { ByteDecimalsConfig } from '@/utils/helper'
 import { useStorageAsync } from '@vueuse/core'
 import { defineStore } from 'pinia'
 import { computed, ref, watch } from 'vue'
+import { normalizeCurrency } from '@/utils/financeHelper'
 
 export type ThemeMode = 'system' | 'light' | 'dark'
 export type NodeCardDensity = 'comfortable' | 'compact'
@@ -192,7 +194,7 @@ const useAppStore = defineStore('app', () => {
     if (settings && typeof settings.introAnimationEnabled === 'boolean') {
       return settings.introAnimationEnabled
     }
-    return true
+    return false
   })
 
   const regionalTelemetryEnabled = computed<boolean>(() => {
@@ -205,7 +207,12 @@ const useAppStore = defineStore('app', () => {
 
   const nodeCardDensity = computed<NodeCardDensity>(() => {
     const density = publicSettings.value?.theme_settings?.nodeCardDensity
-    return density === 'compact' ? 'compact' : 'comfortable'
+    return density === 'comfortable' ? 'comfortable' : 'compact'
+  })
+
+  const nodeCardCurrency = computed<CurrencyCode>(() => {
+    const value = publicSettings.value?.theme_settings?.nodeCardCurrency
+    return normalizeCurrency(typeof value === 'string' ? value : 'CNY')
   })
 
   // 计算属性：ICP 备案配置
@@ -413,6 +420,7 @@ const useAppStore = defineStore('app', () => {
     introAnimationEnabled,
     regionalTelemetryEnabled,
     nodeCardDensity,
+    nodeCardCurrency,
     icpEnabled,
     icpNumber,
     icpUrl,

@@ -18,7 +18,12 @@ const route = useRoute()
 // again. The value still keeps the animation to once per browser session.
 // 1.2.8 重构为单 cobe 实例交接（Teleport 迁移同一 DOM，WebGL 上下文不重建），
 // 让老用户重放重构后的 intro。
-const INTRO_SESSION_KEY = 'leonetlab:intro:1.3.2'
+const INTRO_SESSION_KEY = 'leonetlab:intro:1.4.2pre3'
+// Public settings normally arrive immediately. A broken proxy or cold PWA must
+// never leave #app empty for the API client's full timeout, so mount the safe
+// default shell after a bounded decision window. Late settings still hydrate
+// the dashboard, but cannot start an intro halfway through the user's session.
+const INITIAL_SHELL_DECISION_TIMEOUT_MS = 900
 // 飞行壳的 transform 过渡时长；交接收尾以 transitionend 为准，固定计时器只作
 // 兜底：主线程长任务会推迟 CSS 过渡起点，按点击时刻计时会提前撤壳闪跳。
 const INTRO_HANDOFF_DURATION_MS = 1080
@@ -52,12 +57,16 @@ const introFinishing = ref(false)
 const introLeaving = ref(false)
 const introHandoffReady = ref(false)
 let launchStartedAt = 0
-const launchMinimumMs = 4200
+const INTRO_VISUAL_DURATION_MS = 3150
 let introFinalizeTimer: ReturnType<typeof window.setTimeout> | null = null
 let introRevealTimer: ReturnType<typeof window.setTimeout> | null = null
 let ambientStartTimer: ReturnType<typeof window.setTimeout> | null = null
 let handoffResizeRaf = 0
 let initialShellPromise: Promise<void> | null = null
+let resolveInitialShellDecision: (() => void) | null = null
+const initialShellDecision = new Promise<void>((resolve) => {
+  resolveInitialShellDecision = resolve
+})
 const wait = (duration: number) => new Promise(resolve => window.setTimeout(resolve, duration))
 const nextFrame = () => new Promise<void>(resolve => window.requestAnimationFrame(() => resolve()))
 
@@ -148,12 +157,18 @@ function measureGlobeRects(): { source: FlightRect, target: FlightRect } | null 
 }
 
 async function mountIntroGlobeStage(): Promise<boolean> {
-  const sourceEl = document.querySelector('.lnl-intro-globe')
-  if (!sourceEl)
-    return false
-
-  const source = sourceEl.getBoundingClientRect()
-  if (source.width <= 0 || source.height <= 0)
+  const deadline = performance.now() + 800
+  let source: DOMRect | null = null
+  while (!source && performance.now() < deadline) {
+    const sourceEl = document.querySelector('.lnl-intro-globe')
+    const candidate = sourceEl?.getBoundingClientRect()
+    if (candidate && candidate.width > 0 && candidate.height > 0) {
+      source = candidate
+      break
+    }
+    await nextFrame()
+  }
+  if (!source)
     return false
 
   flightSourceRect = toFlightRect(source)
@@ -280,6 +295,8 @@ async function prepareInitialShell() {
   const playIntro = introSessionEligible && appStore.introAnimationEnabled
   introWillPlay.value = playIntro
   appShellMounted.value = true
+  resolveInitialShellDecision?.()
+  resolveInitialShellDecision = null
 
   if (!playIntro)
     return
@@ -306,16 +323,26 @@ onMounted(async () => {
       import('@/components/NodeCard.vue'),
       import('@/components/NodeGeneralCards.vue'),
     ])
-    await initApp(ensureInitialShell)
-    await ensureInitialShell()
+    const initialization = initApp(ensureInitialShell).catch(async (error) => {
+      console.error('[App] Initialization failed:', error)
+      await ensureInitialShell()
+    })
+    await Promise.race([
+      initialShellDecision,
+      wait(INITIAL_SHELL_DECISION_TIMEOUT_MS).then(() => ensureInitialShell()),
+    ])
 
     if (introWillPlay.value) {
-      await wait(Math.max(0, launchMinimumMs - (performance.now() - launchStartedAt)))
+      // Intro follows its own visual timeline. Node/status data may arrive at any
+      // point and updates the telemetry in place; it never extends the cover.
+      await wait(Math.max(0, INTRO_VISUAL_DURATION_MS - (performance.now() - launchStartedAt)))
       await finishIntro()
+      void initialization
       return
     }
 
     await revealDashboardWithoutIntro()
+    void initialization
   }
   catch (error) {
     console.error('[App] Initialization failed:', error)
@@ -417,6 +444,7 @@ function handleIntroAfterLeave() {
     flightShellVisible.value = false
   }
   introComplete.value = true
+  introWillPlay.value = false
   introHandoffReady.value = false
   appStore.introActive = false
   appShellMounted.value = true
@@ -428,8 +456,8 @@ function handleIntroAfterLeave() {
 
 // 非首访 / 减少动态 / intro 回退后的路由返回：无飞行过程，地球引擎直接在
 // dashboard 槽位挂载。槽位随 HomeView 渲染，慢服务器上按 rAF 轮询等待。
-watch([appShellMounted, () => appStore.loading, globePhase], async ([shell, loading, phase]) => {
-  if (phase !== 'none' || !shell || loading || !isEarthMode())
+watch([appShellMounted, globePhase], async ([shell, phase]) => {
+  if (phase !== 'none' || !shell || introWillPlay.value || showLaunch.value || !isEarthMode())
     return
   await nextTick()
   const deadline = performance.now() + 2000
@@ -498,7 +526,7 @@ onUnmounted(() => {
       aria-hidden="true"
     />
     <Header v-if="appShellMounted" :class="{ 'lnl-reveal-header': introRevealActive, 'lnl-header-staged': !introComplete }" />
-    <main v-if="appShellMounted && !appStore.loading" class="flex-1">
+    <main v-if="appShellMounted" class="flex-1">
       <div class="lnl-shell max-w-[1680px] mx-auto" :class="{ 'lnl-intro-reveal': introRevealActive, 'lnl-intro-staged': !introComplete }">
         <RouterView v-slot="{ Component }">
           <Transition v-bind="pageTransitionProps">
@@ -509,7 +537,7 @@ onUnmounted(() => {
         </RouterView>
       </div>
     </main>
-    <Footer v-if="appShellMounted && !appStore.loading" :intro-complete="introComplete" :present-visitor="introWillPlay" />
+    <Footer v-if="appShellMounted" :intro-complete="introComplete" :present-visitor="true" />
     <Toaster rich-colors close-button position="top-center" />
   </Provider>
 </template>

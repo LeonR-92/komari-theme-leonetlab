@@ -129,6 +129,7 @@ interface TaskInfo {
   name: string
   interval: number
   loss: number
+  lossApproximate?: boolean
   p99?: number
   p50?: number
   p99_p50_ratio?: number
@@ -145,16 +146,20 @@ interface MetricPoint {
   value: number | null
   tags?: Record<string, string>
   tag?: Record<string, string>
+  labels?: Record<string, string>
 }
 
 interface MetricSeries {
   metric_key: 'ping.latency_ms' | 'ping.loss'
   tags?: Record<string, string>
   tag?: Record<string, string>
+  labels?: Record<string, string>
+  interval_seconds?: number
   points: MetricPoint[]
 }
 
 interface MetricQueryResponse {
+  interval_seconds?: number
   series: MetricSeries[]
 }
 
@@ -164,6 +169,7 @@ interface PingMetricTaskStats {
   type?: string
   interval?: number
   loss: number
+  loss_approximate?: boolean
   min?: number
   max?: number
   avg?: number
@@ -175,6 +181,7 @@ interface PingMetricTaskStats {
 }
 
 interface PingMetricStatsResponse {
+  interval_seconds?: number
   stats: PingMetricTaskStats[]
 }
 
@@ -260,7 +267,9 @@ function getMetricTaskId(series: MetricSeries, point: MetricPoint): number | nul
     point.tags?.task_id
     ?? series.tags?.task_id
     ?? point.tag?.task_id
-    ?? series.tag?.task_id,
+    ?? series.tag?.task_id
+    ?? point.labels?.task_id
+    ?? series.labels?.task_id,
   )
 
   return Number.isInteger(taskId) ? taskId : null
@@ -324,6 +333,7 @@ async function fetchMetricRecords(uuid: string, hours: number): Promise<PingChar
     name: task.name || `Ping ${task.task_id}`,
     interval: task.interval ?? 60,
     loss: Number.isFinite(task.loss) ? task.loss : 0,
+    lossApproximate: task.loss_approximate === true,
     p99: task.p99,
     p50: task.p50,
     p99_p50_ratio: task.p99_p50_ratio,
@@ -698,7 +708,7 @@ const baseTooltipConfig = computed(() => ({
   backgroundColor: chartThemeColors.value.tooltipBg,
   borderColor: 'transparent',
   borderWidth: 0,
-  borderRadius: 6,
+  borderRadius: 12,
   textStyle: {
     color: chartThemeColors.value.text,
     fontSize: 12,
@@ -737,10 +747,11 @@ const pingChartOption = computed(() => {
       type: 'line' as const,
       // 只在绘制副本上桥接 1–2 个采样周期；统计、Tooltip 与状态色块继续读取原始值。
       data: displayValues,
-      smooth: showDelay.value ? (cutPeak.value ? 0.28 : 0.08) : 0,
+      smooth: showDelay.value ? (cutPeak.value ? 0.32 : 0.22) : 0,
+      smoothMonotone: 'x' as const,
       showSymbol: false,
       connectNulls: false,
-      lineStyle: { width: showDelay.value ? 1.5 : 0, color, cap: 'round' as const },
+      lineStyle: { width: showDelay.value ? 1.8 : 0, color, cap: 'round' as const, join: 'round' as const },
       itemStyle: { color, opacity: showDelay.value ? 1 : 0 },
       markLine: showLoss.value && lossMarkerIndexes.length
         ? {
@@ -919,10 +930,10 @@ onUnmounted(() => {
         <span>OBSERVATION WINDOW</span>
         <Tabs v-model="selectedView" class="w-full items-center">
           <div class="min-w-0 flex-1 overflow-x-auto pointer-events-auto">
-            <TabsList class="lnl-ping-window-tabs w-max h-8 rounded-none bg-transparent">
+            <TabsList class="lnl-ping-window-tabs w-max h-8 rounded-xl bg-transparent">
               <TabsTrigger
                 v-for="view in availableViews" :key="view.label" :value="view.label"
-                class="h-7 flex-none shrink-0 rounded-none border-none px-3 text-xs shadow-none data-[state=active]:bg-emerald-500/10 data-[state=active]:text-emerald-600"
+                class="h-7 flex-none shrink-0 rounded-lg border-none px-3 text-xs shadow-none data-[state=active]:bg-emerald-500/10 data-[state=active]:text-emerald-600"
               >
                 {{ view.label }}
               </TabsTrigger>
@@ -933,14 +944,14 @@ onUnmounted(() => {
       <div class="lnl-ping-selection">
         <span>PROBES {{ selectedTaskIds.length }} / {{ tasks.length }}</span>
         <Button
-          variant="ghost" size="xs" class="h-7 rounded-none border border-emerald-600/15"
+          variant="ghost" size="xs" class="h-7 rounded-lg border border-emerald-600/15"
           :class="[selectedTaskIds.length === tasks.length && '!text-emerald-600']"
           @click="showAllTasks"
         >
           全选
         </Button>
         <Button
-          variant="ghost" size="xs" class="h-7 rounded-none border border-emerald-600/15"
+          variant="ghost" size="xs" class="h-7 rounded-lg border border-emerald-600/15"
           :class="[!selectedTaskIds.length && '!text-emerald-600']"
           @click="hideAllTasks"
         >
@@ -985,10 +996,10 @@ onUnmounted(() => {
                   <small>ms</small>
                 </div>
                 <div class="lnl-ping-probe-meta">
-                  <span>LOSS {{ Number.isFinite(task.loss) ? task.loss.toFixed(2) : '0.00' }}%</span>
+                  <span>LOSS{{ task.lossApproximate ? '≈' : '' }} {{ Number.isFinite(task.loss) ? task.loss.toFixed(2) : '0.00' }}%</span>
                   <span v-if="task.p99_p50_ratio !== undefined">JIT {{ task.p99_p50_ratio.toFixed(2) }}</span>
                 </div>
-                <DataTooltip portal placement="top" content-class="!rounded-none p-3 w-64">
+                <DataTooltip portal placement="top" content-class="!rounded-xl p-3 w-64">
                   <Button variant="ghost" size="icon-xs" class="lnl-ping-probe-info" @click.stop>
                     <Icon icon="carbon:information" :width="14" :height="14" />
                   </Button>
@@ -997,6 +1008,9 @@ onUnmounted(() => {
                       <p>每条探测线路按任务周期上报时延与丢包；行内 LOSS 为统计窗口丢包率，JIT 为 P99/P50 抖动比值。</p>
                       <p class="text-muted-foreground">
                         数值随最近统计窗口滚动更新，点按该行可启停此线路。
+                      </p>
+                      <p v-if="task.lossApproximate" class="text-muted-foreground">
+                        当前丢包率由延迟缺失样本近似推算；真实丢包指标可用后会自动切换。
                       </p>
                     </div>
                   </template>
@@ -1019,13 +1033,13 @@ onUnmounted(() => {
                 >
                   <i /> {{ refreshError ? '连接重试' : backgroundRefreshing ? '实时同步' : '实时' }}
                 </span>
-                <Button variant="ghost" size="xs" class="h-7 rounded-none" :class="[showDelay && '!text-emerald-600']" @click="showDelay = !showDelay">
+                <Button variant="ghost" size="xs" class="h-7 rounded-lg" :class="[showDelay && '!text-emerald-600']" @click="showDelay = !showDelay">
                   延迟
                 </Button>
-                <Button variant="ghost" size="xs" class="h-7 rounded-none" :class="[showLoss && '!text-emerald-600']" @click="showLoss = !showLoss">
+                <Button variant="ghost" size="xs" class="h-7 rounded-lg" :class="[showLoss && '!text-emerald-600']" @click="showLoss = !showLoss">
                   丢包
                 </Button>
-                <Button variant="ghost" size="xs" class="h-7 rounded-none" :class="[cutPeak && '!text-emerald-600']" @click="cutPeak = !cutPeak">
+                <Button variant="ghost" size="xs" class="h-7 rounded-lg" :class="[cutPeak && '!text-emerald-600']" @click="cutPeak = !cutPeak">
                   平滑
                 </Button>
                 <DataTooltip portal placement="bottom" :width="272" :content-class="pickSurfaceClass('text-[11px] leading-relaxed', 'text-[11px] leading-relaxed backdrop-blur-xl')">
@@ -1033,7 +1047,7 @@ onUnmounted(() => {
                     <Icon icon="carbon:information" :width="14" :height="14" />
                   </Button>
                   <template #content>
-                    <span>Komari 1.3.2 在最近 10 分钟保留精确样本，更长窗口由服务端分钟汇总。开启“平滑”只对连续有效片段应用 Hampel + EWMA；图表可在 1–2 个采样周期的短缺口间绘制展示线，长断线仍保持断开。原始统计、Tooltip、丢包标记和节点质量色块均不使用插值值。</span>
+                    <span>Komari 1.4.2 在最近 10 分钟保留精确样本，更长窗口由服务端分钟汇总。开启“平滑”只对连续有效片段应用 Hampel + EWMA；图表可在 1–2 个采样周期的短缺口间绘制展示线，长断线仍保持断开。原始统计、Tooltip、丢包标记和节点质量色块均不使用插值值。</span>
                   </template>
                 </DataTooltip>
               </div>
@@ -1052,10 +1066,12 @@ onUnmounted(() => {
 .lnl-ping-panel {
   position: relative;
   overflow: hidden;
+  border-radius: var(--lnl-radius-card);
   border: 1px solid color-mix(in srgb, var(--lnl-line) 92%, var(--foreground) 8%);
   background:
     linear-gradient(135deg, color-mix(in srgb, var(--lnl-green) 3%, transparent), transparent 42%),
-    color-mix(in srgb, var(--background) 97%, var(--lnl-surface));
+    color-mix(in srgb, var(--lnl-surface-base, var(--background)) 97%, var(--lnl-surface));
+  box-shadow: var(--lnl-shadow-soft);
 }
 .lnl-ping-panel::before {
   position: absolute;
@@ -1115,7 +1131,7 @@ onUnmounted(() => {
   gap: 24px;
   padding: 9px 12px 8px;
   border-bottom: 1px solid var(--lnl-line);
-  background: color-mix(in srgb, var(--lnl-surface) 38%, transparent);
+  background: color-mix(in srgb, var(--lnl-surface-inner, var(--lnl-surface)) 72%, transparent);
 }
 .lnl-ping-window {
   min-width: 0;
@@ -1154,7 +1170,10 @@ onUnmounted(() => {
   grid-template-columns: 150px minmax(0, 1fr);
   min-width: 0;
   border-bottom: 1px solid var(--lnl-line);
-  background: color-mix(in srgb, var(--lnl-surface) 68%, transparent);
+  padding: 8px;
+  gap: 8px;
+  background: color-mix(in srgb, var(--lnl-surface-inner, var(--lnl-surface)) 74%, transparent);
+  border-radius: var(--lnl-radius-inner);
 }
 .lnl-ping-probes-head {
   display: flex;
@@ -1165,6 +1184,8 @@ onUnmounted(() => {
   gap: 6px;
   padding: 12px 14px;
   border-right: 1px solid var(--lnl-line);
+  border-radius: var(--lnl-radius-inner);
+  background: color-mix(in srgb, var(--lnl-surface-raised, var(--card)) 88%, transparent);
   font-family: var(--font-display);
   font-size: 13px;
   font-weight: 650;
@@ -1185,6 +1206,7 @@ onUnmounted(() => {
   min-width: 0;
   overflow-x: auto;
   overscroll-behavior-inline: contain;
+  gap: 8px;
 }
 .lnl-ping-probe {
   position: relative;
@@ -1197,7 +1219,9 @@ onUnmounted(() => {
   min-height: 88px;
   align-items: center;
   padding: 12px;
-  border-right: 1px solid color-mix(in srgb, var(--lnl-line) 82%, transparent);
+  border: 1px solid color-mix(in srgb, var(--lnl-line) 82%, transparent);
+  border-radius: var(--lnl-radius-inner);
+  background: color-mix(in srgb, var(--lnl-surface-raised, var(--card)) 90%, transparent);
   cursor: pointer;
   transition:
     background-color 180ms ease,
@@ -1263,6 +1287,11 @@ onUnmounted(() => {
   display: flex;
   min-height: 0;
   flex-direction: column;
+  margin: 8px;
+  overflow: hidden;
+  border: 1px solid var(--lnl-line);
+  border-radius: var(--lnl-radius-inner);
+  background: color-mix(in srgb, var(--lnl-surface-base, var(--background)) 94%, transparent);
 }
 .lnl-ping-plot-head {
   display: flex;
@@ -1317,10 +1346,33 @@ onUnmounted(() => {
   height: clamp(330px, 42dvh, 420px);
   flex: none;
   padding: 6px 10px 10px;
+  border-radius: 0 0 var(--lnl-radius-inner) var(--lnl-radius-inner);
+  background: linear-gradient(180deg, color-mix(in srgb, var(--lnl-green) 2.5%, transparent), transparent 48%);
 }
 .lnl-ping-chart :deep(.echarts) {
   width: 100%;
   height: 100%;
+}
+:global(.dark) .lnl-ping-panel {
+  border-color: color-mix(in srgb, var(--lnl-line-strong) 78%, transparent);
+  background:
+    linear-gradient(135deg, color-mix(in srgb, var(--lnl-green) 2%, transparent), transparent 44%),
+    var(--lnl-surface-base);
+  box-shadow: 0 20px 60px rgb(0 0 0 / 28%);
+}
+:global(.dark) .lnl-ping-toolbar,
+:global(.dark) .lnl-ping-probes {
+  background: color-mix(in srgb, var(--lnl-surface-inner) 78%, transparent);
+}
+:global(.dark) .lnl-ping-probes-head,
+:global(.dark) .lnl-ping-probe {
+  border-color: color-mix(in srgb, var(--lnl-line-strong) 62%, transparent);
+  background: var(--lnl-surface-raised);
+  box-shadow: inset 0 1px rgb(255 255 255 / 2%);
+}
+:global(.dark) .lnl-ping-plot {
+  border-color: color-mix(in srgb, var(--lnl-line-strong) 68%, transparent);
+  background: var(--lnl-surface-base);
 }
 @media (max-width: 820px) {
   .lnl-ping-toolbar {
@@ -1338,6 +1390,7 @@ onUnmounted(() => {
   }
   .lnl-ping-probes {
     display: block;
+    border-radius: var(--lnl-radius-inner);
   }
   .lnl-ping-probes-head {
     min-height: 42px;
@@ -1363,7 +1416,8 @@ onUnmounted(() => {
     min-height: 78px;
     gap: 2px 5px;
     padding: 8px 7px;
-    border-bottom: 1px solid var(--lnl-line);
+    border: 1px solid var(--lnl-line);
+    border-radius: var(--lnl-radius-control);
   }
   .lnl-ping-probe > i {
     width: 3px;

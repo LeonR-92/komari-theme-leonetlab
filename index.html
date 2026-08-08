@@ -11,13 +11,72 @@
     <meta name="color-scheme" content="dark light" />
     <meta name="theme-color" content="#04100d" />
     <meta name="application-name" content="Komari Monitor" />
+    <meta name="apple-mobile-web-app-title" content="Komari Monitor" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <style>
+      #lnl-boot-fallback {
+        position: fixed;
+        inset: 0;
+        display: grid;
+        place-items: center;
+        background: #f5f8f7;
+        color: #173029;
+        font:
+          500 14px/1.5 system-ui,
+          -apple-system,
+          'Segoe UI',
+          'Microsoft YaHei UI',
+          sans-serif;
+        letter-spacing: 0.02em;
+      }
+      #lnl-boot-fallback > span {
+        display: grid;
+        justify-items: center;
+        gap: 14px;
+      }
+      #lnl-boot-fallback i {
+        width: 34px;
+        height: 34px;
+        border: 1px solid rgba(32, 112, 82, 0.22);
+        border-top-color: #2d9c6c;
+        border-radius: 50%;
+        animation: lnl-boot-spin 0.9s linear infinite;
+      }
+      #lnl-boot-fallback b {
+        font-weight: 600;
+      }
+      @keyframes lnl-boot-spin {
+        to {
+          transform: rotate(1turn);
+        }
+      }
+      @media (prefers-color-scheme: dark) {
+        #lnl-boot-fallback {
+          background: #070c0a;
+          color: #dbe8e2;
+        }
+        #lnl-boot-fallback i {
+          border-color: rgba(151, 205, 181, 0.16);
+          border-top-color: #76e6b2;
+        }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        #lnl-boot-fallback i {
+          animation: none;
+          border-top-color: inherit;
+        }
+      }
+    </style>
   </head>
 
   <body>
-    <div id="app" class="min-h-screen flex flex-col"></div>
+    <div id="app" class="min-h-screen flex flex-col">
+      <div id="lnl-boot-fallback" role="status" aria-live="polite">
+        <span><i aria-hidden="true"></i><b>正在连接网络观测站</b></span>
+      </div>
+    </div>
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>

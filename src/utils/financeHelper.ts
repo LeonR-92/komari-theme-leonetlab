@@ -52,6 +52,7 @@ const MS_PER_DAY = 24 * 60 * 60 * 1000
 const MONTH_DAYS = 30
 const LONG_TERM_YEARS = 100
 let pendingExchangeRateRequest: Promise<ExchangeRateResult> | null = null
+let resolvedExchangeRateResult: ExchangeRateResult | null = null
 
 export const DEFAULT_EXCHANGE_RATES = Object.fromEntries(
   Object.entries(FINANCE_CURRENCY_CONFIG).map(([currency, config]) => [currency, config.rate]),
@@ -63,11 +64,11 @@ export const CURRENCY_SYMBOLS = Object.fromEntries(
 
 const EXCHANGE_RATE_APIS = [
   {
-    url: 'https://api.frankfurter.app/latest?from=CNY',
+    url: 'https://open.er-api.com/v6/latest/CNY',
     parse: (data: unknown) => (data as { rates?: unknown }).rates,
   },
   {
-    url: 'https://open.er-api.com/v6/latest/CNY',
+    url: 'https://api.frankfurter.app/latest?from=CNY',
     parse: (data: unknown) => (data as { rates?: unknown }).rates,
   },
 ] as const
@@ -113,7 +114,7 @@ function createCurrencySymbolAliases(): Record<string, CurrencyCode> {
   }, {})
 }
 
-function resolveCurrency(currency: string | null | undefined): CurrencyCode | null {
+export function resolveCurrency(currency: string | null | undefined): CurrencyCode | null {
   const value = String(currency ?? '').trim().toUpperCase()
   if (!value)
     return 'CNY'
@@ -277,13 +278,103 @@ export function formatFinanceAmount(amount: number, currency: CurrencyCode): {
   }
 }
 
+export interface MonthlyCostDisplay {
+  text: string
+  currency: string
+  amount: number | null
+  converted: boolean
+  state: 'paid' | 'free' | 'missing' | 'invalid'
+}
+
+export function formatNodeMonthlyCost(
+  node: Pick<NodeData, 'price' | 'billing_cycle' | 'currency'>,
+  targetCurrency: CurrencyCode,
+  exchangeRates: ExchangeRates,
+  allowConversion = true,
+): MonthlyCostDisplay {
+  const price = Number(node.price)
+  if (price === -1)
+    return { text: '免费', currency: '', amount: null, converted: false, state: 'free' }
+  if (!Number.isFinite(price) || price === 0)
+    return { text: '未填写', currency: '', amount: null, converted: false, state: 'missing' }
+
+  const billingCycle = Number(node.billing_cycle)
+  if (price < 0 || !Number.isFinite(billingCycle) || billingCycle <= 0)
+    return { text: '—', currency: '', amount: null, converted: false, state: 'invalid' }
+
+  const monthlyOriginal = price / billingCycle * MONTH_DAYS
+  const sourceCurrency = resolveCurrency(node.currency)
+  const rawCurrency = String(node.currency || '').trim().toUpperCase() || 'CNY'
+  if (!sourceCurrency) {
+    return {
+      text: `${rawCurrency} ${formatCompactMoney(monthlyOriginal)}`,
+      currency: rawCurrency,
+      amount: monthlyOriginal,
+      converted: false,
+      state: 'paid',
+    }
+  }
+
+  if (sourceCurrency === targetCurrency) {
+    return {
+      text: `${targetCurrency} ${formatCompactMoney(monthlyOriginal)}`,
+      currency: targetCurrency,
+      amount: monthlyOriginal,
+      converted: false,
+      state: 'paid',
+    }
+  }
+
+  if (!allowConversion) {
+    return {
+      text: `${sourceCurrency} ${formatCompactMoney(monthlyOriginal)}`,
+      currency: sourceCurrency,
+      amount: monthlyOriginal,
+      converted: false,
+      state: 'paid',
+    }
+  }
+
+  const sourceRate = Number(exchangeRates[sourceCurrency])
+  const targetRate = Number(exchangeRates[targetCurrency])
+  if (!Number.isFinite(sourceRate) || sourceRate <= 0 || !Number.isFinite(targetRate) || targetRate <= 0) {
+    return {
+      text: `${sourceCurrency} ${formatCompactMoney(monthlyOriginal)}`,
+      currency: sourceCurrency,
+      amount: monthlyOriginal,
+      converted: false,
+      state: 'paid',
+    }
+  }
+
+  const converted = monthlyOriginal / sourceRate * targetRate
+  return {
+    text: `${targetCurrency} ${formatCompactMoney(converted)}`,
+    currency: targetCurrency,
+    amount: converted,
+    converted: true,
+    state: 'paid',
+  }
+}
+
+function formatCompactMoney(amount: number): string {
+  return new Intl.NumberFormat('en-US', {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+    useGrouping: false,
+  }).format(amount)
+}
+
 export async function getDailyExchangeRates(): Promise<ExchangeRateResult> {
+  if (resolvedExchangeRateResult)
+    return resolvedExchangeRateResult
   if (pendingExchangeRateRequest)
     return pendingExchangeRateRequest
 
   pendingExchangeRateRequest = loadDailyExchangeRates()
   try {
-    return await pendingExchangeRateRequest
+    resolvedExchangeRateResult = await pendingExchangeRateRequest
+    return resolvedExchangeRateResult
   }
   finally {
     pendingExchangeRateRequest = null
@@ -366,7 +457,11 @@ async function fetchWithTimeout(url: string, timeoutMs = 5000): Promise<Response
   const timeoutId = window.setTimeout(() => controller.abort(), timeoutMs)
 
   try {
-    return await fetch(url, { signal: controller.signal })
+    return await fetch(url, {
+      signal: controller.signal,
+      credentials: 'omit',
+      referrerPolicy: 'no-referrer',
+    })
   }
   finally {
     window.clearTimeout(timeoutId)

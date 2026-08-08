@@ -445,7 +445,9 @@ const cpuChartOption = computed(() => ({
       name: 'CPU',
       type: 'line',
       data: chartData.value.map(r => r.cpu),
-
+      smooth: 0.24,
+      smoothMonotone: 'x' as const,
+      connectNulls: false,
       showSymbol: false,
       yAxisIndex: 0,
       lineStyle: { width: 1.5, color: chartColors.primary, cap: 'round' as const },
@@ -467,7 +469,9 @@ const cpuChartOption = computed(() => ({
       name: '负载',
       type: 'line',
       data: chartData.value.map(r => r.load),
-
+      smooth: 0.24,
+      smoothMonotone: 'x' as const,
+      connectNulls: false,
       showSymbol: false,
       yAxisIndex: 1,
       lineStyle: { width: 1.5, color: chartColors.secondary, cap: 'round' as const },
@@ -532,7 +536,9 @@ const memoryChartOption = computed(() => ({
       name: 'RAM',
       type: 'line',
       data: chartData.value.map(r => r.ram),
-
+      smooth: 0.24,
+      smoothMonotone: 'x' as const,
+      connectNulls: false,
       showSymbol: false,
       lineStyle: { width: 1.5, color: chartColors.primary, cap: 'round' as const },
       areaStyle: {
@@ -553,7 +559,9 @@ const memoryChartOption = computed(() => ({
       name: 'Swap',
       type: 'line',
       data: chartData.value.map(r => r.swap),
-
+      smooth: 0.24,
+      smoothMonotone: 'x' as const,
+      connectNulls: false,
       showSymbol: false,
       lineStyle: { width: 1.5, color: chartColors.secondary, cap: 'round' as const },
     },
@@ -607,7 +615,9 @@ const diskChartOption = computed(() => ({
       name: '磁盘已用',
       type: 'line',
       data: chartData.value.map(r => r.disk),
-
+      smooth: 0.24,
+      smoothMonotone: 'x' as const,
+      connectNulls: false,
       showSymbol: false,
       lineStyle: { width: 1.5, color: chartColors.tertiary, cap: 'round' as const },
       areaStyle: {
@@ -682,7 +692,9 @@ const networkChartOption = computed(() => ({
       name: '下载',
       type: 'line',
       data: chartData.value.map(r => r.net_in),
-
+      smooth: 0.24,
+      smoothMonotone: 'x' as const,
+      connectNulls: false,
       showSymbol: false,
       lineStyle: { width: 1.5, color: chartColors.quinary, cap: 'round' as const },
     },
@@ -690,7 +702,9 @@ const networkChartOption = computed(() => ({
       name: '上传',
       type: 'line',
       data: chartData.value.map(r => r.net_out),
-
+      smooth: 0.24,
+      smoothMonotone: 'x' as const,
+      connectNulls: false,
       showSymbol: false,
       lineStyle: { width: 1.5, color: chartColors.quaternary, cap: 'round' as const },
     },
@@ -753,7 +767,9 @@ const connectionsChartOption = computed(() => ({
       name: 'TCP',
       type: 'line',
       data: chartData.value.map(r => r.connections),
-
+      smooth: 0.12,
+      smoothMonotone: 'x' as const,
+      connectNulls: false,
       showSymbol: false,
       lineStyle: { width: 1.5, color: chartColors.primary, cap: 'round' as const },
     },
@@ -761,7 +777,9 @@ const connectionsChartOption = computed(() => ({
       name: 'UDP',
       type: 'line',
       data: chartData.value.map(r => r.connections_udp),
-
+      smooth: 0.12,
+      smoothMonotone: 'x' as const,
+      connectNulls: false,
       showSymbol: false,
       lineStyle: { width: 1.5, color: chartColors.tertiary, cap: 'round' as const },
     },
@@ -813,7 +831,9 @@ const processChartOption = computed(() => ({
       name: '进程数',
       type: 'line',
       data: chartData.value.map(r => r.process),
-
+      smooth: 0.12,
+      smoothMonotone: 'x' as const,
+      connectNulls: false,
       showSymbol: false,
       lineStyle: { width: 1.5, color: chartColors.quaternary, cap: 'round' as const },
       areaStyle: {
@@ -902,7 +922,7 @@ onUnmounted(() => {
       <div v-else class="gap-4 grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3">
         <!-- CPU 卡片 -->
         <CardX
-          size="small"
+          size="small" segmented
           class="lnl-panel-motion border-none rounded-md"
           :class="pickSurfaceClass('bg-background/60 hover:bg-background', 'bg-background/50 hover:bg-background backdrop-blur-xs')"
         >
@@ -923,7 +943,7 @@ onUnmounted(() => {
 
         <!-- 内存卡片 -->
         <CardX
-          size="small"
+          size="small" segmented
           class="lnl-panel-motion border-none rounded-md"
           :class="pickSurfaceClass('bg-background/60 hover:bg-background', 'bg-background/50 hover:bg-background backdrop-blur-xs')"
         >
@@ -953,7 +973,7 @@ onUnmounted(() => {
 
         <!-- 磁盘卡片 -->
         <CardX
-          size="small"
+          size="small" segmented
           class="lnl-panel-motion border-none rounded-md"
           :class="pickSurfaceClass('bg-background/60 hover:bg-background', 'bg-background/50 hover:bg-background backdrop-blur-xs')"
         >
@@ -982,7 +1002,7 @@ onUnmounted(() => {
 
         <!-- 网络卡片 -->
         <CardX
-          size="small"
+          size="small" segmented
           class="lnl-panel-motion border-none rounded-md"
           :class="pickSurfaceClass('bg-background/60 hover:bg-background', 'bg-background/50 hover:bg-background backdrop-blur-xs')"
         >
@@ -1016,7 +1036,7 @@ onUnmounted(() => {
 
         <!-- 连接数卡片 -->
         <CardX
-          size="small"
+          size="small" segmented
           class="lnl-panel-motion border-none rounded-md"
           :class="pickSurfaceClass('bg-background/60 hover:bg-background', 'bg-background/50 hover:bg-background backdrop-blur-xs')"
         >
@@ -1037,7 +1057,7 @@ onUnmounted(() => {
 
         <!-- 进程卡片 -->
         <CardX
-          size="small"
+          size="small" segmented
           class="lnl-panel-motion border-none rounded-md"
           :class="pickSurfaceClass('bg-background/60 hover:bg-background', 'bg-background/50 hover:bg-background backdrop-blur-xs')"
         >

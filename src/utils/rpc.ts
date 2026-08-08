@@ -44,7 +44,6 @@ const WS_PROTOCOL_PREFIX = 'ws://'
 const WSS_PROTOCOL_PREFIX = 'wss://'
 const DEFAULT_RPC_API_BASE = '/api'
 const DEFAULT_RPC_ENDPOINT = `${DEFAULT_RPC_API_BASE}/rpc2`
-
 function normalizeHttpBaseUrl(baseUrl: string): string {
   const trimmedBaseUrl = baseUrl.trim()
 

@@ -28,13 +28,11 @@ const hasHeaderSlot = defineSlots<{
 }>()
 
 const paddingClass = computed(() => {
-  const isShowHeader = hasHeaderSlot.header || hasHeaderSlot['header-extra'] || props.title
-  const pt = isShowHeader ? 'pt-0' : ''
   if (props.size === 'small')
-    return `p-3 ${pt}`
+    return 'p-3'
   if (props.size === 'large')
-    return `p-6 ${pt}`
-  return `p-4 ${pt}`
+    return 'p-6'
+  return 'p-4'
 })
 
 const headerPaddingClass = computed(() => {
@@ -60,6 +58,7 @@ const segmentedFooter = computed(() => {
 
 <template>
   <div
+    data-slot="card"
     :class="cn(
       'bg-card text-card-foreground flex flex-col rounded-lg',
       bordered && 'border',
@@ -69,6 +68,7 @@ const segmentedFooter = computed(() => {
   >
     <div
       v-if="hasHeaderSlot.header || title || hasHeaderSlot['header-extra']"
+      data-slot="card-header"
       :class="cn(
         'flex items-center gap-2',
         headerPaddingClass,
@@ -85,11 +85,12 @@ const segmentedFooter = computed(() => {
         <slot name="header-extra" />
       </div>
     </div>
-    <div :class="cn(paddingClass, props.contentClass)">
+    <div data-slot="card-content" :class="cn(paddingClass, props.contentClass)">
       <slot />
     </div>
     <div
       v-if="hasHeaderSlot.footer"
+      data-slot="card-footer"
       :class="cn(
         headerPaddingClass,
         segmentedFooter && 'border-t bg-muted/40',

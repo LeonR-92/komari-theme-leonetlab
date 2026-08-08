@@ -1,6 +1,58 @@
-# 更新日志
+# Changelog
+
+## 1.4.2 — 2026-08-08
+
+- Rebuilt the interface around softer rounded surfaces, compact visual telemetry, animated resource gauges, a refined dark-mode hierarchy, and consistent interaction motion.
+- Aligned modern Ping metrics and compatibility behavior with Komari 1.4.2 while preserving legacy array and UUID-keyed node responses.
+- Improved globe dragging, regional telemetry, search reordering, monthly finance presentation, first-visit handoff, PWA installation, offline fallback, and user-confirmed cache updates.
+- Fixed the visitor scan completion path so it uses one serial state machine, never replays row-exit motion, and settles into the compact bar without a trailing size animation.
+- Added regression coverage for visitor playback, mobile/desktop layout, theme settings, data interfaces, PWA startup, compatibility boundaries, and package privacy.
 
 > 自 1.3.0 起，主题版本号跟随 Komari 官方版本号一并升级。1.3.0 之前的历史版本（1.0.x – 1.2.9）及其 Release 已随仓库清理移除，本日志从 1.3.0 重新开始记录。
+
+## 1.4.2pre3（SemVer: 1.4.2-pre.3）— 2026-08-08
+
+- 修复访客扫描收束到紧凑态后再次展开时内容层被错误隐藏、紧凑层继续覆盖详情的问题，并增加完整字段与已解析网络信息回归。
+- 为搜索抽屉、内层容器、圆角输入框建立统一宽度和溢出边界，移除嵌套输入框的第二层描边，并覆盖 390px 与 1440px 几何回归。
+- 重新压低暗色详情页、资源图表和 Ping 工作区的绿色亮度，明确基础、内层与抬升表面层级，保持边界与进度信息可读。
+- 首屏公开设置超过有限等待时立即挂载安全默认外壳，HTML 同步提供明暗自适应启动占位，避免慢接口或首次 PWA 安装期间出现纯黑空页。
+- Service Worker 更新改为用户确认后接管，不再激活即删除旧版本分包缓存；导航和静态资源加入超时与离线降级，手动清理后自动重建离线核心缓存。
+- 本版本只生成本地预览包，不提交、不推送、不创建 Release，也不上传至 Komari。
+
+## 1.4.2pre2（SemVer: 1.4.2-pre.2）— 2026-08-08
+
+- 修复访客扫描解析状态、第三方网络信息与收束阶段的空白卡片；网络查询恢复为默认启用，访客动画继续独立于首访动画。
+- 首访启动状态与唯一地球槽位重新同步，消除慢接口下封面迟到、进度已过半和主页槽位提前接管 canvas 的竞态。
+- 节点卡统一使用“月付”短标签，列表视图改为圆角分层行、整合节点/系统/标签信息，并补充月付、到期与 Ping 质量信息。
+- 搜索框限制桌面宽度并采用独立圆角抽屉，修复展开后横贯整页的双线观感；保留移动端全宽布局和 UUID 驱动的连续重排。
+- 按测试要求回退 `1.4.2pre` 新增的 RPC 白名单、节点投影与 URL 拦截行为，仅保留常规代码、依赖、构建产物与敏感信息审计。
+- 本版本只生成本地预览包，不提交、不推送、不创建 Release，也不上传至 Komari。
+
+## 1.4.2pre（SemVer: 1.4.2-pre.0）— 2026-08-08
+
+- Ping、地区遥测、搜索、缓存状态、访客卡和中断提示统一为 16/12/10px 圆角层级，并增强暗色模式的表面、文字、边界和质量轨道对比度。
+- 搜索改为稳定的第二行抽屉并保留 UUID 驱动的 FLIP 重排；访客扫描使用同锚点交叉收束，且不再依赖首访动画开关。
+- 节点卡费用精简为可配置币种的月付金额，30 种币种按需共享汇率；免费、未填写、异常周期和汇率失败均有明确降级。
+- 首屏设置与健康检查并行，地球和骨架不再等待节点接口；PWA 更新改为空闲节流检查与用户确认，不缓存导航、RPC、API、访客、汇率或用户数据。
+- Komari 1.4.2 优先读取脱敏公开节点接口；旧版回退数据进入 Store 前再次投影，RPC 仅允许已知访客只读方法，公开 URL 拒绝危险协议，访客地理外查默认关闭。
+- 本版本只生成本地预览包，不提交、不推送、不创建 Release，也不上传至 Komari。
+
+## 1.4.2b（SemVer: 1.4.2-beta.0）— 2026-08-08
+
+- 光标改为内点快速跟随、外环缓动追随的双速结构，并在位置收敛后停止动画帧。
+- 修复国旗图片原生拖拽打断地球指针捕获的问题，补齐取消、失焦和切页清理。
+- 网络与生命周期整合为响应式信息轨道，资源环形仪表加入真实数值更新过渡。
+- 修正详情卡片标题分隔线重叠，柔化详情折线图，并让访客扫描独立于可选的首访动画、每标签页至多自动播放一次。
+
+## 1.4.2a（SemVer: 1.4.2-alpha.0）— 2026-08-08
+
+- 将整体视觉重构为“柔和网络观测站”：统一圆角曲面、低对比度 1px 边框和中性灰阶，绿色仅承担在线、质量、进度与交互语义。
+- 节点卡片改用四项 CSS 环形仪表与清晰的资源、网络生命周期、网络质量层级；紧凑型成为默认，长名称、缺失值、异常百分比和费用状态均保持稳定降级。
+- 建立中英文可读的本地系统字体栈和等宽实时数字；新增仅用于精细指针设备的 Observatory 光标，并在输入、触摸、简化动效和文本选择时恢复系统光标。
+- 重写地球拖动指针状态机，覆盖国旗、在线数字和详情边缘起拖、阈值判断、指针捕获丢失、窗口失焦及页面隐藏，避免地球偶发锁死和拖后误点。
+- 对齐 Komari 1.4.2 的 `interval_seconds`、空采样、指标标签、真实丢包与 `loss_approximate`，继续保留旧节点响应兼容层和受控 Ping 回退。
+- PWA 保留稳定静态清单，增加 maskable/Apple 图标、安全区域、安装引导、导航预加载及构建哈希静态预缓存；RPC、API、WebSocket、访客和用户数据仍不进入缓存。
+- 本版本仅生成本地测试包，不提交、不推送、不创建 Release，也不上传至 Komari。
 
 ## 1.3.1-R — 2026-07-29
 
