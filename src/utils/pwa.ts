@@ -1,4 +1,4 @@
-const THEME_CACHE_PREFIX = 'leonetlab-observatory-'
+const THEME_CACHE_PREFIXES = ['komari-observatory-', 'leonetlab-observatory-'] as const
 
 export type ThemeCacheRefreshPhase = 'checking' | 'clearing'
 
@@ -7,7 +7,7 @@ async function deleteThemeCaches(): Promise<void> {
     return
   const keys = await caches.keys()
   await Promise.all(keys
-    .filter(key => key.startsWith(THEME_CACHE_PREFIX))
+    .filter(key => THEME_CACHE_PREFIXES.some(prefix => key.startsWith(prefix)))
     .map(key => caches.delete(key)))
 }
 

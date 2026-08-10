@@ -1,8 +1,8 @@
 {
-  "name": "LeoNetLab Observatory",
+  "name": "Komari Observatory",
   "short": "LeoNetLab",
   "description": "A soft, responsive Komari observatory theme with a live COBE globe, visual node telemetry, Ping analytics and PWA support",
-  "version": "1.4.2",
+  "version": "1.4.2-fix1",
   "author": "LeoNetLab",
   "url": "https://github.com/LeonR-92/komari-theme-leonetlab",
   "preview": "preview.png",

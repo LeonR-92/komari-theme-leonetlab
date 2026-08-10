@@ -50,10 +50,26 @@ jobs:
       - name: Validate manifest and version compatibility
         run: npm run validate
 
+      - name: Install Playwright browser engines
+        run: npx playwright install --with-deps chromium firefox webkit
+
+      - name: Cross-browser interaction tests
+        run: npm run test:browsers
+
       - name: Smoke test Komari 1.2.5 response rendering
         env:
           CHROME_PATH: /usr/bin/google-chrome
         run: npm run smoke:1.2.5
+
+      - name: Smoke test Komari 1.3.2 response rendering
+        env:
+          CHROME_PATH: /usr/bin/google-chrome
+        run: npm run smoke:1.3.2
+
+      - name: Smoke test Komari 1.4.2 response rendering
+        env:
+          CHROME_PATH: /usr/bin/google-chrome
+        run: npm run smoke:1.4.2
 
       - name: Build release package
         run: npm run build

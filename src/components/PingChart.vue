@@ -9,6 +9,7 @@ import { Empty } from '@/components/ui/empty'
 import { Spinner } from '@/components/ui/spinner'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { useBackgroundSurface } from '@/composables/useBackgroundSurface'
+import { useMotionPreference } from '@/composables/useMotionPreference'
 import { useAppStore } from '@/stores/app'
 import { isMobileLike } from '@/utils/mobilePerf'
 import { bridgeShortDisplayGaps, cutPeakValues } from '@/utils/recordHelper'
@@ -21,9 +22,9 @@ const props = defineProps<{
 
 const appStore = useAppStore()
 const { pickSurfaceClass } = useBackgroundSurface()
+const { motionReduced } = useMotionPreference()
 const isDark = computed(() => appStore.isDark)
-const reduceChartMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches
-const motionEnabled = computed(() => !appStore.disablePageAnimation && !reduceChartMotion)
+const motionEnabled = computed(() => !motionReduced.value)
 // ECharts 动画在移动端关闭：图表动画是持续 GPU/CPU 负载，移动端只保留 CSS 入场。
 const chartMotionEnabled = computed(() => motionEnabled.value && !isMobileLike)
 // 使用共享的 RPC 实例，避免重复创建连接

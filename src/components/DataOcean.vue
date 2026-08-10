@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { onMounted, onUnmounted, ref, watch } from 'vue'
+import { useMotionPreference } from '@/composables/useMotionPreference'
 import { useAppStore } from '@/stores/app'
 import { isMobileLike } from '@/utils/mobilePerf'
 
@@ -19,9 +20,9 @@ interface NavigatorWithConnection extends Navigator {
 }
 
 const appStore = useAppStore()
+const { motionReduced } = useMotionPreference()
 const canvasRef = ref<HTMLCanvasElement | null>(null)
 const themeTransitioning = ref(false)
-const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches
 const saveData = (navigator as NavigatorWithConnection).connection?.saveData === true
 
 let context: CanvasRenderingContext2D | null = null
@@ -34,6 +35,14 @@ let dpr = 1
 let animationFrame = 0
 let resizeTimer = 0
 let lastPaint = 0
+
+function canAnimate(): boolean {
+  return !motionReduced.value
+    && !saveData
+    && !props.paused
+    && !themeTransitioning.value
+    && !document.hidden
+}
 
 function measureHost() {
   const rect = canvasRef.value?.parentElement?.getBoundingClientRect()
@@ -110,12 +119,28 @@ function paint(time: number) {
 }
 
 function animate(time: number) {
-  animationFrame = window.requestAnimationFrame(animate)
-  const targetFps = isMobileLike ? 24 : 40
-  if (props.paused || themeTransitioning.value || document.hidden || time - lastPaint < 1000 / targetFps)
+  animationFrame = 0
+  if (!canAnimate())
     return
-  lastPaint = time
-  paint(time)
+  const targetFps = isMobileLike ? 24 : 40
+  if (time - lastPaint >= 1000 / targetFps) {
+    lastPaint = time
+    paint(time)
+  }
+  animationFrame = window.requestAnimationFrame(animate)
+}
+
+function syncAnimation() {
+  if (animationFrame) {
+    window.cancelAnimationFrame(animationFrame)
+    animationFrame = 0
+  }
+  if (!canAnimate()) {
+    if (motionReduced.value || saveData)
+      paint(performance.now())
+    return
+  }
+  animationFrame = window.requestAnimationFrame(animate)
 }
 
 function handleResize() {
@@ -134,20 +159,24 @@ function handleResize() {
 function handleVisibilityChange() {
   if (!document.hidden)
     lastPaint = 0
+  syncAnimation()
 }
 
 function handleThemeTransitionStart() {
   themeTransitioning.value = true
+  syncAnimation()
 }
 
 function handleThemeTransitionEnd() {
   themeTransitioning.value = false
   lastPaint = 0
   paint(performance.now())
+  syncAnimation()
 }
 
 watch(() => appStore.isDark, () => paint(performance.now()))
-watch(() => props.paused, paused => !paused && paint(performance.now()))
+watch(() => props.paused, syncAnimation)
+watch(motionReduced, syncAnimation)
 
 onMounted(() => {
   configureCanvas()
@@ -157,8 +186,7 @@ onMounted(() => {
   document.addEventListener('visibilitychange', handleVisibilityChange)
   // 只保留动态点阵海洋。移动端以 24fps、1x DPR 和稀疏网格运行；
   // 减少动态效果或省流量模式仍只绘制静态帧。
-  if (!reducedMotion && !saveData)
-    animationFrame = window.requestAnimationFrame(animate)
+  syncAnimation()
 })
 
 onUnmounted(() => {

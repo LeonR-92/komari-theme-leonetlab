@@ -1,15 +1,16 @@
 <script setup lang="ts">
 import { Icon } from '@iconify/vue'
-import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
-import { useAppStore } from '@/stores/app'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
+import { useMotionPreference } from '@/composables/useMotionPreference'
+import { detectVisitorClient } from '@/utils/clientDetection'
 
 const props = defineProps<{
   introComplete: boolean
   presentOnReady: boolean
 }>()
 
-const appStore = useAppStore()
-const VISITOR_PRESENTATION_SESSION_KEY = 'leonetlab:visitor-presentation:1.4.2'
+const { motionReduced } = useMotionPreference()
+const VISITOR_PRESENTATION_SESSION_KEY = 'komari-observatory:visitor-presentation:1.4.2-fix1'
 
 interface VisitorGeoData {
   ip: string
@@ -19,11 +20,6 @@ interface VisitorGeoData {
   countryCode: string
 }
 
-interface VisitorClientData {
-  device: string
-  browser: string
-}
-
 interface VisitorInfoRow {
   label: string
   value: string
@@ -31,17 +27,6 @@ interface VisitorInfoRow {
   wide?: boolean
 }
 
-const ANDROID_REGEX = /android/i
-const IPHONE_OR_IPOD_REGEX = /iphone|ipod/i
-const IPAD_REGEX = /ipad/i
-const TABLET_REGEX = /tablet/i
-const EDGE_VERSION_REGEX = /Edg\/(\d+)/i
-const OPERA_VERSION_REGEX = /OPR\/(\d+)/i
-const CHROME_VERSION_REGEX = /Chrome\/(\d+)/i
-const EDGE_OR_OPERA_REGEX = /Edg|OPR/i
-const FIREFOX_VERSION_REGEX = /Firefox\/(\d+)/i
-const SAFARI_REGEX = /Safari/i
-const CHROME_REGEX = /Chrome/i
 const IPV4_SEGMENT_REGEX = /^\d+$/
 const IPV6_SEGMENT_REGEX = /^[\dA-F]{1,4}$/i
 const IPV6_DOUBLE_COLON = '::'
@@ -57,8 +42,6 @@ const countryCode = ref('')
 const visitTime = ref(formatVisitTime(new Date()))
 const flagVisible = ref(true)
 const expand = ref(false)
-const systemReducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches
-const motionReduced = computed(() => systemReducedMotion || appStore.disablePageAnimation)
 
 function isPresentationSessionEligible(): boolean {
   if (!props.presentOnReady || motionReduced.value)
@@ -75,7 +58,6 @@ const presentationEligible = isPresentationSessionEligible()
 const presentationState = ref<'waiting' | 'entering' | 'scanning' | 'verified' | 'morphing' | 'compact'>(
   presentationEligible ? 'waiting' : 'compact',
 )
-const presentationSettling = ref(false)
 let presentationTimer: number | null = null
 let presentationRun = 0
 let presentationStarted = false
@@ -137,15 +119,8 @@ function settlePresentation(runId: number) {
   if (runId !== presentationRun)
     return
   clearPresentationTimer()
-  presentationSettling.value = true
   presentationState.value = 'compact'
   expand.value = false
-  void nextTick(() => {
-    window.requestAnimationFrame(() => {
-      if (runId === presentationRun)
-        presentationSettling.value = false
-    })
-  })
 }
 
 function schedulePresentationStep(
@@ -303,47 +278,6 @@ function isValidIpv6Segment(segment: string, index: number, segments: string[]):
     return index === segments.length - 1 && maskIpv4Address(segment) !== null
   }
   return IPV6_SEGMENT_REGEX.test(segment)
-}
-
-function detectClient(): VisitorClientData {
-  const ua = navigator.userAgent
-
-  let detectedDevice = '桌面设备'
-  if (ANDROID_REGEX.test(ua))
-    detectedDevice = 'Android 手机'
-  else if (IPHONE_OR_IPOD_REGEX.test(ua))
-    detectedDevice = 'iPhone'
-  else if (IPAD_REGEX.test(ua))
-    detectedDevice = 'iPad'
-  else if (TABLET_REGEX.test(ua))
-    detectedDevice = '平板电脑'
-
-  let detectedBrowser = '未知浏览器'
-  const edgeMatch = ua.match(EDGE_VERSION_REGEX)
-  const operaMatch = ua.match(OPERA_VERSION_REGEX)
-  const chromeMatch = ua.match(CHROME_VERSION_REGEX)
-  const firefoxMatch = ua.match(FIREFOX_VERSION_REGEX)
-
-  if (edgeMatch) {
-    detectedBrowser = 'Edge'
-  }
-  else if (operaMatch) {
-    detectedBrowser = 'Opera'
-  }
-  else if (chromeMatch && !EDGE_OR_OPERA_REGEX.test(ua)) {
-    detectedBrowser = 'Chrome'
-  }
-  else if (firefoxMatch) {
-    detectedBrowser = 'Firefox'
-  }
-  else if (SAFARI_REGEX.test(ua) && !CHROME_REGEX.test(ua)) {
-    detectedBrowser = 'Safari'
-  }
-
-  return {
-    device: detectedDevice,
-    browser: detectedBrowser,
-  }
 }
 
 let visitorGeoDeadline = Number.POSITIVE_INFINITY
@@ -539,7 +473,7 @@ function handleFlagError(): void {
 }
 
 onMounted(() => {
-  const client = detectClient()
+  const client = detectVisitorClient(navigator.userAgent, navigator.maxTouchPoints)
   device.value = client.device
   browser.value = client.browser
   visitTime.value = formatVisitTime(new Date())
@@ -584,7 +518,6 @@ onUnmounted(() => {
       {
         'is-presenting': presentationActive,
         'is-expanded': isExpanded,
-        'is-presentation-snap': presentationSettling,
       },
     ]"
     aria-label="访客网络信息"
@@ -722,30 +655,23 @@ onUnmounted(() => {
 }
 
 .lnl-visitor.is-morphing .lnl-visitor-trigger {
-  border-color: transparent;
-  background: transparent;
-  box-shadow: none;
-  will-change: transform, opacity, clip-path;
-}
-
-/* The compact layer is already visible at its final bottom anchor. Collapse
-   only the transparent shell on this render so no second size animation plays
-   after the scan has visibly completed. */
-.lnl-visitor.is-presentation-snap .lnl-visitor-trigger {
-  transition: none;
+  width: min(460px, calc(100vw - 28px));
+  height: 54px;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 14px;
+  padding: 9px 11px 9px 13px;
+  border-color: color-mix(in srgb, var(--lnl-green) 42%, var(--lnl-line));
+  background: var(--background);
+  box-shadow: 0 12px 38px rgb(0 0 0 / 18%);
+  will-change: width, height, padding;
 }
 
 .lnl-visitor.is-morphing .lnl-visitor-compact-layer {
-  right: 0;
-  left: 0;
-  padding: 0 64px 0 13px;
-  border: 1px solid color-mix(in srgb, var(--lnl-green) 42%, var(--lnl-line));
-  border-radius: var(--lnl-radius-card);
-  background: var(--background);
-  box-shadow: 0 12px 38px rgb(0 0 0 / 18%);
+  right: 52px;
+  left: 13px;
 }
 
-:global(.dark) .lnl-visitor.is-morphing .lnl-visitor-compact-layer {
+:global(.dark) .lnl-visitor.is-morphing .lnl-visitor-trigger {
   background: var(--lnl-surface-raised);
   box-shadow: 0 16px 44px rgb(0 0 0 / 34%);
 }
@@ -991,7 +917,7 @@ onUnmounted(() => {
 
 @media (max-width: 760px) {
   .lnl-visitor {
-    right: 14px;
+    right: max(14px, env(safe-area-inset-right));
     max-width: none;
   }
 
@@ -1018,13 +944,25 @@ onUnmounted(() => {
 
   .lnl-visitor.is-presenting .lnl-visitor-trigger,
   .lnl-visitor.is-expanded .lnl-visitor-trigger {
+    height: min(250px, calc(100vh - 124px));
     height: min(250px, calc(100dvh - 124px));
   }
 
-  /* iOS 上逐帧补间 height/width 会反复触发布局和栅格重排。收束阶段先用
-     合成层淡出，隐藏状态下切换到紧凑几何，再淡入，视觉连续且不挤压主页。 */
+  /* The card is fixed and layout-contained, so one bounded height interpolation
+     can preserve the same scan-to-bar motion on touch devices without moving the page. */
   .lnl-visitor.is-morphing .lnl-visitor-trigger {
-    will-change: transform, opacity;
+    height: 54px;
+    align-items: center;
+    padding: 9px 11px 9px 13px;
+    transition:
+      border-color 180ms ease,
+      background-color 180ms ease,
+      opacity 220ms ease,
+      transform 280ms cubic-bezier(0.22, 1, 0.36, 1),
+      clip-path 520ms cubic-bezier(0.16, 1, 0.3, 1),
+      height 440ms cubic-bezier(0.22, 1, 0.36, 1),
+      padding 360ms cubic-bezier(0.22, 1, 0.36, 1);
+    will-change: height, padding;
   }
 
   .lnl-visitor.is-presenting .lnl-visitor-row p,

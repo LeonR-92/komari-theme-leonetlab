@@ -41,7 +41,15 @@ export interface RecordFormat {
   connections_udp: number | null
 }
 
-type AnyRecord = Record<string, any>
+type UnknownRecord = Record<string, unknown>
+
+function readRecordField(record: object | undefined, key: string): unknown {
+  return record ? (record as UnknownRecord)[key] : undefined
+}
+
+function writeRecordField(record: object, key: string, value: unknown): void {
+  (record as UnknownRecord)[key] = value
+}
 
 /**
  * 仅供图表展示的短缺口桥接。
@@ -215,8 +223,8 @@ export function fillMissingTimePoints<T extends { time?: string, updated_at?: st
  * - 仅在"两个端点都存在且为数值"时进行插值
  * - 可通过 maxGapMs 控制最大可插值的时间跨度
  */
-export function interpolateNullsLinear(
-  rows: AnyRecord[],
+export function interpolateNullsLinear<T extends object>(
+  rows: T[],
   keys: string[],
   options?:
     | number
@@ -229,14 +237,15 @@ export function interpolateNullsLinear(
       minCapMs?: number
       maxCapMs?: number
     },
-): AnyRecord[] {
+): T[] {
   if (!rows || rows.length === 0 || !keys.length)
     return rows
 
-  const times = rows.map(r =>
-    dayjs(r.time ?? r.updated_at ?? '').valueOf(),
-  )
-  const out: AnyRecord[] = rows.map(r => ({ ...r }))
+  const times = rows.map((r) => {
+    const value = readRecordField(r, 'time') ?? readRecordField(r, 'updated_at')
+    return dayjs(typeof value === 'string' || typeof value === 'number' ? value : '').valueOf()
+  })
+  const out: T[] = rows.map(r => ({ ...r }))
 
   // 解析配置
   const opts
@@ -255,7 +264,7 @@ export function interpolateNullsLinear(
     // 收集该列的有效点索引
     const validIdx: number[] = []
     for (let i = 0; i < rows.length; i++) {
-      const v = rows[i]?.[key]
+      const v = readRecordField(rows[i], key)
       if (typeof v === 'number' && Number.isFinite(v))
         validIdx.push(i)
     }
@@ -304,8 +313,8 @@ export function interpolateNullsLinear(
       if (!row0 || !row1)
         continue
 
-      const v0 = row0[key]
-      const v1 = row1[key]
+      const v0 = readRecordField(row0, key)
+      const v1 = readRecordField(row1, key)
 
       if (!Number.isFinite(t0) || !Number.isFinite(t1) || t1 <= t0)
         continue
@@ -321,7 +330,7 @@ export function interpolateNullsLinear(
         const ratio = (tj - t0) / (t1 - t0)
         const outRow = out[j]
         if (outRow) {
-          outRow[key] = v0 + (v1 - v0) * ratio
+          writeRecordField(outRow, key, v0 + (v1 - v0) * ratio)
         }
       }
     }
@@ -341,17 +350,17 @@ export function interpolateNullsLinear(
  * @param windowSize 突变检测窗口大小
  * @param spikeThreshold MAD 倍数阈值
  */
-export function cutPeakValues(
-  data: AnyRecord[],
+export function cutPeakValues<T extends object>(
+  data: T[],
   keys: string[],
   alpha: number = 0.3,
   windowSize: number = 15,
   spikeThreshold: number = 3,
-): AnyRecord[] {
+): T[] {
   if (!data || data.length === 0)
     return data
 
-  const result: AnyRecord[] = data.map(row => ({ ...row }))
+  const result: T[] = data.map(row => ({ ...row }))
   const halfWindow = Math.floor(windowSize / 2)
 
   const median = (values: number[]): number => {
@@ -366,7 +375,7 @@ export function cutPeakValues(
   }
 
   for (const key of keys) {
-    const sourceValues = data.map(row => row?.[key])
+    const sourceValues = data.map(row => readRecordField(row, key))
     const segmentIds: number[] = []
     let segmentId = 0
     let previousWasGap = true
@@ -385,7 +394,7 @@ export function cutPeakValues(
         continue
       const rawValue = sourceValues[i]
       if (typeof rawValue !== 'number' || !Number.isFinite(rawValue)) {
-        row[key] = null
+        writeRecordField(row, key, null)
         // Never carry the pre-loss EWMA state into a new continuous segment.
         ewma = null
         continue
@@ -415,7 +424,7 @@ export function cutPeakValues(
       ewma = ewma === null
         ? filteredValue
         : alpha * filteredValue + (1 - alpha) * ewma
-      row[key] = ewma
+      writeRecordField(row, key, ewma)
     }
   }
 

@@ -31,9 +31,19 @@ const compactMetric = (value: string) => value.replace(METRIC_WHITESPACE_PATTERN
 const formatBytes = (bytes: number) => compactMetric(formatBytesWithConfig(bytes, appStore.byteDecimals))
 const formatBytesPerSecond = (bytes: number) => compactMetric(formatBytesPerSecondWithConfig(bytes, appStore.byteDecimals))
 const formatMetricPair = (used: number, total: number) => `${formatBytes(used)}/${formatBytes(total)}`
-const formatUptime = (seconds: number) => formatUptimeWithFormat(seconds, 'hour')
 const offlineTime = computed(() => formatDateTime(props.node.time))
 const expiredDate = computed(() => formatDateTime(props.node.expired_at, 'YYYY-MM-DD'))
+const liveStateLabel = computed(() => {
+  if (!props.node.online)
+    return '离线'
+  if (!(props.node.uptime > 0))
+    return '在线 —'
+  const roundedDays = Math.max(1, Math.round(props.node.uptime / 86_400))
+  return `在线 ${roundedDays}天`
+})
+const liveStateTitle = computed(() => props.node.online && props.node.uptime > 0
+  ? `在线时间 ${formatUptimeWithFormat(props.node.uptime, 'hour')}`
+  : liveStateLabel.value)
 
 const cpuStatus = computed(() => getStatus(props.node.cpu ?? 0))
 const memPercentage = computed(() => (props.node.ram ?? 0) / (props.node.mem_total || 1) * 100)
@@ -172,7 +182,7 @@ function openPingDialog() {
         <div class="lnl-node-title" :title="props.node.name">
           {{ props.node.name }}
         </div>
-        <span class="lnl-node-live-state">{{ props.node.online ? '在线' : '离线' }}</span>
+        <span class="lnl-node-live-state" :title="liveStateTitle">{{ liveStateLabel }}</span>
       </div>
     </template>
 
@@ -321,11 +331,6 @@ function openPingDialog() {
                 <Icon icon="tabler:arrow-down-left" :width="15" :height="15" />
                 <span>下载</span>
                 <strong>{{ formatBytesPerSecond(props.node.net_in ?? 0) }}</strong>
-              </div>
-              <div class="lnl-node-lifecycle-item">
-                <Icon icon="tabler:clock-hour-4" :width="15" :height="15" />
-                <span>在线时间</span>
-                <strong>{{ props.node.uptime > 0 ? formatUptime(props.node.uptime) : '—' }}</strong>
               </div>
               <DataTooltip
                 placement="left"
@@ -505,14 +510,19 @@ function openPingDialog() {
 }
 
 .lnl-node-live-state {
-  flex: none;
+  display: inline-flex;
+  width: 72px;
+  flex: 0 0 72px;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
   padding: 3px 7px;
   border-radius: 999px;
   background: color-mix(in srgb, var(--success) 11%, transparent);
   color: color-mix(in srgb, var(--success) 85%, var(--foreground));
-  font-size: 11px;
-  font-weight: 600;
-  line-height: 1;
+  font: 600 10px/1 var(--font-mono);
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .node-card.is-offline .lnl-node-live-state {
@@ -725,7 +735,7 @@ function openPingDialog() {
 
 .lnl-node-lifecycle-rail {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 7px;
 }
 
@@ -934,7 +944,7 @@ function openPingDialog() {
   transform: none;
 }
 
-@container (max-width: 360px) {
+@container (max-width: 320px) {
   .lnl-node-lifecycle-rail {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }

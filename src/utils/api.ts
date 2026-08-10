@@ -4,9 +4,6 @@
  * @see https://www.komari.wiki/dev/api.html
  */
 
-const HTTP_PROTOCOL_REGEX = /^http/
-const HTTPS_PROTOCOL_REGEX = /^https/
-
 // ==================== 类型定义 ====================
 
 /** API 响应基础结构 */
@@ -119,15 +116,6 @@ export interface RealtimeStatus {
   process: number
   message: string
   updated_at: string
-}
-
-/** WebSocket 实时状态响应 */
-export interface WebSocketRealtimeResponse {
-  status: 'success' | 'error'
-  data: {
-    online: string[]
-    data: Record<string, RealtimeStatus>
-  }
 }
 
 /** 负载历史记录（扁平结构） */
@@ -398,152 +386,6 @@ export class KomariApi {
    */
   async getPingRecords(uuid: string, hours: number): Promise<PingRecordsResponse> {
     return this.get<PingRecordsResponse>('/records/ping', { uuid, hours })
-  }
-}
-
-// ==================== WebSocket 实时状态客户端 ====================
-
-/** WebSocket 实时状态客户端 */
-export class RealtimeWebSocket {
-  private ws: WebSocket | null = null
-  private url: string
-  private reconnectInterval: number
-  private maxReconnectAttempts: number
-  private reconnectAttempts = 0
-  private listeners: Set<(data: WebSocketRealtimeResponse) => void> = new Set()
-  private errorListeners: Set<(error: Event) => void> = new Set()
-  private isOpen = false
-  /** 手动关闭标记：close() 之后不再自动重连 */
-  private manuallyClosed = false
-  private reconnectTimer: ReturnType<typeof setTimeout> | null = null
-
-  constructor(options: {
-    baseUrl?: string
-    reconnectInterval?: number
-    maxReconnectAttempts?: number
-  } = {}) {
-    const baseUrl = options.baseUrl || '/api/clients'
-    this.url = baseUrl.replace(HTTP_PROTOCOL_REGEX, 'ws').replace(HTTPS_PROTOCOL_REGEX, 'wss')
-    this.reconnectInterval = options.reconnectInterval || 3000
-    this.maxReconnectAttempts = options.maxReconnectAttempts || 5
-  }
-
-  /**
-   * 连接 WebSocket
-   */
-  connect(): Promise<void> {
-    // 显式重新连接时解除手动关闭标记，恢复自动重连行为
-    this.manuallyClosed = false
-    return new Promise((resolve, reject) => {
-      try {
-        this.ws = new WebSocket(this.url)
-
-        this.ws.onopen = () => {
-          this.isOpen = true
-          this.reconnectAttempts = 0
-          // 发送获取数据请求
-          this.ws!.send('get')
-          resolve()
-        }
-
-        this.ws.onmessage = (event) => {
-          try {
-            const data: WebSocketRealtimeResponse = JSON.parse(event.data)
-            this.listeners.forEach(listener => listener(data))
-          }
-          catch {
-            // Ignore parse errors
-          }
-        }
-
-        this.ws.onerror = (error) => {
-          this.errorListeners.forEach(listener => listener(error))
-          if (!this.isOpen) {
-            reject(new ApiError('WebSocket connection failed', 'error'))
-          }
-        }
-
-        this.ws.onclose = () => {
-          this.isOpen = false
-          // 手动关闭（close()）后不再自动重连
-          if (!this.manuallyClosed) {
-            this.attemptReconnect()
-          }
-        }
-      }
-      catch (error) {
-        reject(new ApiError(`WebSocket error: ${error instanceof Error ? error.message : String(error)}`, 'error'))
-      }
-    })
-  }
-
-  /**
-   * 尝试重连
-   */
-  private attemptReconnect(): void {
-    if (this.reconnectAttempts < this.maxReconnectAttempts) {
-      this.reconnectAttempts++
-      this.reconnectTimer = setTimeout(() => {
-        this.reconnectTimer = null
-        this.connect().catch(() => {
-          // Ignore reconnect errors
-        })
-      }, this.reconnectInterval)
-    }
-  }
-
-  /**
-   * 请求数据
-   */
-  requestData(): void {
-    if (this.ws && this.ws.readyState === WebSocket.OPEN) {
-      this.ws.send('get')
-    }
-  }
-
-  /**
-   * 订阅实时数据
-   */
-  subscribe(callback: (data: WebSocketRealtimeResponse) => void): () => void {
-    this.listeners.add(callback)
-    return () => {
-      this.listeners.delete(callback)
-    }
-  }
-
-  /**
-   * 订阅错误事件
-   */
-  onError(callback: (error: Event) => void): () => void {
-    this.errorListeners.add(callback)
-    return () => {
-      this.errorListeners.delete(callback)
-    }
-  }
-
-  /**
-   * 关闭连接
-   */
-  close(): void {
-    this.manuallyClosed = true
-    if (this.reconnectTimer) {
-      clearTimeout(this.reconnectTimer)
-      this.reconnectTimer = null
-    }
-    if (this.ws) {
-      this.ws.close()
-      this.ws = null
-    }
-    this.isOpen = false
-    this.listeners.clear()
-    this.errorListeners.clear()
-  }
-
-  /**
-   * 获取连接状态
-   */
-  get connected(): boolean {
-    return this.isOpen && this.ws?.readyState === WebSocket.OPEN
   }
 }
 

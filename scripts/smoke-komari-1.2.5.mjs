@@ -11,6 +11,7 @@ const root = resolve(import.meta.dirname, '..')
 const dist = resolve(root, 'dist')
 const komariVersionArgument = process.argv.find(argument => argument.startsWith('--komari-version='))
 const fixtureKomariVersion = komariVersionArgument?.split('=', 2)[1] || '1.2.5-fix1'
+const externalFixtureDriver = process.env.SMOKE_EXTERNAL_DRIVER === '1'
 const usesModernKomariFixture = ['1.3.2', '1.4.2'].includes(fixtureKomariVersion)
 const usesKomari142Fixture = fixtureKomariVersion === '1.4.2'
 const visualAuditEnabled = Boolean(process.env.SMOKE_SCREENSHOT_DIR)
@@ -25,14 +26,15 @@ const freeFinancePattern = /免费/
 const fixedFinanceLabelPattern = /^费用/
 const missingFinancePattern = /未填写/
 const introSyncingPattern = /SYNCHRONIZING/
-const introReadyNodesPattern = /2 ONLINE · 2 NODES/
-const layoutTransitionPropertyPattern = /height|width|padding/
+const introReadyNodesPattern = /4 ONLINE · 4 NODES/
 // 共享 CI runner CPU 受限，WebGL 软件渲染初始化与 ECharts 懒加载块解析可叠加
 // 出超过 1s 的单个 longtask（CI 实测 1412ms），并非交接逻辑卡死；帧级停滞仍
 // 由各审计的 maxFrame 断言兜底。本地保留 400ms 硬阈值用于诊断真实主线程卡死。
 const longTaskHardLimitMs = process.env.CI ? 2500 : 400
 const nodeUuid = 'fixture-node-a'
 const secondNodeUuid = 'fixture-node-b'
+const thirdNodeUuid = 'fixture-node-c'
+const fourthNodeUuid = 'fixture-node-d'
 function client(uuid, name, region, weight) {
   return {
     uuid,
@@ -66,9 +68,14 @@ function client(uuid, name, region, weight) {
 const clients = [
   client(nodeUuid, 'Tokyo Fixture', 'JP', 20),
   client(secondNodeUuid, 'Frankfurt Fixture', 'DE', 10),
+  client(thirdNodeUuid, 'Singapore Edge', 'SG', 8),
+  client(fourthNodeUuid, 'Los Angeles Edge', 'US', 6),
 ]
 clients[0].price = 30
 clients[0].expired_at = new Date(Date.now() + 2 * 24 * 60 * 60 * 1000).toISOString()
+clients[1].price = -1
+clients[2].price = 24
+clients[3].price = 45
 function status(uuid, cpu) {
   return {
     client: uuid,
@@ -112,6 +119,8 @@ function status(uuid, cpu) {
 const statuses = {
   [nodeUuid]: status(nodeUuid, 18),
   [secondNodeUuid]: status(secondNodeUuid, 24),
+  [thirdNodeUuid]: status(thirdNodeUuid, 12),
+  [fourthNodeUuid]: status(fourthNodeUuid, 31),
 }
 const historyRecords = Array.from({ length: 24 }, (_, index) => ({
   ...status(nodeUuid, 12 + index * 0.35),
@@ -261,8 +270,8 @@ const server = createServer((request, response) => {
       status: 'success',
       message: '',
       data: {
-        sitename: visualAuditEnabled ? 'LeoNetLab Observatory' : 'LeoNetLab Fixture',
-        description: visualAuditEnabled ? 'Precision global network telemetry' : 'Compatibility smoke test',
+        sitename: 'Komari Observatory',
+        description: visualAuditEnabled ? 'Precision global network telemetry' : 'Live global node telemetry',
         private_site: false,
         record_enabled: true,
         theme: 'LeoNetLab',
@@ -383,7 +392,7 @@ const browserCandidates = [
   '/usr/bin/chromium-browser',
 ].filter(Boolean)
 const browser = browserCandidates.find(existsSync)
-assert.ok(browser, 'Chrome or Edge is required for the integration smoke test')
+assert.ok(browser || externalFixtureDriver, 'Chrome or Edge is required for the integration smoke test')
 
 const requestedFixturePort = Number.parseInt(process.env.SMOKE_FIXTURE_PORT || '0', 10)
 assert.ok(Number.isInteger(requestedFixturePort) && requestedFixturePort >= 0 && requestedFixturePort <= 65_535)
@@ -740,7 +749,7 @@ const globeFlagThemeAuditExpression = `new Promise((resolve) => {
     const globeContainer = document.querySelector('.node-earth-globe:not(.is-intro)');
     const overlays = [...document.querySelectorAll('.node-earth-globe:not(.is-intro) .lnl-earth-overlay')];
     const themeButton = [...document.querySelectorAll('button')].find(button => /模式|北京时间/.test(button.getAttribute('aria-label') || ''));
-    if (canvas && globeContainer && overlays.length === 2 && themeButton) {
+    if (canvas && globeContainer && overlays.length === 4 && themeButton) {
       clearInterval(timer);
       const initialCanvas = canvas;
       const initialCount = overlays.length;
@@ -1236,7 +1245,7 @@ const mobileChromeLayoutAuditExpression = `new Promise((resolve) => {
     const visitor = document.querySelector('.lnl-visitor-trigger');
     const backTop = document.querySelector('.lnl-back-top');
     const searchToggle = document.querySelector('[aria-label="打开节点搜索"]');
-    const earthOverlay = document.querySelector('.node-earth-globe:not(.is-intro) .lnl-earth-overlay');
+    const earthOverlay = document.querySelector('.node-earth-globe:not(.is-intro) .lnl-earth-overlay[data-front="true"]');
     if (logo && visitor && backTop && searchToggle && earthOverlay) {
       clearInterval(timer);
       window.scrollTo(0, Math.min(500, document.documentElement.scrollHeight));
@@ -1436,6 +1445,12 @@ const visitorCollapseAuditExpression = `new Promise((resolve) => {
   let maxCompactLayerOpacity = 0;
   let compactLayerText = '';
   let compactReachedAt = 0;
+  let lastMorphWidth = null;
+  let firstCompactWidth = null;
+  let lastMorphHeight = null;
+  let firstCompactHeight = null;
+  const morphWidths = [];
+  const morphHeights = [];
   let lastState = '';
   const stateTransitions = [];
   let observer;
@@ -1457,6 +1472,10 @@ const visitorCollapseAuditExpression = `new Promise((resolve) => {
       minCompactingOpacity,
       maxCompactLayerOpacity,
       compactLayerText,
+      handoffWidthDelta: lastMorphWidth === null || firstCompactWidth === null ? null : Math.abs(lastMorphWidth - firstCompactWidth),
+      handoffHeightDelta: lastMorphHeight === null || firstCompactHeight === null ? null : Math.abs(lastMorphHeight - firstCompactHeight),
+      distinctMorphWidths: new Set(morphWidths.map(value => Math.round(value))).size,
+      distinctMorphHeights: new Set(morphHeights.map(value => Math.round(value))).size,
       stateTransitions,
       scanningEntries: stateTransitions.filter(value => value === 'scanning').length,
       postCompactTransitions: stateTransitions.slice(stateTransitions.indexOf('compact') + 1),
@@ -1501,6 +1520,14 @@ const visitorCollapseAuditExpression = `new Promise((resolve) => {
         if (state === 'morphing') {
           const expandedLayer = visitor?.querySelector('.lnl-visitor-expanded-layer');
           minCompactingOpacity = Math.min(minCompactingOpacity, Number(getComputedStyle(expandedLayer).opacity));
+          lastMorphWidth = rect.width;
+          lastMorphHeight = rect.height;
+          morphWidths.push(rect.width);
+          morphHeights.push(rect.height);
+        }
+        if (state === 'compact' && firstCompactWidth === null) {
+          firstCompactWidth = rect.width;
+          firstCompactHeight = rect.height;
         }
         const compactLayer = visitor?.querySelector('.lnl-visitor-compact-layer');
         if (compactLayer) {
@@ -1613,8 +1640,8 @@ const slowPublicSettingsShellAuditExpression = `new Promise((resolve) => {
 })`
 
 const visitorFixtureInitScript = `(() => {
-  sessionStorage.setItem('leonetlab:intro:1.4.2pre3', 'seen');
-  sessionStorage.removeItem('leonetlab:visitor-presentation:1.4.2pre3');
+  sessionStorage.setItem('komari-observatory:intro:1.4.2-fix1', 'seen');
+  sessionStorage.removeItem('komari-observatory:visitor-presentation:1.4.2-fix1');
   const nativeFetch = window.fetch.bind(window);
   window.fetch = (input, init) => {
     const url = typeof input === 'string' ? input : input.url;
@@ -1632,7 +1659,7 @@ const visitorFixtureInitScript = `(() => {
 })()`
 
 async function capturePingDialogScreenshot(name, width, height) {
-  const result = await runInteractivePage(name, width, height, pingDialogOpenExpression, name, `sessionStorage.setItem('leonetlab:intro:1.4.2pre3', 'seen');`)
+  const result = await runInteractivePage(name, width, height, pingDialogOpenExpression, name, `sessionStorage.setItem('komari-observatory:intro:1.4.2-fix1', 'seen');`)
   assert.equal(result?.state, 'opened')
   assert.ok(result?.left >= -0.5 && result?.right <= result?.viewportWidth + 0.5, `Ping dialog escaped viewport: ${JSON.stringify(result)}`)
   assert.ok(result?.centerError <= 1, `Ping dialog is not centered: ${JSON.stringify(result)}`)
@@ -1640,7 +1667,7 @@ async function capturePingDialogScreenshot(name, width, height) {
 
 async function auditMobileFinanceOverflow(width) {
   const screenshotName = process.env.SMOKE_SCREENSHOT_DIR && width === 390 ? 'mobile-finance-open' : undefined
-  const result = await runInteractivePage(`mobile-finance-audit-${width}`, width, 844, financeOverflowAuditExpression, screenshotName, `sessionStorage.setItem('leonetlab:intro:1.4.2pre3', 'seen');`)
+  const result = await runInteractivePage(`mobile-finance-audit-${width}`, width, 844, financeOverflowAuditExpression, screenshotName, `sessionStorage.setItem('komari-observatory:intro:1.4.2-fix1', 'seen');`)
   assert.equal(result?.state, 'opened')
   assert.doesNotMatch(result?.triggerText ?? '', financeDetailsLabelPattern)
   assert.equal(result?.assistiveHintHidden, true, `Finance assistive hint became visible: ${JSON.stringify(result)}`)
@@ -1651,7 +1678,7 @@ async function auditMobileFinanceOverflow(width) {
 }
 
 async function auditNodeFinanceStates(width) {
-  const initScript = `sessionStorage.setItem('leonetlab:intro:1.4.2pre3', 'seen');`
+  const initScript = `sessionStorage.setItem('komari-observatory:intro:1.4.2-fix1', 'seen');`
   const defaultResult = await runInteractivePage(
     `node-finance-states-default-${width}`,
     width,
@@ -1697,7 +1724,7 @@ async function auditPingBarGeometry() {
     900,
     pingBarGeometryAuditExpression,
     undefined,
-    `sessionStorage.setItem('leonetlab:intro:1.4.2pre3', 'seen');`,
+    `sessionStorage.setItem('komari-observatory:intro:1.4.2-fix1', 'seen');`,
   )
   reportBrowserAudit('node-ping-bar-geometry', result)
   assert.equal(result?.length, 2, `Expected latency and loss panels: ${JSON.stringify(result)}`)
@@ -1737,13 +1764,13 @@ async function auditGlobeFlagsAcrossThemeChange() {
     780,
     globeFlagThemeAuditExpression,
     undefined,
-    `sessionStorage.setItem('leonetlab:intro:1.4.2pre3', 'seen'); localStorage.setItem('appearance', 'light'); localStorage.setItem('leonetlab:appearance:user-override', '1');`,
+    `sessionStorage.setItem('komari-observatory:intro:1.4.2-fix1', 'seen'); localStorage.setItem('appearance', 'light'); localStorage.setItem('leonetlab:appearance:user-override', '1');`,
   )
   reportBrowserAudit('globe-flags-theme-change', result)
-  assert.equal(result?.initialCount, 2, `Expected two globe flag overlays: ${JSON.stringify(result)}`)
+  assert.equal(result?.initialCount, 4, `Expected four globe flag overlays: ${JSON.stringify(result)}`)
   assert.equal(result?.markerOverlap, false, `Globe flag overlaps its online count: ${JSON.stringify(result)}`)
   assert.equal(result?.canvasSame, true, `Theme switch recreated the globe canvas: ${JSON.stringify(result)}`)
-  assert.equal(result?.minCount, 2, `Globe flags disappeared during theme switch: ${JSON.stringify(result)}`)
+  assert.equal(result?.minCount, 4, `Globe flags disappeared during theme switch: ${JSON.stringify(result)}`)
   assert.equal(result?.allLoaded, true, `A globe flag asset failed to load: ${JSON.stringify(result)}`)
   assert.equal(result?.allDisplayed, true, `A globe flag was hidden: ${JSON.stringify(result)}`)
   assert.equal(result?.flagsNotDraggable, true, `Globe flag images still expose native dragging: ${JSON.stringify(result)}`)
@@ -1764,7 +1791,7 @@ async function auditGlobeRegionInteraction() {
     780,
     globeRegionInteractionAuditExpression,
     undefined,
-    `window.__lnlGlobeProbe = {}; sessionStorage.setItem('leonetlab:intro:1.4.2pre3', 'seen');`,
+    `window.__lnlGlobeProbe = {}; sessionStorage.setItem('komari-observatory:intro:1.4.2-fix1', 'seen');`,
   )
   reportBrowserAudit('globe-region-interaction', result)
   assert.equal(result?.openedTooEarly, false, `Region preview skipped hover intent delay: ${JSON.stringify(result)}`)
@@ -1785,7 +1812,7 @@ async function auditGlobeRouteRipple() {
     780,
     globeRouteRippleAuditExpression,
     undefined,
-    `sessionStorage.setItem('leonetlab:intro:1.4.2pre3', 'seen');`,
+    `sessionStorage.setItem('komari-observatory:intro:1.4.2-fix1', 'seen');`,
   )
   reportBrowserAudit('globe-route-ripple', result)
   assert.equal(result?.routeRipple, true, `Returning home did not trigger the route ripple: ${JSON.stringify(result)}`)
@@ -1801,7 +1828,7 @@ async function auditPingDialogCloseAnimation() {
     780,
     pingDialogCloseAuditExpression,
     undefined,
-    `sessionStorage.setItem('leonetlab:intro:1.4.2pre3', 'seen');`,
+    `sessionStorage.setItem('komari-observatory:intro:1.4.2-fix1', 'seen');`,
   )
   reportBrowserAudit('ping-dialog-close-animation', result)
   assert.equal(result?.closedSeen, true, `Ping dialog skipped its closed state: ${JSON.stringify(result)}`)
@@ -1827,7 +1854,7 @@ async function auditIntroGlobeHandoff() {
   // canvas 身份：槽位里的 canvas 必须就是 intro 里的那一个（同一 WebGL 上下文）。
   assert.equal(result?.settled?.canvasIdentity, true, `Dashboard canvas is not the intro canvas (engine was recreated): ${JSON.stringify(result)}`)
   assert.equal(result?.settled?.shellRemoved, true, `Flight shell was not removed after landing: ${JSON.stringify(result)}`)
-  assert.equal(result?.settled?.markerCount, 2, `Dashboard flags did not appear after landing: ${JSON.stringify(result)}`)
+  assert.equal(result?.settled?.markerCount, 4, `Dashboard flags did not appear after landing: ${JSON.stringify(result)}`)
   assert.equal(result?.settled?.haloPresent, true, `Dashboard landing ripple did not mount: ${JSON.stringify(result)}`)
   assert.equal(result?.settled?.haloOrigin, 'landing', `Dashboard used the wrong ripple cadence after landing: ${JSON.stringify(result)}`)
   assert.equal(result?.settled?.haloRingCount, 2, `Dashboard ripple did not render two progressive rings: ${JSON.stringify(result)}`)
@@ -1870,7 +1897,7 @@ async function auditMetricStoreFallback() {
       780,
       pingDialogOpenExpression,
       undefined,
-      `sessionStorage.setItem('leonetlab:intro:1.4.2pre3', 'seen');`,
+      `sessionStorage.setItem('komari-observatory:intro:1.4.2-fix1', 'seen');`,
     )
     reportBrowserAudit('metric-store-fallback', result)
     assert.equal(result?.state, 'opened', `Ping dialog did not open behind an uninitialized metric store: ${JSON.stringify(result)}`)
@@ -1895,7 +1922,7 @@ async function auditGlobeMotionMode(mode, expectedMoved) {
       780,
       globeMotionAuditExpression.replace('__EARTH_MODE__', mode),
       undefined,
-      `sessionStorage.setItem('leonetlab:intro:1.4.2pre3', 'seen');`,
+      `sessionStorage.setItem('komari-observatory:intro:1.4.2-fix1', 'seen');`,
     )
     reportBrowserAudit(`globe-motion-${mode}`, result)
     assert.equal(result?.moved, expectedMoved, `Unexpected ${mode} globe motion: ${JSON.stringify(result)}`)
@@ -1912,7 +1939,7 @@ async function auditPingContentMotion() {
     780,
     pingContentMotionAuditExpression,
     undefined,
-    `sessionStorage.setItem('leonetlab:intro:1.4.2pre3', 'seen');`,
+    `sessionStorage.setItem('komari-observatory:intro:1.4.2-fix1', 'seen');`,
   )
   reportBrowserAudit('ping-content-motion', result)
   assert.match(result?.toolbarAnimation || '', pingSectionInPattern, `Ping toolbar has no entrance transition: ${JSON.stringify(result)}`)
@@ -1935,19 +1962,29 @@ async function auditMobileProbeMatrix() {
 async function auditVisitorCollapse() {
   visitorInfoEnabledFixture = true
   try {
-    const result = await runInteractivePage('visitor-collapse-mobile', 390, 844, visitorCollapseAuditExpression, undefined, visitorFixtureInitScript)
-    reportBrowserAudit('visitor-collapse', result)
-    assert.equal(result?.state, 'compact', `Visitor presentation did not finish: ${JSON.stringify(result)}`)
-    assert.equal(result?.compactingSeen, true, `Visitor morphing phase was skipped: ${JSON.stringify(result)}`)
-    assert.ok(result?.frames >= 20, `Visitor collapse produced too few animation frames: ${JSON.stringify(result)}`)
-    assert.ok(result?.maxFrame < 160, `Visitor collapse stalled for too long: ${JSON.stringify(result)}`)
-    assert.ok(result?.maxLongTask < longTaskHardLimitMs, `Visitor collapse produced a main-thread task over ${longTaskHardLimitMs}ms (observed: ${JSON.stringify(result?.longTaskDurations ?? [])}): ${JSON.stringify(result)}`)
-    assert.doesNotMatch(result?.collapseTransitionProperty ?? '', layoutTransitionPropertyPattern, `Mobile visitor still animates layout properties: ${JSON.stringify(result)}`)
-    assert.ok(result?.minCompactingOpacity <= 0.12, `Mobile visitor expanded layer did not cross-fade during compact morph: ${JSON.stringify(result)}`)
-    assert.ok(result?.maxCompactLayerOpacity >= 0.9, `Mobile visitor compact bar never became visible during morph: ${JSON.stringify(result)}`)
-    assert.match(result?.compactLayerText ?? '', visitorResolvedInfoPattern, `Mobile visitor compact bar lost resolved information: ${JSON.stringify(result)}`)
-    assert.equal(result?.scanningEntries, 1, `Visitor scan phase replayed: ${JSON.stringify(result)}`)
-    assert.deepEqual(result?.postCompactTransitions, [], `Visitor restarted after reaching compact state: ${JSON.stringify(result)}`)
+    const audits = [
+      { label: 'mobile', width: 390, height: 844 },
+      { label: 'desktop', width: 1100, height: 760 },
+    ]
+    for (const audit of audits) {
+      const result = await runInteractivePage(`visitor-collapse-${audit.label}`, audit.width, audit.height, visitorCollapseAuditExpression, undefined, visitorFixtureInitScript)
+      reportBrowserAudit(`visitor-collapse-${audit.label}`, result)
+      assert.equal(result?.state, 'compact', `${audit.label} visitor presentation did not finish: ${JSON.stringify(result)}`)
+      assert.equal(result?.compactingSeen, true, `${audit.label} visitor morphing phase was skipped: ${JSON.stringify(result)}`)
+      assert.ok(result?.frames >= 20, `${audit.label} visitor collapse produced too few animation frames: ${JSON.stringify(result)}`)
+      assert.ok(result?.maxFrame < 160, `${audit.label} visitor collapse stalled for too long: ${JSON.stringify(result)}`)
+      assert.ok(result?.maxLongTask < longTaskHardLimitMs, `${audit.label} visitor collapse produced a main-thread task over ${longTaskHardLimitMs}ms (observed: ${JSON.stringify(result?.longTaskDurations ?? [])}): ${JSON.stringify(result)}`)
+      assert.ok((result?.handoffWidthDelta ?? Number.POSITIVE_INFINITY) <= 2, `${audit.label} visitor changed width when morphing handed off to the clickable bar: ${JSON.stringify(result)}`)
+      assert.ok((result?.handoffHeightDelta ?? Number.POSITIVE_INFINITY) <= 2, `${audit.label} visitor changed height when morphing handed off to the clickable bar: ${JSON.stringify(result)}`)
+      assert.ok(result?.minCompactingOpacity <= 0.12, `${audit.label} visitor expanded layer did not cross-fade during compact morph: ${JSON.stringify(result)}`)
+      assert.ok(result?.maxCompactLayerOpacity >= 0.9, `${audit.label} visitor compact bar never became visible during morph: ${JSON.stringify(result)}`)
+      assert.match(result?.compactLayerText ?? '', visitorResolvedInfoPattern, `${audit.label} visitor compact bar lost resolved information: ${JSON.stringify(result)}`)
+      assert.equal(result?.scanningEntries, 1, `${audit.label} visitor scan phase replayed: ${JSON.stringify(result)}`)
+      assert.deepEqual(result?.postCompactTransitions, [], `${audit.label} visitor restarted after reaching compact state: ${JSON.stringify(result)}`)
+      assert.ok(result?.distinctMorphHeights >= 6, `${audit.label} visitor did not continuously interpolate its height toward the final bar: ${JSON.stringify(result)}`)
+      if (audit.label === 'desktop')
+        assert.ok(result?.distinctMorphWidths >= 6, `Desktop visitor did not continuously interpolate toward the final bar: ${JSON.stringify(result)}`)
+    }
   }
   finally {
     visitorInfoEnabledFixture = false
@@ -1978,7 +2015,7 @@ async function auditSearchGeometry(width) {
     width <= 760 ? 844 : 900,
     searchGeometryAuditExpression,
     undefined,
-    `sessionStorage.setItem('leonetlab:intro:1.4.2pre3', 'seen');`,
+    `sessionStorage.setItem('komari-observatory:intro:1.4.2-fix1', 'seen');`,
   )
   reportBrowserAudit(`search-geometry-${width}`, result)
   assert.equal(result?.drawerContained, true, `Search drawer escaped its viewport: ${JSON.stringify(result)}`)
@@ -2010,7 +2047,7 @@ async function auditSlowPublicSettingsShell() {
 async function auditMobileChromeLayout() {
   visitorInfoEnabledFixture = true
   try {
-    const initScript = `${visitorFixtureInitScript}\nsessionStorage.setItem('leonetlab:intro:1.4.2pre3', 'seen');`
+    const initScript = `${visitorFixtureInitScript}\nsessionStorage.setItem('komari-observatory:intro:1.4.2-fix1', 'seen');`
     const result = await runInteractivePage('mobile-chrome-layout', 390, 844, mobileChromeLayoutAuditExpression, undefined, initScript)
     reportBrowserAudit('mobile-chrome-layout', result)
     assert.ok(Math.abs(result?.logoWidth - result?.logoHeight) < 0.5, `Mobile logo frame is not square: ${JSON.stringify(result)}`)
@@ -2032,7 +2069,14 @@ async function auditMobileChromeLayout() {
 }
 
 async function auditMobileIntroTypography() {
-  const result = await runInteractivePage('mobile-intro-typography', 390, 844, mobileIntroTypographyAuditExpression)
+  const result = await runInteractivePage(
+    'mobile-intro-typography',
+    390,
+    844,
+    mobileIntroTypographyAuditExpression,
+    undefined,
+    `sessionStorage.removeItem('komari-observatory:intro:1.4.2-fix1');`,
+  )
   reportBrowserAudit('mobile-intro-typography', result)
   assert.ok(result?.left >= -0.5 && result?.right <= result?.viewportWidth + 0.5, `Mobile intro title escaped viewport: ${JSON.stringify(result)}`)
   assert.ok(result?.scrollWidth <= result?.clientWidth + 1, `Mobile intro title overflowed its column: ${JSON.stringify(result)}`)
@@ -2061,99 +2105,108 @@ async function auditMobileSearchMove() {
     844,
     mobileSearchMoveAuditExpression,
     undefined,
-    `sessionStorage.setItem('leonetlab:intro:1.4.2pre3', 'seen');`,
+    `sessionStorage.setItem('komari-observatory:intro:1.4.2-fix1', 'seen');`,
   )
   reportBrowserAudit('mobile-search-move', result)
   assert.ok(result?.after < result?.before - 100, `Filtered card did not move to the first slot: ${JSON.stringify(result)}`)
   assert.ok(result?.distinctPositions >= 4, `Filtered card jumped without intermediate frames: ${JSON.stringify(result)}`)
 }
 
-try {
-  const html = await dumpDom('home', '/')
-
-  assert.match(html, /Tokyo Fixture/)
-  assert.match(html, /Frankfurt Fixture/)
-  assert.match(html, /67 ms/)
-  assert.match(html, /4\.2%/)
-  assert.match(html, /bg-emerald-600\/90/)
-  assert.match(html, /bg-rose-500\/80/)
-  assert.doesNotMatch(html, /暂无节点/)
-  assert.ok(rpcCalls.some(call => call.method === 'common:getRecords' && call.params?.type === 'ping' && call.params?.hours === 1 && !call.params?.uuid))
-  if (process.env.SMOKE_SCREENSHOT_DIR)
-    mkdirSync(process.env.SMOKE_SCREENSHOT_DIR, { recursive: true })
-  await auditMobileFinanceOverflow(320)
-  await auditMobileFinanceOverflow(390)
-  await auditNodeFinanceStates(320)
-  await auditNodeFinanceStates(390)
-  await auditPingBarGeometry()
-  await auditConfiguredThemeMode('light', false)
-  await auditConfiguredThemeMode('dark', true)
-  await auditConfiguredThemeMode(
-    'light',
-    true,
-    `localStorage.setItem('appearance', 'dark'); localStorage.setItem('leonetlab:appearance:user-override', '1');`,
-    '1',
-  )
-  await auditGlobeFlagsAcrossThemeChange()
-  await auditGlobeRegionInteraction()
-  await auditGlobeRouteRipple()
-  await auditGlobeMotionMode('earth', true)
-  await auditGlobeMotionMode('earth-stop', false)
-  await auditPingDialogCloseAnimation()
-  await auditPingContentMotion()
-  await auditMetricStoreFallback()
-  await auditIntroDisabledReveal()
-  await auditIntroGlobeHandoff()
-  await auditMobileProbeMatrix()
-  await auditVisitorCollapse()
-  await auditVisitorReopen()
-  await auditMobileChromeLayout()
-  await auditMobileIntroTypography()
-  await auditSearchGeometry(390)
-  await auditSearchGeometry(1440)
-  await auditMobileSearchMove()
-  await auditEarlyIntroBeforeSlowNodes()
-  await auditSlowPublicSettingsShell()
-
-  const detailHtml = await dumpDom('detail', `/instance/${nodeUuid}`, 8000)
-  assert.match(detailHtml, /资源与系统记录/)
-  assert.match(detailHtml, /网络质量记录/)
-  assert.match(detailHtml, /Tokyo route probe/)
-  assert.ok(rpcCalls.some(call => call.method === 'common:getRecords' && call.params?.type === 'ping' && call.params?.uuid === nodeUuid))
-  assert.ok(rpcCalls.some(call => call.method === 'public:queryMetrics'))
-  if (usesModernKomariFixture) {
-    assert.ok(rpcCalls.some(call => call.method === 'public:getPingMetricStats'))
-    assert.ok(rpcCalls.some(call => call.method === 'public:getPublicPingTasks'))
-  }
-
-  console.log(`Komari ${fixtureKomariVersion} rendered-node and metric compatibility integration smoke test passed.`)
-
-  const holdOpenMs = Number.parseInt(process.env.SMOKE_HOLD_OPEN_MS || '0', 10)
-  if (Number.isFinite(holdOpenMs) && holdOpenMs > 0) {
-    console.log(`[fixture] keeping production fixture open for ${holdOpenMs}ms`)
-    await new Promise(resolveHold => setTimeout(resolveHold, holdOpenMs))
-  }
-
-  if (process.env.SMOKE_SCREENSHOT_DIR) {
-    await captureScreenshot('desktop-home', 1920, 1080, '/', 6000)
-    await captureScreenshot('desktop-earth-late', 1920, 1080, '/', 12000)
-    await captureScreenshot('desktop-dark', 1920, 1080, '/', 6000, ['--force-dark-mode'])
-    await capturePingDialogScreenshot('desktop-ping-dialog', 1440, 900)
-    await capturePingDialogScreenshot('mobile-ping-dialog', 390, 844)
-    await captureScreenshot('desktop-detail', 1600, 1000, `/instance/${nodeUuid}`, 6000)
-    await captureScreenshot('mobile-intro', 390, 844, '/', 900)
-    await captureScreenshot('mobile-home', 390, 844, '/', 6000)
-    console.log(`Visual audit screenshots saved to ${process.env.SMOKE_SCREENSHOT_DIR}`)
-  }
+if (externalFixtureDriver) {
+  console.log('[fixture] waiting for an external browser test driver')
+  // Playwright owns this subprocess and terminates the full process tree after
+  // the suite. Do not consume its shutdown signal: doing so leaves cmd.exe
+  // waiting on Windows even after every browser context has closed.
+  await new Promise(() => {})
 }
-catch (error) {
-  if (process.env.GITHUB_STEP_SUMMARY) {
-    const details = error instanceof Error ? (error.stack || error.message) : String(error)
-    appendFileSync(process.env.GITHUB_STEP_SUMMARY, `### Komari browser smoke failure\n\n\`\`\`text\n${details.slice(0, 8000)}\n\`\`\`\n`)
+else {
+  try {
+    const html = await dumpDom('home', '/')
+
+    assert.match(html, /Tokyo Fixture/)
+    assert.match(html, /Frankfurt Fixture/)
+    assert.match(html, /67 ms/)
+    assert.match(html, /4\.2%/)
+    assert.match(html, /bg-emerald-600\/90/)
+    assert.match(html, /bg-rose-500\/80/)
+    assert.doesNotMatch(html, /暂无节点/)
+    assert.ok(rpcCalls.some(call => call.method === 'common:getRecords' && call.params?.type === 'ping' && call.params?.hours === 1 && !call.params?.uuid))
+    if (process.env.SMOKE_SCREENSHOT_DIR)
+      mkdirSync(process.env.SMOKE_SCREENSHOT_DIR, { recursive: true })
+    await auditMobileFinanceOverflow(320)
+    await auditMobileFinanceOverflow(390)
+    await auditNodeFinanceStates(320)
+    await auditNodeFinanceStates(390)
+    await auditPingBarGeometry()
+    await auditConfiguredThemeMode('light', false)
+    await auditConfiguredThemeMode('dark', true)
+    await auditConfiguredThemeMode(
+      'light',
+      true,
+      `localStorage.setItem('appearance', 'dark'); localStorage.setItem('leonetlab:appearance:user-override', '1');`,
+      '1',
+    )
+    await auditGlobeFlagsAcrossThemeChange()
+    await auditGlobeRegionInteraction()
+    await auditGlobeRouteRipple()
+    await auditGlobeMotionMode('earth', true)
+    await auditGlobeMotionMode('earth-stop', false)
+    await auditPingDialogCloseAnimation()
+    await auditPingContentMotion()
+    await auditMetricStoreFallback()
+    await auditIntroDisabledReveal()
+    await auditIntroGlobeHandoff()
+    await auditMobileProbeMatrix()
+    await auditVisitorCollapse()
+    await auditVisitorReopen()
+    await auditMobileChromeLayout()
+    await auditMobileIntroTypography()
+    await auditSearchGeometry(390)
+    await auditSearchGeometry(1440)
+    await auditMobileSearchMove()
+    await auditEarlyIntroBeforeSlowNodes()
+    await auditSlowPublicSettingsShell()
+
+    const detailHtml = await dumpDom('detail', `/instance/${nodeUuid}`, 8000)
+    assert.match(detailHtml, /资源与系统记录/)
+    assert.match(detailHtml, /网络质量记录/)
+    assert.match(detailHtml, /Tokyo route probe/)
+    assert.ok(rpcCalls.some(call => call.method === 'common:getRecords' && call.params?.type === 'ping' && call.params?.uuid === nodeUuid))
+    assert.ok(rpcCalls.some(call => call.method === 'public:queryMetrics'))
+    if (usesModernKomariFixture) {
+      assert.ok(rpcCalls.some(call => call.method === 'public:getPingMetricStats'))
+      assert.ok(rpcCalls.some(call => call.method === 'public:getPublicPingTasks'))
+    }
+
+    console.log(`Komari ${fixtureKomariVersion} rendered-node and metric compatibility integration smoke test passed.`)
+
+    const holdOpenMs = Number.parseInt(process.env.SMOKE_HOLD_OPEN_MS || '0', 10)
+    if (Number.isFinite(holdOpenMs) && holdOpenMs > 0) {
+      console.log(`[fixture] keeping production fixture open for ${holdOpenMs}ms`)
+      await new Promise(resolveHold => setTimeout(resolveHold, holdOpenMs))
+    }
+
+    if (process.env.SMOKE_SCREENSHOT_DIR) {
+      await captureScreenshot('desktop-home', 1920, 1080, '/', 6000)
+      await captureScreenshot('desktop-earth-late', 1920, 1080, '/', 12000)
+      await captureScreenshot('desktop-dark', 1920, 1080, '/', 6000, ['--force-dark-mode'])
+      await capturePingDialogScreenshot('desktop-ping-dialog', 1440, 900)
+      await capturePingDialogScreenshot('mobile-ping-dialog', 390, 844)
+      await captureScreenshot('desktop-detail', 1600, 1000, `/instance/${nodeUuid}`, 6000)
+      await captureScreenshot('mobile-intro', 390, 844, '/', 900)
+      await captureScreenshot('mobile-home', 390, 844, '/', 6000)
+      console.log(`Visual audit screenshots saved to ${process.env.SMOKE_SCREENSHOT_DIR}`)
+    }
   }
-  throw error
-}
-finally {
-  await new Promise(resolveClose => server.close(resolveClose))
-  rmSync(profile, { recursive: true, force: true })
+  catch (error) {
+    if (process.env.GITHUB_STEP_SUMMARY) {
+      const details = error instanceof Error ? (error.stack || error.message) : String(error)
+      appendFileSync(process.env.GITHUB_STEP_SUMMARY, `### Komari browser smoke failure\n\n\`\`\`text\n${details.slice(0, 8000)}\n\`\`\`\n`)
+    }
+    throw error
+  }
+  finally {
+    await new Promise(resolveClose => server.close(resolveClose))
+    rmSync(profile, { recursive: true, force: true })
+  }
 }

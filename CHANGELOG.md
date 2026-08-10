@@ -1,5 +1,27 @@
 # Changelog
 
+## 1.4.2-fix1 — 2026-08-10
+
+- Formalized the `1.4.2-opt.a` and `1.4.2-opt.b` optimization work as the stable `1.4.2-fix1` release.
+- Fixed visitor-scan completion so the expanded card continuously transitions into the final clickable bar without an intermediate width snap.
+- Moved rounded uptime into a fixed-width header status slot, balanced the remaining lifecycle metrics into three equal cells, and replaced false loading cards with one delayed sync status.
+- Renamed the public theme to **Komari Observatory** while retaining the unique market short name `LeoNetLab` for update compatibility.
+- Refreshed the public four-node preview, shortened the README, and removed obsolete one-off audit scripts.
+
+## 1.4.2-opt.b — 2026-08-10
+
+- Reworked the visitor scan finish into one continuous card-to-compact-bar geometry transition, removing the intermediate full-width strip and final snap.
+- Moved rounded uptime into a fixed-width header status badge and redistributed upload, download, and monthly cost into three equal lifecycle cells to prevent truncation.
+- Replaced the immediate three-card loading skeleton with one delayed semantic sync indicator so fast node responses no longer flash false empty cards.
+
+## 1.4.2-opt.a — 2026-08-10
+
+- Optimized motion lifecycle handling, reduced-motion responsiveness, browser and device detection, and animation cleanup without changing managed settings or Komari data contracts.
+- Froze the production browser baseline across Chromium, Firefox, and WebKit and added reproducible Playwright coverage for the primary responsive interaction paths.
+- Tightened TypeScript boundaries, removed confirmed dead transport code, separated lint checking from automatic fixes, and preserved the legacy node normalization and controlled Ping fallback layers.
+- Refined observatory surfaces, focus treatment, safe-area behavior, and cross-device interaction details while retaining the established Soft Network Observatory identity.
+- This version is a local candidate only. It is not committed, pushed, released, or installed on a live Komari instance.
+
 ## 1.4.2 — 2026-08-08
 
 - Rebuilt the interface around softer rounded surfaces, compact visual telemetry, animated resource gauges, a refined dark-mode hierarchy, and consistent interaction motion.

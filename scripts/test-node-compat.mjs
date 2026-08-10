@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { detectVisitorClient } from '../src/utils/clientDetection.ts'
 import {
   calculateRemainingValueCNY,
   calculateTotalDailyCostCNY,
@@ -39,6 +40,23 @@ assert.deepEqual(normalizeUuidCollection({ legacy_index: nodeA }), {
 })
 
 assert.deepEqual(normalizeUuidCollection(undefined), {})
+
+assert.deepEqual(
+  detectVisitorClient('Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15) AppleWebKit/605.1.15 Version/17.0 Mobile/15E148 Safari/604.1', 5),
+  { device: 'iPad', browser: 'Safari' },
+)
+assert.deepEqual(
+  detectVisitorClient('Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 CriOS/120.0 Mobile/15E148 Safari/604.1', 5),
+  { device: 'iPhone', browser: 'Chrome' },
+)
+assert.deepEqual(
+  detectVisitorClient('Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 Chrome/120.0 Mobile Safari/537.36', 5),
+  { device: 'Android 手机', browser: 'Chrome' },
+)
+assert.deepEqual(
+  detectVisitorClient('Mozilla/5.0 (Linux; Android 14; SM-X900) AppleWebKit/537.36 SamsungBrowser/25.0 Chrome/121.0 Safari/537.36', 5),
+  { device: 'Android 平板', browser: 'Samsung Internet' },
+)
 
 const loadA = { client: 'node-a', time: '2026-07-20T00:00:00Z', cpu: 12 }
 const loadB = { client: 'node-b', time: '2026-07-20T00:00:00Z', cpu: 18 }

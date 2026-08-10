@@ -1,23 +1,27 @@
 <script setup lang="ts">
 import type { ThemeCacheRefreshPhase } from '@/utils/pwa'
 import { Icon } from '@iconify/vue'
-import { computed, inject, onMounted, onUnmounted, ref } from 'vue'
+import { computed, inject, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { Button } from '@/components/ui/button'
 import { DataTooltip } from '@/components/ui/data-tooltip'
+import { useMotionPreference } from '@/composables/useMotionPreference'
 import { usePwaInstall } from '@/composables/usePwaInstall'
 import { useAppStore } from '@/stores/app'
 import { refreshThemeCache } from '@/utils/pwa'
 
 const router = useRouter()
 const appStore = useAppStore()
+const { motionReduced } = useMotionPreference()
 const { canPromptInstall, showIosInstructions, installAvailable, promptInstall } = usePwaInstall()
 const isScrolled = inject<ReturnType<typeof ref<boolean>>>('isScrolled', ref(false))
 const themeTransition = ref<{ target: 'light' | 'dark' } | null>(null)
 const themeTransitionActive = ref(false)
 const leavingForAdmin = ref(false)
-const transitionTimers: number[] = []
-const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches
+const transitionTimers = new Set<number>()
+let themeCommitTimer: number | null = null
+let themeFallbackTimer: number | null = null
+let pendingThemeMode: 'system' | 'light' | 'dark' | null = null
 const logoVisible = ref(true)
 const refreshingCache = ref(false)
 type CachePanelPhase = 'idle' | 'update-ready' | ThemeCacheRefreshPhase | 'reloading' | 'error'
@@ -34,7 +38,7 @@ const cachePanelCopy = computed(() => {
     case 'checking':
       return { step: '01', title: '正在检查主题更新', detail: '正在与当前主题版本同步。' }
     case 'clearing':
-      return { step: '02', title: '正在清理旧缓存', detail: '仅移除 LeoNetLab Observatory 的本地缓存。' }
+      return { step: '02', title: '正在清理旧缓存', detail: '仅移除 Komari Observatory 的本地缓存。' }
     case 'reloading':
       return { step: '03', title: '缓存刷新完成', detail: '即将重新载入最新主题资源。' }
     case 'error':
@@ -67,6 +71,45 @@ const actionButtons = computed(() => {
   return buttons
 })
 
+function scheduleTransitionTask(callback: () => void, delay: number): number {
+  const timer = window.setTimeout(() => {
+    transitionTimers.delete(timer)
+    callback()
+  }, delay)
+  transitionTimers.add(timer)
+  return timer
+}
+
+function finishThemeTransition() {
+  if (!themeTransitionActive.value)
+    return
+  for (const timer of [themeCommitTimer, themeFallbackTimer]) {
+    if (timer !== null) {
+      window.clearTimeout(timer)
+      transitionTimers.delete(timer)
+    }
+  }
+  themeCommitTimer = null
+  themeFallbackTimer = null
+  themeTransitionActive.value = false
+  themeTransition.value = null
+  document.documentElement.classList.remove('lnl-theme-transitioning')
+  window.dispatchEvent(new CustomEvent('leonetlab:theme-transition-end'))
+}
+
+function handleThemeWipeAnimationEnd(event: AnimationEvent) {
+  if (event.animationName === 'lnl-theme-orb-desktop')
+    finishThemeTransition()
+}
+
+function settleThemeTransitionImmediately() {
+  if (pendingThemeMode) {
+    appStore.updateThemeMode(pendingThemeMode)
+    pendingThemeMode = null
+  }
+  finishThemeTransition()
+}
+
 function toggleTheme() {
   if (themeTransitionActive.value)
     return
@@ -83,7 +126,7 @@ function toggleTheme() {
     return
   }
 
-  if (reducedMotion) {
+  if (motionReduced.value) {
     appStore.updateThemeMode(nextMode)
     return
   }
@@ -93,21 +136,20 @@ function toggleTheme() {
     document.documentElement.classList.add('lnl-theme-transitioning')
     window.dispatchEvent(new CustomEvent('leonetlab:theme-transition-start'))
   }
-  const finishTransition = () => {
-    themeTransitionActive.value = false
-    themeTransition.value = null
-    document.documentElement.classList.remove('lnl-theme-transitioning')
-    window.dispatchEvent(new CustomEvent('leonetlab:theme-transition-end'))
-  }
-
   startTransition()
+  pendingThemeMode = nextMode
   themeTransition.value = { target: nextResolvedMode }
-  transitionTimers.push(window.setTimeout(() => {
+  themeCommitTimer = scheduleTransitionTask(() => {
+    themeCommitTimer = null
     appStore.updateThemeMode(nextMode)
-  }, 450))
-  transitionTimers.push(window.setTimeout(() => {
-    finishTransition()
-  }, 860))
+    pendingThemeMode = null
+  }, 450)
+  // animationend is authoritative; the timer protects browsers that suppress
+  // pseudo-element animation events during a visibility or rendering change.
+  themeFallbackTimer = scheduleTransitionTask(() => {
+    themeFallbackTimer = null
+    finishThemeTransition()
+  }, 1100)
 }
 
 async function handleThemeCacheRefresh() {
@@ -120,7 +162,7 @@ async function handleThemeCacheRefresh() {
       cachePanelPhase.value = phase
     })
     cachePanelPhase.value = 'reloading'
-    cacheReloadTimer = window.setTimeout(() => location.reload(), reducedMotion ? 120 : 560)
+    cacheReloadTimer = window.setTimeout(() => location.reload(), motionReduced.value ? 120 : 560)
   }
   catch (error) {
     console.error('[Header] Theme cache refresh failed:', error)
@@ -141,6 +183,8 @@ function handlePwaUpdateReady() {
 }
 
 onMounted(() => window.addEventListener('leonetlab:pwa-update-ready', handlePwaUpdateReady))
+
+watch(motionReduced, reduced => reduced && settleThemeTransitionImmediately())
 
 async function handlePwaInstall() {
   if (showIosInstructions.value) {
@@ -173,14 +217,14 @@ async function handlePwaInstall() {
 function jumpToSetting() {
   if (leavingForAdmin.value)
     return
-  if (reducedMotion) {
+  if (motionReduced.value) {
     location.href = '/admin'
     return
   }
   leavingForAdmin.value = true
-  transitionTimers.push(window.setTimeout(() => {
+  scheduleTransitionTask(() => {
     location.href = '/admin'
-  }, 860))
+  }, 860)
 }
 
 function handleButtonClick(action: string) {
@@ -197,9 +241,10 @@ function handleButtonClick(action: string) {
 onUnmounted(() => {
   window.removeEventListener('leonetlab:pwa-update-ready', handlePwaUpdateReady)
   transitionTimers.forEach(timer => window.clearTimeout(timer))
+  transitionTimers.clear()
   if (cacheReloadTimer !== null)
     window.clearTimeout(cacheReloadTimer)
-  document.documentElement.classList.remove('lnl-theme-transitioning')
+  settleThemeTransitionImmediately()
 })
 
 function handleLogoError(event: Event) {
@@ -347,6 +392,7 @@ function handleLogoError(event: Event) {
       class="lnl-theme-wipe"
       :class="`to-${themeTransition.target}`"
       aria-hidden="true"
+      @animationend="handleThemeWipeAnimationEnd"
     />
     <div
       v-if="leavingForAdmin"

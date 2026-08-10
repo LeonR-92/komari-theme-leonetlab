@@ -11,6 +11,7 @@ import { Empty } from '@/components/ui/empty'
 import { Spinner } from '@/components/ui/spinner'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { useBackgroundSurface } from '@/composables/useBackgroundSurface'
+import { useMotionPreference } from '@/composables/useMotionPreference'
 import { useAppStore } from '@/stores/app'
 import { useNodesStore } from '@/stores/nodes'
 import { formatBytes, formatBytesSplit } from '@/utils/helper'
@@ -26,6 +27,7 @@ const props = defineProps<{
 
 const appStore = useAppStore()
 const { pickSurfaceClass } = useBackgroundSurface()
+const { motionReduced } = useMotionPreference()
 const nodesStore = useNodesStore()
 
 // 从 publicSettings 获取记录保留时间
@@ -105,10 +107,9 @@ const baseTooltipConfig = computed(() => ({
 // 图表边距配置
 const chartMargin = { top: 30, right: 24, bottom: 32, left: 56 }
 const chartMarginWithLegend = { top: 30, right: 24, bottom: 52, left: 56 }
-const reduceChartMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches
 // ECharts 动画在移动端关闭：图表动画是持续 GPU/CPU 负载，移动端直接呈现最终帧。
 const chartAnimationConfig = computed(() => ({
-  animation: !appStore.disablePageAnimation && !reduceChartMotion && !isMobileLike,
+  animation: !motionReduced.value && !isMobileLike,
   animationDuration: 520,
   animationDurationUpdate: 220,
   animationEasing: 'cubicOut' as const,

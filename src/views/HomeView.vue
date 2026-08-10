@@ -39,6 +39,27 @@ const { rates: exchangeRates, ensureFinanceRates } = useFinanceRates()
 const now = useNow({ interval: 60_000 })
 const expiryRotationIndex = ref(0)
 const EXPIRY_WARNING_MS = 3 * 24 * 60 * 60 * 1000
+const showNodeLoadingState = ref(false)
+let nodeLoadingStateTimer: number | null = null
+
+function clearNodeLoadingStateTimer() {
+  if (nodeLoadingStateTimer !== null) {
+    window.clearTimeout(nodeLoadingStateTimer)
+    nodeLoadingStateTimer = null
+  }
+}
+
+function scheduleNodeLoadingState() {
+  clearNodeLoadingStateTimer()
+  showNodeLoadingState.value = false
+  if (nodesStore.initialized)
+    return
+  nodeLoadingStateTimer = window.setTimeout(() => {
+    nodeLoadingStateTimer = null
+    if (!nodesStore.initialized)
+      showNodeLoadingState.value = true
+  }, 260)
+}
 
 const expiringNodes = computed(() => nodesStore.nodes
   .map(node => ({
@@ -92,6 +113,7 @@ const { pause: pauseExpiryRotation, resume: resumeExpiryRotation } = useInterval
 
 onActivated(() => {
   resumeExpiryRotation()
+  scheduleNodeLoadingState()
   if (appStore.homeScrollPosition > 0) {
     nextTick(() => {
       window.scrollTo({ top: appStore.homeScrollPosition, behavior: 'instant' })
@@ -101,8 +123,24 @@ onActivated(() => {
 
 onDeactivated(() => {
   pauseExpiryRotation()
+  clearNodeLoadingStateTimer()
+  showNodeLoadingState.value = false
   appStore.homeScrollPosition = window.scrollY
 })
+
+watch(
+  () => nodesStore.initialized,
+  (initialized) => {
+    if (initialized) {
+      clearNodeLoadingStateTimer()
+      showNodeLoadingState.value = false
+    }
+    else {
+      scheduleNodeLoadingState()
+    }
+  },
+  { immediate: true },
+)
 
 watch(
   () => nodesStore.nodes.some(node => Number(node.price) > 0),
@@ -121,6 +159,8 @@ const nodeMoveClass = computed(() =>
 const selectedPingNodeUuid = ref<string | null>(null)
 const pingDialogOpen = ref(false)
 let pingDialogCleanupTimer: number | null = null
+let viewModeFeedbackFrame = 0
+let viewModeCommitFrame = 0
 const onlineNodeCount = computed(() => nodesStore.nodes.filter(node => node.online).length)
 const totalNodeCount = computed(() => nodesStore.nodes.length)
 
@@ -130,6 +170,22 @@ function beginSearchReorderMotion() {
     searchReorderMotionTimer = null
   }
   searchReorderMotionActive.value = true
+}
+
+function setNodeViewMode(mode: 'card' | 'list') {
+  if (appStore.nodeViewMode === mode)
+    return
+  window.cancelAnimationFrame(viewModeFeedbackFrame)
+  window.cancelAnimationFrame(viewModeCommitFrame)
+  // Paint the control feedback before replacing the card/list DOM. The second
+  // frame keeps view changes responsive on CPU-throttled mobile devices.
+  viewModeFeedbackFrame = window.requestAnimationFrame(() => {
+    viewModeFeedbackFrame = 0
+    viewModeCommitFrame = window.requestAnimationFrame(() => {
+      viewModeCommitFrame = 0
+      appStore.nodeViewMode = mode
+    })
+  })
 }
 
 function finishSearchReorderMotionLater() {
@@ -167,13 +223,17 @@ async function toggleNodeSearch() {
   document.querySelector<HTMLInputElement>('#node-search')?.focus()
 }
 
-function handleSearchKeydown(event: KeyboardEvent) {
+async function handleSearchKeydown(event: KeyboardEvent) {
   if (event.key !== 'Escape')
     return
   event.preventDefault()
+  beginSearchReorderMotion()
   searchText.value = ''
   debouncedSearchText.value = ''
   searchOpen.value = false
+  finishSearchReorderMotionLater()
+  await nextTick()
+  document.querySelector<HTMLButtonElement>('button[aria-controls="node-search"]')?.focus()
 }
 
 const groups = computed(() => [
@@ -262,10 +322,13 @@ function handlePingClick(node: NodeData) {
 }
 
 onBeforeUnmount(() => {
+  window.cancelAnimationFrame(viewModeFeedbackFrame)
+  window.cancelAnimationFrame(viewModeCommitFrame)
   if (pingDialogCleanupTimer !== null)
     window.clearTimeout(pingDialogCleanupTimer)
   if (searchReorderMotionTimer !== null)
     window.clearTimeout(searchReorderMotionTimer)
+  clearNodeLoadingStateTimer()
 })
 
 function getNodeItemTransitionKey(node: typeof nodesStore.nodes[number]): string {
@@ -376,7 +439,7 @@ function clearLeavingNodeRect(element: Element) {
                 :aria-pressed="appStore.nodeViewMode === 'card'"
                 class="h-8 w-8 border-none shadow-none rounded-md"
                 :class="[pickSurfaceClass('bg-background hover:bg-background/95', 'bg-background/50 hover:bg-background/60 backdrop-blur-xs'), appStore.nodeViewMode === 'card' ? '!text-emerald-800 dark:!text-emerald-300 !bg-background' : '']"
-                @click="appStore.nodeViewMode = 'card'"
+                @click="setNodeViewMode('card')"
               >
                 <Icon icon="tabler:layout-grid" :width="14" :height="14" />
               </Button>
@@ -385,7 +448,7 @@ function clearLeavingNodeRect(element: Element) {
                 :aria-pressed="appStore.nodeViewMode === 'list'"
                 class="h-8 w-8 border-none shadow-none rounded-md"
                 :class="[pickSurfaceClass('bg-background hover:bg-background/95', 'bg-background/50 hover:bg-background/60 backdrop-blur-xs'), appStore.nodeViewMode === 'list' ? '!text-emerald-800 dark:!text-emerald-300 !bg-background' : '']"
-                @click="appStore.nodeViewMode = 'list'"
+                @click="setNodeViewMode('list')"
               >
                 <Icon icon="tabler:table" :width="14" :height="14" />
               </Button>
@@ -450,14 +513,16 @@ function clearLeavingNodeRect(element: Element) {
             />
             <div
               v-else-if="!nodesStore.initialized"
-              class="lnl-node-skeleton-grid"
+              class="lnl-node-loading-stage"
               aria-label="正在载入节点"
               aria-busy="true"
             >
-              <div v-for="index in 3" :key="index" class="lnl-node-skeleton-card" aria-hidden="true">
-                <span class="lnl-node-skeleton-line is-title" />
-                <span class="lnl-node-skeleton-line" />
-                <span class="lnl-node-skeleton-line is-short" />
+              <div v-if="showNodeLoadingState" class="lnl-node-loading-indicator" role="status">
+                <Icon icon="tabler:loader-2" :width="18" :height="18" aria-hidden="true" />
+                <span>
+                  <strong>正在同步节点</strong>
+                  <small>读取 Komari 实时状态</small>
+                </span>
               </div>
             </div>
             <div v-else class="text-muted-foreground text-center py-8">
@@ -492,59 +557,56 @@ function clearLeavingNodeRect(element: Element) {
 </template>
 
 <style scoped>
-.lnl-node-skeleton-grid {
+.lnl-node-loading-stage {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(344px, 1fr));
-  gap: 1rem;
+  min-height: 8rem;
+  place-items: center;
 }
 
-.lnl-node-skeleton-card {
-  display: grid;
-  min-height: 13rem;
-  align-content: start;
-  gap: 0.9rem;
-  overflow: hidden;
-  padding: 1.15rem;
+.lnl-node-loading-indicator {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
   border: 1px solid var(--lnl-line);
-  border-radius: var(--lnl-radius-card);
-  background: var(--lnl-surface-base);
-  box-shadow: var(--lnl-shadow-card);
-}
-
-.lnl-node-skeleton-line {
-  display: block;
-  width: 100%;
-  height: 3.2rem;
   border-radius: var(--lnl-radius-control);
-  background: linear-gradient(
-    100deg,
-    var(--lnl-surface-inner) 20%,
-    var(--lnl-surface-raised) 42%,
-    var(--lnl-surface-inner) 64%
-  );
-  background-size: 220% 100%;
-  animation: lnl-node-skeleton-pulse 1.5s ease-in-out infinite;
+  background: color-mix(in srgb, var(--lnl-surface-raised) 88%, transparent);
+  color: var(--muted-foreground);
+  animation: lnl-node-loading-enter 220ms ease both;
 }
 
-.lnl-node-skeleton-line.is-title {
-  width: 54%;
-  height: 1.15rem;
+.lnl-node-loading-indicator > svg {
+  flex: none;
+  color: var(--lnl-green);
+  animation: lnl-node-loading-spin 900ms linear infinite;
 }
 
-.lnl-node-skeleton-line.is-short {
-  width: 72%;
-  height: 2rem;
+.lnl-node-loading-indicator span {
+  display: grid;
+  gap: 2px;
 }
 
-@keyframes lnl-node-skeleton-pulse {
-  to {
-    background-position: -120% 0;
+.lnl-node-loading-indicator strong {
+  color: var(--foreground);
+  font-size: 12px;
+  font-weight: 620;
+}
+
+.lnl-node-loading-indicator small {
+  font: 9px/1.2 var(--font-mono);
+  letter-spacing: 0.04em;
+}
+
+@keyframes lnl-node-loading-enter {
+  from {
+    opacity: 0;
+    transform: translate3d(0, 4px, 0);
   }
 }
 
-@media (max-width: 639px) {
-  .lnl-node-skeleton-grid {
-    grid-template-columns: minmax(0, 1fr);
+@keyframes lnl-node-loading-spin {
+  to {
+    transform: rotate(1turn);
   }
 }
 
@@ -776,7 +838,8 @@ function clearLeavingNodeRect(element: Element) {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .lnl-node-skeleton-line {
+  .lnl-node-loading-indicator,
+  .lnl-node-loading-indicator > svg {
     animation: none;
   }
 

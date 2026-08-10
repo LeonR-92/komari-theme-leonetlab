@@ -132,6 +132,7 @@ export default defineConfig({
     host: '0.0.0.0',
   },
   build: {
+    target: ['chrome111', 'edge111', 'firefox114', 'safari16.4'],
     chunkSizeWarningLimit: 600,
     rollupOptions: {
       onwarn(warning, defaultHandler) {

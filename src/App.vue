@@ -3,6 +3,7 @@ import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import NodeEarthGlobe from '@/components/NodeEarthGlobe.vue'
 import { Toaster } from '@/components/ui/sonner'
+import { useMotionPreference } from '@/composables/useMotionPreference'
 import { useAppStore } from '@/stores/app'
 import { destroyInitManager, initApp } from '@/utils/init'
 import Background from './components/Background.vue'
@@ -13,17 +14,18 @@ import Provider from './components/Provider.vue'
 
 const appStore = useAppStore()
 const route = useRoute()
+const { motionReduced } = useMotionPreference()
 
 // Bump this key only when a release intentionally needs to present the intro
 // again. The value still keeps the animation to once per browser session.
 // 1.2.8 重构为单 cobe 实例交接（Teleport 迁移同一 DOM，WebGL 上下文不重建），
 // 让老用户重放重构后的 intro。
-const INTRO_SESSION_KEY = 'leonetlab:intro:1.4.2pre3'
+const INTRO_SESSION_KEY = 'komari-observatory:intro:1.4.2-fix1'
 // Public settings normally arrive immediately. A broken proxy or cold PWA must
 // never leave #app empty for the API client's full timeout, so mount the safe
 // default shell after a bounded decision window. Late settings still hydrate
 // the dashboard, but cannot start an intro halfway through the user's session.
-const INITIAL_SHELL_DECISION_TIMEOUT_MS = 900
+const INITIAL_SHELL_DECISION_TIMEOUT_MS = 450
 // 飞行壳的 transform 过渡时长；交接收尾以 transitionend 为准，固定计时器只作
 // 兜底：主线程长任务会推迟 CSS 过渡起点，按点击时刻计时会提前撤壳闪跳。
 const INTRO_HANDOFF_DURATION_MS = 1080
@@ -33,9 +35,8 @@ const INTRO_FADE_FALLBACK_MS = 800
 // 慢服务器上 dashboard 可能在数据就绪后才完成挂载：飞行前最多等目标槽位
 // 1.5s，避免朝一个尚未挂载的目标交接（几何失准同样表现为闪跳）。
 const INTRO_HANDOFF_TARGET_WAIT_MS = 1500
-const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches
 function shouldPlayIntro(): boolean {
-  if (reducedMotion)
+  if (motionReduced.value)
     return false
   try {
     return sessionStorage.getItem(INTRO_SESSION_KEY) !== 'seen'
@@ -46,15 +47,16 @@ function shouldPlayIntro(): boolean {
 }
 
 const introSessionEligible = shouldPlayIntro()
-const introWillPlay = ref(false)
 appStore.introActive = false
-const showLaunch = ref(false)
-const introComplete = ref(false)
+type IntroPhase = 'idle' | 'cover' | 'finishing' | 'settled'
+const introPhase = ref<IntroPhase>('idle')
+const introWillPlay = computed(() => introPhase.value === 'cover' || introPhase.value === 'finishing')
+const showLaunch = computed(() => introWillPlay.value)
+const introComplete = computed(() => introPhase.value === 'settled')
 const appShellMounted = ref(false)
 const ambientAnimationReady = ref(false)
 const introRevealActive = ref(false)
-const introFinishing = ref(false)
-const introLeaving = ref(false)
+const introLeaving = computed(() => introPhase.value === 'finishing')
 const introHandoffReady = ref(false)
 let launchStartedAt = 0
 const INTRO_VISUAL_DURATION_MS = 3150
@@ -77,7 +79,7 @@ let dashboardPulseScheduled = false
 let dashboardPulseIssued = false
 
 async function requestDashboardPulse(preferredOrigin: DashboardPulseOrigin) {
-  if (dashboardPulseScheduled || reducedMotion || appStore.disablePageAnimation || !isEarthMode())
+  if (dashboardPulseScheduled || motionReduced.value || !isEarthMode())
     return
 
   dashboardPulseScheduled = true
@@ -292,8 +294,7 @@ async function prepareInitialShell() {
   if (appShellMounted.value)
     return
 
-  const playIntro = introSessionEligible && appStore.introAnimationEnabled
-  introWillPlay.value = playIntro
+  const playIntro = introSessionEligible && appStore.introAnimationEnabled && !motionReduced.value
   appShellMounted.value = true
   resolveInitialShellDecision?.()
   resolveInitialShellDecision = null
@@ -301,8 +302,8 @@ async function prepareInitialShell() {
   if (!playIntro)
     return
 
+  introPhase.value = 'cover'
   appStore.introActive = true
-  showLaunch.value = true
   launchStartedAt = performance.now()
   await nextTick()
   const stageMounted = await mountIntroGlobeStage()
@@ -351,11 +352,21 @@ onMounted(async () => {
 })
 
 async function finishIntro() {
-  if (!introWillPlay.value || !showLaunch.value || introFinishing.value)
+  if (introPhase.value !== 'cover')
     return
-  introFinishing.value = true
+  introPhase.value = 'finishing'
+  try {
+    sessionStorage.setItem(INTRO_SESSION_KEY, 'seen')
+  }
+  catch {
+    // Storage can be unavailable in strict privacy modes.
+  }
   appShellMounted.value = true
   await nextTick()
+  if (motionReduced.value) {
+    handleIntroAfterLeave()
+    return
+  }
   // 只有 earth/earth-stop 模式存在交接目标槽位；其余模式封面纯淡出。
   let rects: { source: FlightRect, target: FlightRect } | null = null
   if (isEarthMode()) {
@@ -366,10 +377,11 @@ async function finishIntro() {
         await nextFrame()
     }
   }
+  if (introPhase.value !== 'finishing')
+    return
   // Keep the cover and globe instance alive until the persistent stage lands.
   // The ripple and the FLIP transform start together with no empty wait.
   introHandoffReady.value = Boolean(rects)
-  introLeaving.value = true
   if (rects) {
     await nextTick()
     await startGlobeFlight(rects.source, rects.target)
@@ -381,12 +393,6 @@ async function finishIntro() {
   else {
     introFinalizeTimer = window.setTimeout(handleIntroAfterLeave, INTRO_FADE_FALLBACK_MS)
   }
-  try {
-    sessionStorage.setItem(INTRO_SESSION_KEY, 'seen')
-  }
-  catch {
-    // Storage can be unavailable in strict privacy modes.
-  }
 }
 
 function scheduleDashboardReveal() {
@@ -395,7 +401,7 @@ function scheduleDashboardReveal() {
     window.clearTimeout(introRevealTimer)
   introRevealTimer = window.setTimeout(() => {
     introRevealActive.value = false
-  }, 1500)
+  }, 1000)
 
   if (ambientStartTimer !== null)
     window.clearTimeout(ambientStartTimer)
@@ -407,20 +413,18 @@ function scheduleDashboardReveal() {
 }
 
 async function revealDashboardWithoutIntro() {
-  showLaunch.value = false
-  introLeaving.value = false
+  introPhase.value = 'settled'
   introHandoffReady.value = false
   appStore.introActive = false
   globePhase.value = 'none'
   flightShellVisible.value = false
   appShellMounted.value = true
   await nextTick()
-  introComplete.value = true
   scheduleDashboardReveal()
 }
 
 function handleIntroAfterLeave() {
-  if (introComplete.value)
+  if (introPhase.value !== 'finishing')
     return
   stopHandoffResizeWatch()
   window.removeEventListener('transitionend', handleHandoffTransitionEnd)
@@ -443,14 +447,11 @@ function handleIntroAfterLeave() {
     globePhase.value = 'none'
     flightShellVisible.value = false
   }
-  introComplete.value = true
-  introWillPlay.value = false
+  introPhase.value = 'settled'
   introHandoffReady.value = false
   appStore.introActive = false
   appShellMounted.value = true
-  introFinishing.value = false
   // 交接飞行结束后再卸载封面，地球引擎在此之前一直保持旋转。
-  showLaunch.value = false
   scheduleDashboardReveal()
 }
 
@@ -474,6 +475,15 @@ watch([appShellMounted, globePhase], async ([shell, phase]) => {
 watch(() => route.name, (nextRoute, previousRoute) => {
   if (nextRoute === 'home' && previousRoute && previousRoute !== 'home')
     void requestDashboardPulse('route')
+})
+
+watch(motionReduced, (reduced) => {
+  if (!reduced)
+    return
+  if (introPhase.value === 'cover')
+    void finishIntro()
+  else if (introPhase.value === 'finishing')
+    handleIntroAfterLeave()
 })
 
 onUnmounted(() => {

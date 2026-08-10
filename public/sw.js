@@ -1,4 +1,4 @@
-const CACHE_NAME = 'leonetlab-observatory-v1.4.2'
+const CACHE_NAME = 'komari-observatory-v1.4.2-fix1'
 const OFFLINE_URL = '/offline.html'
 const PRECACHE_ASSETS = /* __LNL_PRECACHE_ASSETS__ */ []
 const CORE_ASSETS = [
@@ -48,7 +48,7 @@ globalThis.addEventListener('message', (event) => {
   event.waitUntil(
     caches.keys()
       .then(keys => Promise.all(keys
-        .filter(key => key.startsWith('leonetlab-observatory-'))
+        .filter(key => key.startsWith('komari-observatory-') || key.startsWith('leonetlab-observatory-'))
         .map(key => caches.delete(key))))
       .then(async () => {
         const cache = await caches.open(CACHE_NAME)

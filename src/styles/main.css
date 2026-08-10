@@ -200,6 +200,10 @@ select,
 textarea {
   -webkit-tap-highlight-color: transparent;
 }
+button,
+a {
+  touch-action: manipulation;
+}
 :focus-visible {
   outline: 2px solid var(--lnl-green);
   outline-offset: 3px;
@@ -265,17 +269,17 @@ textarea {
 .lnl-intro-reveal .lnl-dashboard-head,
 .lnl-intro-reveal .lnl-summary-metrics,
 .lnl-intro-reveal .node-info {
-  animation: lnl-section-rise 0.72s cubic-bezier(0.16, 1, 0.3, 1) both;
+  animation: lnl-section-rise 0.45s cubic-bezier(0.16, 1, 0.3, 1) both;
   will-change: opacity, transform;
 }
 .lnl-intro-reveal .lnl-dashboard-head {
-  animation-delay: 80ms;
+  animation-delay: 10ms;
 }
 .lnl-intro-reveal .lnl-summary-metrics {
-  animation-delay: 190ms;
+  animation-delay: 100ms;
 }
 .lnl-intro-reveal .node-info {
-  animation-delay: 360ms;
+  animation-delay: 190ms;
 }
 
 .lnl-header-staged,

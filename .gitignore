@@ -36,6 +36,8 @@ docs/audit-*.png
 docs/audit-*/
 docs/chrome-smoke.png
 artifacts/
+playwright-report/
+test-results/
 
 .env.development
 # Cypress
