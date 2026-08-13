@@ -154,13 +154,15 @@ const searchOpen = ref(false)
 const searchReorderMotionActive = ref(false)
 let searchReorderMotionTimer: number | null = null
 const nodeMoveClass = computed(() =>
-  isMobileLike && !searchReorderMotionActive.value ? MOBILE_NO_MOVE_CLASS : undefined,
+  isMobileLike || !searchReorderMotionActive.value ? MOBILE_NO_MOVE_CLASS : undefined,
 )
 const selectedPingNodeUuid = ref<string | null>(null)
 const pingDialogOpen = ref(false)
 let pingDialogCleanupTimer: number | null = null
 let viewModeFeedbackFrame = 0
 let viewModeCommitFrame = 0
+let searchFocusFeedbackFrame = 0
+let searchFocusCommitFrame = 0
 const onlineNodeCount = computed(() => nodesStore.nodes.filter(node => node.online).length)
 const totalNodeCount = computed(() => nodesStore.nodes.length)
 
@@ -217,10 +219,18 @@ async function toggleNodeSearch() {
     return
   }
 
-  beginSearchReorderMotion()
   searchOpen.value = true
   await nextTick()
-  document.querySelector<HTMLInputElement>('#node-search')?.focus()
+  window.cancelAnimationFrame(searchFocusFeedbackFrame)
+  window.cancelAnimationFrame(searchFocusCommitFrame)
+  // Let the drawer feedback paint before focus may open a mobile soft keyboard.
+  searchFocusFeedbackFrame = window.requestAnimationFrame(() => {
+    searchFocusFeedbackFrame = 0
+    searchFocusCommitFrame = window.requestAnimationFrame(() => {
+      searchFocusCommitFrame = 0
+      document.querySelector<HTMLInputElement>('#node-search')?.focus()
+    })
+  })
 }
 
 async function handleSearchKeydown(event: KeyboardEvent) {
@@ -324,6 +334,8 @@ function handlePingClick(node: NodeData) {
 onBeforeUnmount(() => {
   window.cancelAnimationFrame(viewModeFeedbackFrame)
   window.cancelAnimationFrame(viewModeCommitFrame)
+  window.cancelAnimationFrame(searchFocusFeedbackFrame)
+  window.cancelAnimationFrame(searchFocusCommitFrame)
   if (pingDialogCleanupTimer !== null)
     window.clearTimeout(pingDialogCleanupTimer)
   if (searchReorderMotionTimer !== null)

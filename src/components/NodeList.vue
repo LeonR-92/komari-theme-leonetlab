@@ -14,7 +14,7 @@ import { formatNodeMonthlyCost, resolveCurrency } from '@/utils/financeHelper'
 import { formatBytesPerSecondWithConfig, formatBytesWithConfig, formatDateTime, formatUptimeWithFormat, getStatus } from '@/utils/helper'
 import { isMobileLike, MOBILE_NO_MOVE_CLASS } from '@/utils/mobilePerf'
 import { getOSImage, getOSName } from '@/utils/osImageHelper'
-import { getRegionCode, getRegionDisplayName } from '@/utils/regionHelper'
+import { getRegionDisplayName, getRegionFlagUrl } from '@/utils/regionHelper'
 import { getDaysUntilExpired, getExpireStatus, getExpireTextClass, parseTags } from '@/utils/tagHelper'
 
 interface ColumnConfig {
@@ -138,7 +138,7 @@ const offlineOverlayContentStyle = computed(() => {
 })
 
 function getFlagSrc(region: string): string {
-  return `/images/flags/${getRegionCode(region)}.svg`
+  return getRegionFlagUrl(region)
 }
 
 function hasRegion(region: string | null | undefined): boolean {

@@ -1,11 +1,12 @@
 <script setup lang="ts">
 import type { RecordFormat } from '@/utils/recordHelper'
-import type { StatusRecord } from '@/utils/rpc'
+import type { MetricSeries, StatusRecord } from '@/utils/rpc'
 import { Icon } from '@iconify/vue'
-import { useIntervalFn } from '@vueuse/core'
+import { useDocumentVisibility, useIntervalFn } from '@vueuse/core'
 import dayjs from 'dayjs'
 import { computed, onMounted, onUnmounted, ref, shallowRef, watch } from 'vue'
 import VChart from 'vue-echarts'
+import ChartViewport from '@/components/ChartViewport.vue'
 import { CardX } from '@/components/ui/card-x'
 import { Empty } from '@/components/ui/empty'
 import { Spinner } from '@/components/ui/spinner'
@@ -15,6 +16,7 @@ import { useMotionPreference } from '@/composables/useMotionPreference'
 import { useAppStore } from '@/stores/app'
 import { useNodesStore } from '@/stores/nodes'
 import { formatBytes, formatBytesSplit } from '@/utils/helper'
+import { isMetricCapabilityUnavailable, listAvailableMetricDefinitions } from '@/utils/metricCapabilities'
 import { isMobileLike } from '@/utils/mobilePerf'
 import { fillMissingTimePoints } from '@/utils/recordHelper'
 import { normalizeRecordCollection } from '@/utils/recordResponse'
@@ -29,6 +31,7 @@ const appStore = useAppStore()
 const { pickSurfaceClass } = useBackgroundSurface()
 const { motionReduced } = useMotionPreference()
 const nodesStore = useNodesStore()
+const documentVisibility = useDocumentVisibility()
 
 // 从 publicSettings 获取记录保留时间
 const maxRecordPreserveTime = computed(() => appStore.publicSettings?.record_preserve_time || 720)
@@ -857,6 +860,241 @@ const processChartOption = computed(() => ({
 // ==================== 实时更新 ====================
 
 // 使用 VueUse 的 useIntervalFn 自动管理定时器
+type OptionalTelemetryTab = 'gpu' | 'gpu-memory' | 'gpu-temperature'
+type ExtendedTelemetryTab = 'connections' | 'process' | OptionalTelemetryTab
+type OptionalTelemetryStatus = 'idle' | 'loading' | 'ready' | 'empty' | 'unavailable' | 'error'
+
+interface OptionalTelemetryCacheEntry {
+  status: 'ready' | 'empty'
+  series: MetricSeries[]
+}
+
+const extendedTelemetryTab = ref<ExtendedTelemetryTab>('connections')
+const availableMetricNames = ref<ReadonlySet<string>>(new Set())
+const optionalMetricSeries = shallowRef<MetricSeries[]>([])
+const optionalTelemetryStatus = ref<OptionalTelemetryStatus>('idle')
+const optionalTelemetryError = ref<string | null>(null)
+const optionalTelemetryCache = new Map<string, OptionalTelemetryCacheEntry>()
+let metricCapabilityRequestId = 0
+let optionalTelemetryRequestId = 0
+
+const gpuUsageMetricKey = computed(() => ['gpu.device.usage', 'gpu.usage'].find(name => availableMetricNames.value.has(name)) ?? null)
+const hasGpuMemoryMetrics = computed(() => availableMetricNames.value.has('gpu.memory.used') && availableMetricNames.value.has('gpu.memory.total'))
+const hasGpuTemperatureMetric = computed(() => availableMetricNames.value.has('gpu.temperature'))
+const shouldDetectOptionalMetrics = computed(() => appStore.extendedTelemetryEnabled
+  && Boolean(nodeInfo.value?.gpu_name)
+  && (appStore.extendedTelemetryGpuUsageEnabled
+    || appStore.extendedTelemetryGpuMemoryEnabled
+    || appStore.extendedTelemetryGpuTemperatureEnabled))
+
+const extendedTelemetryTabs = computed<Array<{ value: ExtendedTelemetryTab, label: string }>>(() => {
+  if (!appStore.extendedTelemetryEnabled)
+    return []
+  const tabs: Array<{ value: ExtendedTelemetryTab, label: string }> = []
+  if (appStore.extendedTelemetryConnectionsEnabled)
+    tabs.push({ value: 'connections', label: '连接' })
+  if (appStore.extendedTelemetryProcessEnabled)
+    tabs.push({ value: 'process', label: '进程' })
+  if (appStore.extendedTelemetryGpuUsageEnabled && gpuUsageMetricKey.value)
+    tabs.push({ value: 'gpu', label: 'GPU' })
+  if (appStore.extendedTelemetryGpuMemoryEnabled && hasGpuMemoryMetrics.value)
+    tabs.push({ value: 'gpu-memory', label: '显存' })
+  if (appStore.extendedTelemetryGpuTemperatureEnabled && hasGpuTemperatureMetric.value)
+    tabs.push({ value: 'gpu-temperature', label: '温度' })
+  return tabs
+})
+const hasExtendedTelemetry = computed(() => extendedTelemetryTabs.value.length > 0)
+const optionalTelemetryActive = computed(() => extendedTelemetryTab.value === 'gpu'
+  || extendedTelemetryTab.value === 'gpu-memory'
+  || extendedTelemetryTab.value === 'gpu-temperature')
+
+function metricSeriesLabel(series: MetricSeries, index: number): string {
+  const device = series.tags?.device_name || series.tags?.device || series.tags?.name || series.tags?.device_index
+  const suffix = device || `GPU ${index + 1}`
+  if (series.metric_key === 'gpu.memory.used')
+    return `${suffix} 已用`
+  if (series.metric_key === 'gpu.memory.total')
+    return `${suffix} 总量`
+  if (series.metric_key === 'gpu.temperature')
+    return suffix
+  return suffix
+}
+
+function formatOptionalMetricValue(value: number): string {
+  if (extendedTelemetryTab.value === 'gpu-memory')
+    return formatBytes(value)
+  if (extendedTelemetryTab.value === 'gpu-temperature')
+    return `${Math.round(value)} °C`
+  return `${Math.round(value * 10) / 10}%`
+}
+
+const optionalMetricChartOption = computed(() => ({
+  ...chartAnimationConfig.value,
+  color: [chartColors.tertiary, chartColors.quinary, chartColors.quaternary, chartColors.secondary],
+  tooltip: {
+    ...baseTooltipConfig.value,
+    valueFormatter: (value: number) => formatOptionalMetricValue(value),
+  },
+  legend: {
+    bottom: 4,
+    itemWidth: 12,
+    itemHeight: 12,
+    textStyle: { fontSize: 11, color: chartThemeColors.value.textSecondary },
+  },
+  grid: chartMarginWithLegend,
+  xAxis: {
+    ...baseXAxisConfig.value,
+    data: optionalMetricSeries.value[0]?.points.map(point => formatTime(point.time, showDateInAxis.value)) ?? [],
+  },
+  yAxis: {
+    ...baseYAxisConfig.value,
+    name: extendedTelemetryTab.value === 'gpu-memory' ? '显存' : extendedTelemetryTab.value === 'gpu-temperature' ? '°C' : '%',
+    min: 0,
+    max: extendedTelemetryTab.value === 'gpu' ? 100 : undefined,
+    axisLabel: {
+      ...baseYAxisConfig.value.axisLabel,
+      formatter: (value: number) => extendedTelemetryTab.value === 'gpu-memory' ? formatBytes(value) : Math.round(value).toString(),
+    },
+  },
+  series: optionalMetricSeries.value.map((series, index) => ({
+    name: metricSeriesLabel(series, index),
+    type: 'line',
+    data: series.points.map(point => point.value),
+    smooth: 0.16,
+    smoothMonotone: 'x' as const,
+    connectNulls: false,
+    showSymbol: false,
+    lineStyle: {
+      width: 1.5,
+      cap: 'round' as const,
+      type: series.metric_key === 'gpu.memory.total' ? 'dashed' as const : 'solid' as const,
+    },
+  })),
+}))
+
+const extendedTelemetryOption = computed(() => {
+  if (extendedTelemetryTab.value === 'process')
+    return processChartOption.value
+  if (optionalTelemetryActive.value)
+    return optionalMetricChartOption.value
+  return connectionsChartOption.value
+})
+
+function optionalMetricKeys(tab: ExtendedTelemetryTab = extendedTelemetryTab.value): string[] {
+  if (tab === 'gpu')
+    return gpuUsageMetricKey.value ? [gpuUsageMetricKey.value] : []
+  if (tab === 'gpu-memory')
+    return hasGpuMemoryMetrics.value ? ['gpu.memory.used', 'gpu.memory.total'] : []
+  if (tab === 'gpu-temperature')
+    return hasGpuTemperatureMetric.value ? ['gpu.temperature'] : []
+  return []
+}
+
+function optionalMetricCacheKey(metricKeys: string[]): string {
+  return `${props.uuid}|${selectedHours.value || 1}|${extendedTelemetryTab.value}|${metricKeys.join(',')}`
+}
+
+function resetOptionalTelemetry(status: OptionalTelemetryStatus = 'idle'): void {
+  optionalTelemetryRequestId += 1
+  optionalMetricSeries.value = []
+  optionalTelemetryError.value = null
+  optionalTelemetryStatus.value = status
+}
+
+function normalizeOptionalMetricSeries(value: unknown): MetricSeries[] {
+  if (!Array.isArray(value))
+    return []
+
+  return value.flatMap((candidate) => {
+    if (!candidate || typeof candidate !== 'object')
+      return []
+    const series = candidate as Partial<MetricSeries>
+    if (!Array.isArray(series.points))
+      return []
+    const points = series.points.filter(point => point && typeof point.time === 'string' && (typeof point.value === 'number' || point.value === null))
+    if (points.length === 0 || typeof series.metric_key !== 'string' || typeof series.entity_id !== 'string')
+      return []
+    return [{ ...series, count: typeof series.count === 'number' ? series.count : points.length, points } as MetricSeries]
+  })
+}
+
+async function detectOptionalMetricCapabilities(): Promise<void> {
+  // Capability discovery and chart queries have independent lifecycles. A tab or
+  // range reset must not discard a valid definition response that is still in flight.
+  const capabilityRequestId = ++metricCapabilityRequestId
+  availableMetricNames.value = new Set()
+  optionalMetricSeries.value = []
+  optionalTelemetryError.value = null
+  optionalTelemetryStatus.value = 'idle'
+  if (!shouldDetectOptionalMetrics.value)
+    return
+  try {
+    const definitions = await listAvailableMetricDefinitions(rpc)
+    if (capabilityRequestId !== metricCapabilityRequestId || !shouldDetectOptionalMetrics.value)
+      return
+    availableMetricNames.value = new Set(definitions.map(definition => definition.name))
+  }
+  catch {
+    if (capabilityRequestId !== metricCapabilityRequestId)
+      return
+    // Optional capability discovery never blocks local connection/process data.
+    availableMetricNames.value = new Set()
+  }
+}
+
+async function fetchOptionalMetrics(): Promise<void> {
+  if (!optionalTelemetryActive.value)
+    return
+
+  const metricKeys = optionalMetricKeys()
+  if (metricKeys.length === 0) {
+    resetOptionalTelemetry('unavailable')
+    return
+  }
+  const cacheKey = optionalMetricCacheKey(metricKeys)
+  const cached = optionalTelemetryCache.get(cacheKey)
+  if (cached) {
+    optionalMetricSeries.value = cached.series
+    optionalTelemetryError.value = null
+    optionalTelemetryStatus.value = cached.status
+    return
+  }
+
+  const requestId = ++optionalTelemetryRequestId
+  optionalMetricSeries.value = []
+  optionalTelemetryError.value = null
+  optionalTelemetryStatus.value = 'loading'
+  try {
+    const result = await rpc.queryMetrics({
+      metric_keys: metricKeys,
+      entity_ids: [props.uuid],
+      hours: selectedHours.value || 1,
+      max_points: 400,
+      aggregation_by_metric: Object.fromEntries(metricKeys.map(metricKey => [metricKey, 'avg'])),
+      fill_empty: false,
+    })
+    if (requestId !== optionalTelemetryRequestId)
+      return
+    const series = normalizeOptionalMetricSeries(result?.series)
+    const status = series.length > 0 ? 'ready' : 'empty'
+    optionalTelemetryCache.set(cacheKey, { status, series })
+    optionalMetricSeries.value = series
+    optionalTelemetryStatus.value = status
+  }
+  catch (err) {
+    if (requestId !== optionalTelemetryRequestId)
+      return
+    if (isMetricCapabilityUnavailable(err)) {
+      optionalMetricSeries.value = []
+      optionalTelemetryStatus.value = 'unavailable'
+      return
+    }
+    optionalMetricSeries.value = []
+    optionalTelemetryError.value = '该指标暂时无法加载，请稍后重试'
+    optionalTelemetryStatus.value = 'error'
+  }
+}
+
 const { pause: pauseRealtimeUpdate, resume: resumeRealtimeUpdate } = useIntervalFn(
   () => fetchData(),
   dataUpdateInterval,
@@ -864,8 +1102,8 @@ const { pause: pauseRealtimeUpdate, resume: resumeRealtimeUpdate } = useInterval
 )
 
 // 根据是否为实时模式控制定时器
-watch(isRealtime, (realtime) => {
-  if (realtime) {
+watch([isRealtime, documentVisibility], ([realtime, visibility]) => {
+  if (realtime && visibility === 'visible') {
     resumeRealtimeUpdate()
   }
   else {
@@ -876,15 +1114,38 @@ watch(isRealtime, (realtime) => {
 // 生命周期 ====================
 
 watch(selectedView, () => {
+  resetOptionalTelemetry()
+  if (optionalTelemetryActive.value)
+    void fetchOptionalMetrics()
   isInitialLoad.value = true // 切换视图时重置首次加载状态
   fetchData()
 })
 
+watch(extendedTelemetryTab, (tab) => {
+  resetOptionalTelemetry()
+  if (tab === 'gpu' || tab === 'gpu-memory' || tab === 'gpu-temperature')
+    void fetchOptionalMetrics()
+})
+
+watch(extendedTelemetryTabs, (tabs) => {
+  if (tabs.some(tab => tab.value === extendedTelemetryTab.value))
+    return
+  resetOptionalTelemetry()
+  extendedTelemetryTab.value = tabs[0]?.value ?? 'connections'
+}, { immediate: true })
+
 watch(() => props.uuid, () => {
   remoteData.value = []
+  resetOptionalTelemetry()
+  availableMetricNames.value = new Set()
+  extendedTelemetryTab.value = 'connections'
   isInitialLoad.value = true // 切换节点时重置首次加载状态
   fetchData()
 })
+
+watch([() => props.uuid, () => nodeInfo.value?.gpu_name, shouldDetectOptionalMetrics], () => {
+  void detectOptionalMetricCapabilities()
+}, { flush: 'post', immediate: true })
 
 onMounted(() => {
   fetchData()
@@ -893,6 +1154,9 @@ onMounted(() => {
 onUnmounted(() => {
   // 卸载后丢弃仍在途的响应
   fetchRequestId += 1
+  metricCapabilityRequestId += 1
+  resetOptionalTelemetry()
+  pauseRealtimeUpdate()
 })
 </script>
 
@@ -937,9 +1201,9 @@ onUnmounted(() => {
               <span v-else>-</span>
             </div>
           </template>
-          <div class="h-48">
+          <ChartViewport>
             <VChart :option="cpuChartOption" autoresize />
-          </div>
+          </ChartViewport>
         </CardX>
 
         <!-- 内存卡片 -->
@@ -967,9 +1231,9 @@ onUnmounted(() => {
               </div>
             </div>
           </template>
-          <div class="h-48">
+          <ChartViewport>
             <VChart :option="memoryChartOption" autoresize />
-          </div>
+          </ChartViewport>
         </CardX>
 
         <!-- 磁盘卡片 -->
@@ -996,9 +1260,9 @@ onUnmounted(() => {
               </div>
             </div>
           </template>
-          <div class="h-48">
+          <ChartViewport>
             <VChart :option="diskChartOption" autoresize />
-          </div>
+          </ChartViewport>
         </CardX>
 
         <!-- 网络卡片 -->
@@ -1030,49 +1294,49 @@ onUnmounted(() => {
               </div>
             </div>
           </template>
-          <div class="h-48">
+          <ChartViewport>
             <VChart :option="networkChartOption" autoresize />
-          </div>
+          </ChartViewport>
         </CardX>
 
-        <!-- 连接数卡片 -->
+        <!-- 同一时间仅挂载一个附加图表，避免连接、进程与 GPU 并行占用。 -->
         <CardX
+          v-if="hasExtendedTelemetry"
           size="small" segmented
-          class="lnl-panel-motion border-none rounded-md"
+          data-extended-telemetry
+          class="lnl-panel-motion border-none rounded-md xl:col-span-2"
           :class="pickSurfaceClass('bg-background/60 hover:bg-background', 'bg-background/50 hover:bg-background backdrop-blur-xs')"
         >
           <template #header>
-            <div class="flex items-center justify-between">
-              <span class="text-base font-bold">连接</span>
-              <div class="text-xs flex gap-1 items-baseline">
-                <span>TCP: {{ latestStatus?.connections ?? '-' }}</span>
-                <span>·</span>
-                <span>UDP: {{ latestStatus?.connections_udp ?? '-' }}</span>
-              </div>
+            <div class="flex min-w-0 flex-col items-stretch gap-2 sm:flex-row sm:items-center sm:justify-between sm:gap-3">
+              <span class="text-base font-bold shrink-0">扩展遥测</span>
+              <Tabs v-model="extendedTelemetryTab" class="min-w-0">
+                <TabsList class="h-auto min-h-7 max-w-full flex-wrap justify-start bg-foreground/5 rounded-sm sm:justify-center">
+                  <TabsTrigger
+                    v-for="tab in extendedTelemetryTabs"
+                    :key="tab.value"
+                    :value="tab.value"
+                    class="h-5.5 px-2 text-[11px] border-none shadow-none rounded-xs"
+                  >
+                    {{ tab.label }}
+                  </TabsTrigger>
+                </TabsList>
+              </Tabs>
             </div>
           </template>
-          <div class="h-48">
-            <VChart :option="connectionsChartOption" autoresize />
-          </div>
-        </CardX>
-
-        <!-- 进程卡片 -->
-        <CardX
-          size="small" segmented
-          class="lnl-panel-motion border-none rounded-md"
-          :class="pickSurfaceClass('bg-background/60 hover:bg-background', 'bg-background/50 hover:bg-background backdrop-blur-xs')"
-        >
-          <template #header>
-            <div class="flex items-center justify-between">
-              <span class="text-base font-bold">进程</span>
-              <span class="text-xs">
-                {{ latestStatus?.process ?? '-' }}
-              </span>
+          <ChartViewport>
+            <div v-if="optionalTelemetryActive && optionalTelemetryStatus === 'error'" class="h-full px-4 text-xs text-destructive flex items-center justify-center text-center">
+              {{ optionalTelemetryError }}
             </div>
-          </template>
-          <div class="h-48">
-            <VChart :option="processChartOption" autoresize />
-          </div>
+            <div v-else-if="optionalTelemetryActive && optionalTelemetryStatus === 'loading'" class="h-full flex items-center justify-center">
+              <Spinner :show="true" />
+            </div>
+            <Empty
+              v-else-if="optionalTelemetryActive && (optionalTelemetryStatus === 'empty' || optionalTelemetryStatus === 'unavailable')"
+              description="该项历史采集未启用或暂无数据"
+            />
+            <VChart v-else :key="extendedTelemetryTab" :option="extendedTelemetryOption" autoresize />
+          </ChartViewport>
         </CardX>
       </div>
     </Spinner>

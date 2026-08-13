@@ -9,6 +9,7 @@ import {
   DEFAULT_EXCHANGE_RATES,
   formatNodeMonthlyCost,
 } from '../src/utils/financeHelper.ts'
+import { isMetricCapabilityUnavailable } from '../src/utils/metricCompatibility.ts'
 import { normalizeUuidCollection } from '../src/utils/nodeResponse.ts'
 import {
   getLatencyToneClass,
@@ -40,6 +41,11 @@ assert.deepEqual(normalizeUuidCollection({ legacy_index: nodeA }), {
 })
 
 assert.deepEqual(normalizeUuidCollection(undefined), {})
+
+assert.equal(isMetricCapabilityUnavailable({ code: -32601, message: 'Method not found' }), true)
+assert.equal(isMetricCapabilityUnavailable({ code: -32603, message: 'metric store not initialized' }), true)
+assert.equal(isMetricCapabilityUnavailable({ code: -32603, message: 'database timeout' }), false)
+assert.equal(isMetricCapabilityUnavailable({ code: -32000, message: 'metric store not initialized' }), false)
 
 assert.deepEqual(
   detectVisitorClient('Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15) AppleWebKit/605.1.15 Version/17.0 Mobile/15E148 Safari/604.1', 5),

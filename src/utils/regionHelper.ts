@@ -1626,6 +1626,11 @@ export function getRegionCode(regionEmoji: string): string {
   return regionInfo.code
 }
 
+/** Return one canonical, build-versioned flag URL across every theme surface. */
+export function getRegionFlagUrl(region: string): string {
+  return `/images/flags/${getRegionCode(region)}.svg?v=${encodeURIComponent(__BUILD_VERSION__)}`
+}
+
 /**
  * 根据地区代码获取emoji
  * @param code 地区代码（如：HK, CN, US）

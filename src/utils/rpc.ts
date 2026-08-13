@@ -246,6 +246,67 @@ export interface PingRecord {
   value: number
 }
 
+/** Public metric metadata introduced by Komari's metric repository. */
+export interface MetricDefinition {
+  name: string
+  description: string
+  type: string
+  unit: string
+  retention_days: number
+  metadata?: Record<string, string>
+  created_at?: string
+  updated_at?: string
+}
+
+export interface MetricPoint {
+  time: string
+  value: number | null
+  count?: number
+  tags?: Record<string, string>
+  labels?: Record<string, string>
+}
+
+export interface MetricSeries {
+  metric_key: string
+  entity_id: string
+  type?: string
+  unit?: string
+  retention_days?: number
+  tags?: Record<string, string>
+  downsampled?: boolean
+  downsample_algorithm?: string
+  fill_empty?: boolean
+  max_points?: number
+  interval_seconds?: number
+  count: number
+  points: MetricPoint[]
+}
+
+export interface MetricQueryParams {
+  metric_key?: string
+  metric_keys?: string[]
+  metrics?: string[]
+  entity_id?: string
+  entity_ids?: string[]
+  start?: string | number
+  end?: string | number
+  hours?: number
+  tags?: Record<string, string>
+  fill_empty?: boolean
+  max_points?: number
+  aggregation?: string
+  aggregation_by_metric?: Record<string, string>
+}
+
+export interface MetricQueryResponse {
+  start: string
+  end: string
+  server_downsample_default?: boolean
+  default_points?: number
+  series: MetricSeries[]
+  count: number
+}
+
 /** RPC 错误 */
 export class RpcError extends Error {
   code: number
@@ -725,6 +786,16 @@ export class KomariRpc {
    */
   async getBackendVersion(): Promise<VersionInfo> {
     return this.client.call<VersionInfo>('common:getVersion')
+  }
+
+  /** List public metric definitions. Older Komari versions may return -32601. */
+  async listMetricDefinitions(): Promise<MetricDefinition[]> {
+    return this.client.call<MetricDefinition[]>('public:listMetricDefinitions')
+  }
+
+  /** Query public metrics. Capability checks remain the caller's responsibility. */
+  async queryMetrics(params: MetricQueryParams): Promise<MetricQueryResponse> {
+    return this.client.call<MetricQueryResponse>('public:queryMetrics', { ...params })
   }
 
   // ==================== 历史记录方法 ====================

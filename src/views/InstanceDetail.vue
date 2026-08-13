@@ -13,7 +13,7 @@ import { useNodesStore } from '@/stores/nodes'
 import * as financeHelper from '@/utils/financeHelper'
 import { formatBytesPerSecondWithConfig, formatBytesWithConfig, formatDateTime, formatUptimeWithFormat } from '@/utils/helper'
 import { getOSImage, getOSName } from '@/utils/osImageHelper'
-import { getRegionCode, getRegionDisplayName } from '@/utils/regionHelper'
+import { getRegionDisplayName, getRegionFlagUrl } from '@/utils/regionHelper'
 import { getBillingCycleText, getExpireText, getExpireTextClass } from '@/utils/tagHelper'
 
 const LoadChart = defineAsyncComponent(() => import('@/components/LoadChart.vue'))
@@ -262,7 +262,7 @@ const trafficProgressStyle = computed(() => ({
         </Button>
         <div class="lnl-detail-title flex min-w-0 gap-2 items-center">
           <img
-            :src="`/images/flags/${getRegionCode(data.region)}.svg`" :alt="getRegionDisplayName(data.region)"
+            :src="getRegionFlagUrl(data.region)" :alt="getRegionDisplayName(data.region)"
             class="size-6"
           >
           <span class="truncate">{{ data.name }}</span>

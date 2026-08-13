@@ -12,7 +12,7 @@ import { useAppStore } from '@/stores/app'
 import { formatNodeMonthlyCost, resolveCurrency } from '@/utils/financeHelper'
 import { formatBytesPerSecondWithConfig, formatBytesWithConfig, formatDateTime, formatUptimeWithFormat, getStatus } from '@/utils/helper'
 import { getOSImage, getOSName } from '@/utils/osImageHelper'
-import { getRegionCode, getRegionDisplayName } from '@/utils/regionHelper'
+import { getRegionDisplayName, getRegionFlagUrl } from '@/utils/regionHelper'
 import { parseTags } from '@/utils/tagHelper'
 
 const props = defineProps<{ node: NodeData }>()
@@ -191,7 +191,7 @@ function openPingDialog() {
         <img :src="getOSImage(props.node.os)" :alt="getOSName(props.node.os)" class="size-4">
         <img
           v-if="hasRegion(props.node.region)"
-          :src="`/images/flags/${getRegionCode(props.node.region)}.svg`"
+          :src="getRegionFlagUrl(props.node.region)"
           :alt="getRegionDisplayName(props.node.region)"
           class="size-5 shrink-0"
         >

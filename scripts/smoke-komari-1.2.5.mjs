@@ -12,8 +12,8 @@ const dist = resolve(root, 'dist')
 const komariVersionArgument = process.argv.find(argument => argument.startsWith('--komari-version='))
 const fixtureKomariVersion = komariVersionArgument?.split('=', 2)[1] || '1.2.5-fix1'
 const externalFixtureDriver = process.env.SMOKE_EXTERNAL_DRIVER === '1'
-const usesModernKomariFixture = ['1.3.2', '1.4.2'].includes(fixtureKomariVersion)
-const usesKomari142Fixture = fixtureKomariVersion === '1.4.2'
+const usesModernKomariFixture = ['1.3.2', '1.4.2', '1.4.3'].includes(fixtureKomariVersion)
+const usesKomari14xFixture = ['1.4.2', '1.4.3'].includes(fixtureKomariVersion)
 const visualAuditEnabled = Boolean(process.env.SMOKE_SCREENSHOT_DIR)
 const financeDetailsLabelPattern = /查看财务汇率详情/
 const visitorResolvedInfoPattern = /Fixture Network|Test Region|Observatory/
@@ -72,6 +72,7 @@ const clients = [
   client(fourthNodeUuid, 'Los Angeles Edge', 'US', 6),
 ]
 clients[0].price = 30
+clients[0].gpu_name = 'Fixture GPU'
 clients[0].expired_at = new Date(Date.now() + 2 * 24 * 60 * 60 * 1000).toISOString()
 clients[1].price = -1
 clients[2].price = 24
@@ -184,26 +185,26 @@ const dialogPingRecords = [
 const metricSeries = dialogPingTasks.flatMap(task => [
   {
     metric_key: 'ping.latency_ms',
-    tags: usesKomari142Fixture ? undefined : { task_id: String(task.id) },
-    interval_seconds: usesKomari142Fixture ? task.interval : undefined,
+    tags: usesKomari14xFixture ? undefined : { task_id: String(task.id) },
+    interval_seconds: usesKomari14xFixture ? task.interval : undefined,
     points: dialogPingRecords
       .filter(record => record.task_id === task.id)
       .map(record => ({
         time: record.time,
         value: record.value < 0 ? null : record.value,
-        labels: usesKomari142Fixture ? { task_id: String(task.id) } : undefined,
+        labels: usesKomari14xFixture ? { task_id: String(task.id) } : undefined,
       })),
   },
   {
     metric_key: 'ping.loss',
-    tags: usesKomari142Fixture ? undefined : { task_id: String(task.id) },
-    interval_seconds: usesKomari142Fixture ? task.interval : undefined,
+    tags: usesKomari14xFixture ? undefined : { task_id: String(task.id) },
+    interval_seconds: usesKomari14xFixture ? task.interval : undefined,
     points: dialogPingRecords
       .filter(record => record.task_id === task.id)
       .map(record => ({
         time: record.time,
         value: record.value < 0 ? 1 : 0,
-        labels: usesKomari142Fixture ? { task_id: String(task.id) } : undefined,
+        labels: usesKomari14xFixture ? { task_id: String(task.id) } : undefined,
       })),
   },
 ])
@@ -212,8 +213,8 @@ const metricTaskStats = dialogPingTasks.map(task => ({
   name: task.name,
   type: task.type,
   interval: task.interval,
-  loss: usesKomari142Fixture ? task.loss : task.loss / 100,
-  loss_approximate: usesKomari142Fixture && task.id === 2,
+  loss: usesKomari14xFixture ? task.loss : task.loss / 100,
+  loss_approximate: usesKomari14xFixture && task.id === 2,
   min: task.min,
   max: task.max,
   avg: task.avg,
@@ -281,6 +282,12 @@ const server = createServer((request, response) => {
           defaultThemeMode: defaultThemeModeFixture,
           introAnimationEnabled: introAnimationEnabledFixture,
           earthViewMode: earthViewModeFixture,
+          extendedTelemetryEnabled: true,
+          extendedTelemetryConnectionsEnabled: true,
+          extendedTelemetryProcessEnabled: true,
+          extendedTelemetryGpuUsageEnabled: true,
+          extendedTelemetryGpuMemoryEnabled: true,
+          extendedTelemetryGpuTemperatureEnabled: true,
           visitorInfoCardEnabled: visitorInfoEnabledFixture,
           icpEnabled: visualAuditEnabled,
           icpNumber: visualAuditEnabled ? 'ICP 备案示例' : '',
@@ -316,22 +323,62 @@ const server = createServer((request, response) => {
         'common:getNodes': usesModernKomariFixture
           ? Object.fromEntries(clients.map(item => [item.uuid, item]))
           : clients,
-        'public:getNodesInformation': usesKomari142Fixture
+        'public:getNodesInformation': usesKomari14xFixture
           ? Object.fromEntries(clients.map(item => [item.uuid, { ...item, ipv4: '', ipv6: '', remark: '', version: '' }]))
           : undefined,
         'common:getNodesLatestStatus': statuses,
         'common:getNodeRecentStatus': { count: historyRecords.length, records: historyRecords },
+        'public:listMetricDefinitions': usesKomari14xFixture
+          ? [
+              { name: 'gpu.usage', description: 'GPU utilization', type: 'gauge', unit: '%', retention_days: 30 },
+              { name: 'gpu.device.usage', description: 'Per-device GPU utilization', type: 'gauge', unit: '%', retention_days: 30 },
+              { name: 'gpu.memory.used', description: 'GPU memory used', type: 'gauge', unit: 'bytes', retention_days: 30 },
+              { name: 'gpu.memory.total', description: 'GPU memory total', type: 'gauge', unit: 'bytes', retention_days: 30 },
+              { name: 'gpu.temperature', description: 'GPU temperature', type: 'gauge', unit: '°C', retention_days: 30 },
+            ]
+          : undefined,
         'public:queryMetrics': usesModernKomariFixture
-          ? { interval_seconds: usesKomari142Fixture ? 60 : undefined, series: metricSeries }
+          ? { interval_seconds: usesKomari14xFixture ? 60 : undefined, series: metricSeries }
           : undefined,
         'public:getPingMetricStats': usesModernKomariFixture
-          ? { interval_seconds: usesKomari142Fixture ? 60 : undefined, stats: metricTaskStats }
+          ? { interval_seconds: usesKomari14xFixture ? 60 : undefined, stats: metricTaskStats }
           : undefined,
         'public:getPublicPingTasks': usesModernKomariFixture
           ? dialogPingTasks.map((task, index) => ({ id: task.id, weight: index + 1 }))
           : undefined,
       }
       let result = results[rpcRequest.method]
+      const requestedGpuMetrics = Array.isArray(rpcRequest.params?.metric_keys)
+        ? rpcRequest.params.metric_keys.filter(metricKey => metricKey.startsWith('gpu.'))
+        : []
+      if (rpcRequest.method === 'public:queryMetrics' && requestedGpuMetrics.length > 0) {
+        const metricValues = {
+          'gpu.usage': index => 18 + (index % 12),
+          'gpu.device.usage': index => 22 + (index % 18),
+          'gpu.memory.used': index => 2_147_483_648 + index * 8_388_608,
+          'gpu.memory.total': () => 8_589_934_592,
+          'gpu.temperature': index => 48 + (index % 7),
+        }
+        const series = requestedGpuMetrics.flatMap((metricKey) => {
+          const valueAt = metricValues[metricKey]
+          if (!valueAt)
+            return []
+          return [{
+            metric_key: metricKey,
+            entity_id: nodeUuid,
+            unit: metricKey.includes('memory') ? 'bytes' : metricKey === 'gpu.temperature' ? '°C' : '%',
+            tags: { device_index: '0', device_name: 'Fixture GPU' },
+            count: historyRecords.length,
+            points: historyRecords.map((record, index) => ({ time: record.time, value: valueAt(index) })),
+          }]
+        })
+        result = {
+          start: historyRecords[0].time,
+          end: historyRecords.at(-1).time,
+          count: series.length,
+          series,
+        }
+      }
       // 官方 metric store 未初始化时 public:queryMetrics 返回 InternalError(-32603)。
       if (rpcRequest.method === 'public:queryMetrics' && metricStoreUninitializedFixture) {
         json(response, {
@@ -749,7 +796,12 @@ const globeFlagThemeAuditExpression = `new Promise((resolve) => {
     const globeContainer = document.querySelector('.node-earth-globe:not(.is-intro)');
     const overlays = [...document.querySelectorAll('.node-earth-globe:not(.is-intro) .lnl-earth-overlay')];
     const themeButton = [...document.querySelectorAll('button')].find(button => /模式|北京时间/.test(button.getAttribute('aria-label') || ''));
-    if (canvas && globeContainer && overlays.length === 4 && themeButton) {
+    const flagImagesReady = overlays.length === 4
+      && overlays.every(overlay => {
+        const image = overlay.querySelector('img');
+        return image?.complete && image.naturalWidth > 0;
+      });
+    if (canvas && globeContainer && flagImagesReady && themeButton) {
       clearInterval(timer);
       const initialCanvas = canvas;
       const initialCount = overlays.length;
@@ -1094,14 +1146,21 @@ const introHandoffAuditExpression = `new Promise((resolve) => {
         dragTarget.dispatchEvent(new PointerEvent('pointerup', { ...eventInit, clientX: cx + 240 }));
         await new Promise(done => setTimeout(done, 240));
         const phiAfterDrag = (window.__lnlGlobeProbe || {}).dashboard?.phi ?? null;
+        const shellFlightDistances = flightSamples
+          .filter(sample => sample.inShell)
+          .map(sample => sample.distance);
+        const distinctFlightPositions = new Set(shellFlightDistances.map(value => Math.round(value * 2) / 2)).size;
+        const initialDistance = distance(sourceRect);
         resolve({
           staged,
           introMarkerCount,
           introRotated: introPhiBefore !== null && introPhiAfter !== null && introPhiBefore !== introPhiAfter,
           sourceRect: sourceRect.toJSON(),
           targetRect: targetRect.toJSON(),
-          initialDistance: distance(sourceRect),
+          initialDistance,
           flightSamples,
+          distinctFlightPositions,
+          sawIntermediateMotion: shellFlightDistances.some(value => value < initialDistance - 8 && value > 8),
           maxDistanceJump: Math.round(maxDistanceJump * 100) / 100,
           sawFlightShell: firstShellIndex >= 0,
           coverSurvivedMidFlight: flightSamples.some(sample => sample.inShell && sample.rootMounted),
@@ -1444,6 +1503,9 @@ const visitorCollapseAuditExpression = `new Promise((resolve) => {
   let minCompactingOpacity = 1;
   let maxCompactLayerOpacity = 0;
   let compactLayerText = '';
+  let maxCompactOverflow = 0;
+  let maxScanHeadOverflow = 0;
+  let compactCenterDeltas = null;
   let compactReachedAt = 0;
   let lastMorphWidth = null;
   let firstCompactWidth = null;
@@ -1472,6 +1534,9 @@ const visitorCollapseAuditExpression = `new Promise((resolve) => {
       minCompactingOpacity,
       maxCompactLayerOpacity,
       compactLayerText,
+      maxCompactOverflow,
+      maxScanHeadOverflow,
+      compactCenterDeltas,
       handoffWidthDelta: lastMorphWidth === null || firstCompactWidth === null ? null : Math.abs(lastMorphWidth - firstCompactWidth),
       handoffHeightDelta: lastMorphHeight === null || firstCompactHeight === null ? null : Math.abs(lastMorphHeight - firstCompactHeight),
       distinctMorphWidths: new Set(morphWidths.map(value => Math.round(value))).size,
@@ -1528,12 +1593,28 @@ const visitorCollapseAuditExpression = `new Promise((resolve) => {
         if (state === 'compact' && firstCompactWidth === null) {
           firstCompactWidth = rect.width;
           firstCompactHeight = rect.height;
+          const compactSource = visitor?.querySelector('.lnl-visitor-compact-source');
+          const compactIp = visitor?.querySelector('.lnl-visitor-compact-layer > span:last-child');
+          const compactAction = visitor?.querySelector('.lnl-visitor-action');
+          const centerY = rect.top + rect.height / 2;
+          compactCenterDeltas = Object.fromEntries([
+            ['source', compactSource],
+            ['ip', compactIp],
+            ['action', compactAction],
+          ].map(([key, element]) => {
+            const elementRect = element?.getBoundingClientRect();
+            return [key, elementRect ? Math.abs(elementRect.top + elementRect.height / 2 - centerY) : null];
+          }));
         }
         const compactLayer = visitor?.querySelector('.lnl-visitor-compact-layer');
         if (compactLayer) {
           maxCompactLayerOpacity = Math.max(maxCompactLayerOpacity, Number(getComputedStyle(compactLayer).opacity));
           compactLayerText = compactLayer.textContent?.trim() || compactLayerText;
+          maxCompactOverflow = Math.max(maxCompactOverflow, compactLayer.scrollWidth - compactLayer.clientWidth);
         }
+        const scanHead = visitor?.querySelector('.lnl-visitor-scan-head');
+        if (scanHead)
+          maxScanHeadOverflow = Math.max(maxScanHeadOverflow, scanHead.scrollWidth - scanHead.clientWidth);
         widths.push(rect.width);
         heights.push(rect.height);
         heightSamples.push({ state, height: rect.height, time: now });
@@ -1640,8 +1721,8 @@ const slowPublicSettingsShellAuditExpression = `new Promise((resolve) => {
 })`
 
 const visitorFixtureInitScript = `(() => {
-  sessionStorage.setItem('komari-observatory:intro:1.4.2-fix1', 'seen');
-  sessionStorage.removeItem('komari-observatory:visitor-presentation:1.4.2-fix1');
+  sessionStorage.setItem('komari-observatory:intro:1.4.3', 'seen');
+  sessionStorage.removeItem('komari-observatory:visitor-presentation:1.4.3');
   const nativeFetch = window.fetch.bind(window);
   window.fetch = (input, init) => {
     const url = typeof input === 'string' ? input : input.url;
@@ -1659,7 +1740,7 @@ const visitorFixtureInitScript = `(() => {
 })()`
 
 async function capturePingDialogScreenshot(name, width, height) {
-  const result = await runInteractivePage(name, width, height, pingDialogOpenExpression, name, `sessionStorage.setItem('komari-observatory:intro:1.4.2-fix1', 'seen');`)
+  const result = await runInteractivePage(name, width, height, pingDialogOpenExpression, name, `sessionStorage.setItem('komari-observatory:intro:1.4.3', 'seen');`)
   assert.equal(result?.state, 'opened')
   assert.ok(result?.left >= -0.5 && result?.right <= result?.viewportWidth + 0.5, `Ping dialog escaped viewport: ${JSON.stringify(result)}`)
   assert.ok(result?.centerError <= 1, `Ping dialog is not centered: ${JSON.stringify(result)}`)
@@ -1667,7 +1748,7 @@ async function capturePingDialogScreenshot(name, width, height) {
 
 async function auditMobileFinanceOverflow(width) {
   const screenshotName = process.env.SMOKE_SCREENSHOT_DIR && width === 390 ? 'mobile-finance-open' : undefined
-  const result = await runInteractivePage(`mobile-finance-audit-${width}`, width, 844, financeOverflowAuditExpression, screenshotName, `sessionStorage.setItem('komari-observatory:intro:1.4.2-fix1', 'seen');`)
+  const result = await runInteractivePage(`mobile-finance-audit-${width}`, width, 844, financeOverflowAuditExpression, screenshotName, `sessionStorage.setItem('komari-observatory:intro:1.4.3', 'seen');`)
   assert.equal(result?.state, 'opened')
   assert.doesNotMatch(result?.triggerText ?? '', financeDetailsLabelPattern)
   assert.equal(result?.assistiveHintHidden, true, `Finance assistive hint became visible: ${JSON.stringify(result)}`)
@@ -1678,7 +1759,7 @@ async function auditMobileFinanceOverflow(width) {
 }
 
 async function auditNodeFinanceStates(width) {
-  const initScript = `sessionStorage.setItem('komari-observatory:intro:1.4.2-fix1', 'seen');`
+  const initScript = `sessionStorage.setItem('komari-observatory:intro:1.4.3', 'seen');`
   const defaultResult = await runInteractivePage(
     `node-finance-states-default-${width}`,
     width,
@@ -1724,7 +1805,7 @@ async function auditPingBarGeometry() {
     900,
     pingBarGeometryAuditExpression,
     undefined,
-    `sessionStorage.setItem('komari-observatory:intro:1.4.2-fix1', 'seen');`,
+    `sessionStorage.setItem('komari-observatory:intro:1.4.3', 'seen');`,
   )
   reportBrowserAudit('node-ping-bar-geometry', result)
   assert.equal(result?.length, 2, `Expected latency and loss panels: ${JSON.stringify(result)}`)
@@ -1764,7 +1845,7 @@ async function auditGlobeFlagsAcrossThemeChange() {
     780,
     globeFlagThemeAuditExpression,
     undefined,
-    `sessionStorage.setItem('komari-observatory:intro:1.4.2-fix1', 'seen'); localStorage.setItem('appearance', 'light'); localStorage.setItem('leonetlab:appearance:user-override', '1');`,
+    `sessionStorage.setItem('komari-observatory:intro:1.4.3', 'seen'); localStorage.setItem('appearance', 'light'); localStorage.setItem('leonetlab:appearance:user-override', '1');`,
   )
   reportBrowserAudit('globe-flags-theme-change', result)
   assert.equal(result?.initialCount, 4, `Expected four globe flag overlays: ${JSON.stringify(result)}`)
@@ -1791,7 +1872,7 @@ async function auditGlobeRegionInteraction() {
     780,
     globeRegionInteractionAuditExpression,
     undefined,
-    `window.__lnlGlobeProbe = {}; sessionStorage.setItem('komari-observatory:intro:1.4.2-fix1', 'seen');`,
+    `window.__lnlGlobeProbe = {}; sessionStorage.setItem('komari-observatory:intro:1.4.3', 'seen');`,
   )
   reportBrowserAudit('globe-region-interaction', result)
   assert.equal(result?.openedTooEarly, false, `Region preview skipped hover intent delay: ${JSON.stringify(result)}`)
@@ -1812,7 +1893,7 @@ async function auditGlobeRouteRipple() {
     780,
     globeRouteRippleAuditExpression,
     undefined,
-    `sessionStorage.setItem('komari-observatory:intro:1.4.2-fix1', 'seen');`,
+    `sessionStorage.setItem('komari-observatory:intro:1.4.3', 'seen');`,
   )
   reportBrowserAudit('globe-route-ripple', result)
   assert.equal(result?.routeRipple, true, `Returning home did not trigger the route ripple: ${JSON.stringify(result)}`)
@@ -1828,7 +1909,7 @@ async function auditPingDialogCloseAnimation() {
     780,
     pingDialogCloseAuditExpression,
     undefined,
-    `sessionStorage.setItem('komari-observatory:intro:1.4.2-fix1', 'seen');`,
+    `sessionStorage.setItem('komari-observatory:intro:1.4.3', 'seen');`,
   )
   reportBrowserAudit('ping-dialog-close-animation', result)
   assert.equal(result?.closedSeen, true, `Ping dialog skipped its closed state: ${JSON.stringify(result)}`)
@@ -1847,6 +1928,8 @@ async function auditIntroGlobeHandoff() {
   assert.equal(result?.engineInSlotBeforeShellLeft, true, `Engine did not land in the dashboard slot: ${JSON.stringify(result)}`)
   assert.equal(result?.flightSamples?.every(sample => sample.connected), true, `Intro canvas disconnected during handoff: ${JSON.stringify(result?.flightSamples)}`)
   assert.equal(result?.flightSamples?.every(sample => sample.opacity > 0 && sample.visibility !== 'hidden'), true, `Intro canvas became invisible during handoff: ${JSON.stringify(result?.flightSamples)}`)
+  assert.ok(result?.distinctFlightPositions >= 3, `Intro globe did not render intermediate flight positions: ${JSON.stringify(result?.flightSamples)}`)
+  assert.equal(result?.sawIntermediateMotion, true, `Intro globe snapped to its destination instead of translating: ${JSON.stringify(result?.flightSamples)}`)
   // 平滑度：飞行期间同一 canvas 到目标的距离必须单调收敛，不允许瞬移跳变。
   assert.ok(result?.maxDistanceJump < 24, `Engine teleported mid-flight (max distance jump ${result?.maxDistanceJump}px): ${JSON.stringify(result?.flightSamples)}`)
   // 落点：引擎矩形与 dashboard 槽位矩形误差 <2px。
@@ -1897,7 +1980,7 @@ async function auditMetricStoreFallback() {
       780,
       pingDialogOpenExpression,
       undefined,
-      `sessionStorage.setItem('komari-observatory:intro:1.4.2-fix1', 'seen');`,
+      `sessionStorage.setItem('komari-observatory:intro:1.4.3', 'seen');`,
     )
     reportBrowserAudit('metric-store-fallback', result)
     assert.equal(result?.state, 'opened', `Ping dialog did not open behind an uninitialized metric store: ${JSON.stringify(result)}`)
@@ -1922,7 +2005,7 @@ async function auditGlobeMotionMode(mode, expectedMoved) {
       780,
       globeMotionAuditExpression.replace('__EARTH_MODE__', mode),
       undefined,
-      `sessionStorage.setItem('komari-observatory:intro:1.4.2-fix1', 'seen');`,
+      `sessionStorage.setItem('komari-observatory:intro:1.4.3', 'seen');`,
     )
     reportBrowserAudit(`globe-motion-${mode}`, result)
     assert.equal(result?.moved, expectedMoved, `Unexpected ${mode} globe motion: ${JSON.stringify(result)}`)
@@ -1939,7 +2022,7 @@ async function auditPingContentMotion() {
     780,
     pingContentMotionAuditExpression,
     undefined,
-    `sessionStorage.setItem('komari-observatory:intro:1.4.2-fix1', 'seen');`,
+    `sessionStorage.setItem('komari-observatory:intro:1.4.3', 'seen');`,
   )
   reportBrowserAudit('ping-content-motion', result)
   assert.match(result?.toolbarAnimation || '', pingSectionInPattern, `Ping toolbar has no entrance transition: ${JSON.stringify(result)}`)
@@ -1963,7 +2046,8 @@ async function auditVisitorCollapse() {
   visitorInfoEnabledFixture = true
   try {
     const audits = [
-      { label: 'mobile', width: 390, height: 844 },
+      { label: 'mobile-320', width: 320, height: 720 },
+      { label: 'mobile-390', width: 390, height: 844 },
       { label: 'desktop', width: 1100, height: 760 },
     ]
     for (const audit of audits) {
@@ -1979,6 +2063,11 @@ async function auditVisitorCollapse() {
       assert.ok(result?.minCompactingOpacity <= 0.12, `${audit.label} visitor expanded layer did not cross-fade during compact morph: ${JSON.stringify(result)}`)
       assert.ok(result?.maxCompactLayerOpacity >= 0.9, `${audit.label} visitor compact bar never became visible during morph: ${JSON.stringify(result)}`)
       assert.match(result?.compactLayerText ?? '', visitorResolvedInfoPattern, `${audit.label} visitor compact bar lost resolved information: ${JSON.stringify(result)}`)
+      assert.equal(Object.values(result?.compactCenterDeltas ?? {}).every(value => typeof value === 'number' && value <= 0.75), true, `${audit.label} compact visitor details are not vertically centered: ${JSON.stringify(result)}`)
+      if (audit.label.startsWith('mobile')) {
+        assert.ok(result?.maxCompactOverflow <= 1, `${audit.label} compact visitor text overflowed while shrinking: ${JSON.stringify(result)}`)
+        assert.ok(result?.maxScanHeadOverflow <= 1, `${audit.label} visitor scan heading overflowed while shrinking: ${JSON.stringify(result)}`)
+      }
       assert.equal(result?.scanningEntries, 1, `${audit.label} visitor scan phase replayed: ${JSON.stringify(result)}`)
       assert.deepEqual(result?.postCompactTransitions, [], `${audit.label} visitor restarted after reaching compact state: ${JSON.stringify(result)}`)
       assert.ok(result?.distinctMorphHeights >= 6, `${audit.label} visitor did not continuously interpolate its height toward the final bar: ${JSON.stringify(result)}`)
@@ -2015,7 +2104,7 @@ async function auditSearchGeometry(width) {
     width <= 760 ? 844 : 900,
     searchGeometryAuditExpression,
     undefined,
-    `sessionStorage.setItem('komari-observatory:intro:1.4.2-fix1', 'seen');`,
+    `sessionStorage.setItem('komari-observatory:intro:1.4.3', 'seen');`,
   )
   reportBrowserAudit(`search-geometry-${width}`, result)
   assert.equal(result?.drawerContained, true, `Search drawer escaped its viewport: ${JSON.stringify(result)}`)
@@ -2047,7 +2136,7 @@ async function auditSlowPublicSettingsShell() {
 async function auditMobileChromeLayout() {
   visitorInfoEnabledFixture = true
   try {
-    const initScript = `${visitorFixtureInitScript}\nsessionStorage.setItem('komari-observatory:intro:1.4.2-fix1', 'seen');`
+    const initScript = `${visitorFixtureInitScript}\nsessionStorage.setItem('komari-observatory:intro:1.4.3', 'seen');`
     const result = await runInteractivePage('mobile-chrome-layout', 390, 844, mobileChromeLayoutAuditExpression, undefined, initScript)
     reportBrowserAudit('mobile-chrome-layout', result)
     assert.ok(Math.abs(result?.logoWidth - result?.logoHeight) < 0.5, `Mobile logo frame is not square: ${JSON.stringify(result)}`)
@@ -2075,7 +2164,7 @@ async function auditMobileIntroTypography() {
     844,
     mobileIntroTypographyAuditExpression,
     undefined,
-    `sessionStorage.removeItem('komari-observatory:intro:1.4.2-fix1');`,
+    `sessionStorage.removeItem('komari-observatory:intro:1.4.3');`,
   )
   reportBrowserAudit('mobile-intro-typography', result)
   assert.ok(result?.left >= -0.5 && result?.right <= result?.viewportWidth + 0.5, `Mobile intro title escaped viewport: ${JSON.stringify(result)}`)
@@ -2105,7 +2194,7 @@ async function auditMobileSearchMove() {
     844,
     mobileSearchMoveAuditExpression,
     undefined,
-    `sessionStorage.setItem('komari-observatory:intro:1.4.2-fix1', 'seen');`,
+    `sessionStorage.setItem('komari-observatory:intro:1.4.3', 'seen');`,
   )
   reportBrowserAudit('mobile-search-move', result)
   assert.ok(result?.after < result?.before - 100, `Filtered card did not move to the first slot: ${JSON.stringify(result)}`)

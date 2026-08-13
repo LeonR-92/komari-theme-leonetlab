@@ -1,7 +1,8 @@
 <script setup lang="ts">
+import type { ThemeMode } from '@/stores/app'
 import type { ThemeCacheRefreshPhase } from '@/utils/pwa'
 import { Icon } from '@iconify/vue'
-import { computed, inject, onMounted, onUnmounted, ref, watch } from 'vue'
+import { computed, inject, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { Button } from '@/components/ui/button'
 import { DataTooltip } from '@/components/ui/data-tooltip'
@@ -15,13 +16,26 @@ const appStore = useAppStore()
 const { motionReduced } = useMotionPreference()
 const { canPromptInstall, showIosInstructions, installAvailable, promptInstall } = usePwaInstall()
 const isScrolled = inject<ReturnType<typeof ref<boolean>>>('isScrolled', ref(false))
-const themeTransition = ref<{ target: 'light' | 'dark' } | null>(null)
+interface ThemeOrigin {
+  x: number
+  y: number
+  radius: number
+}
+
+const themeTransition = ref<{ target: 'light' | 'dark', phase: 'revealing' | 'settling' } | null>(null)
 const themeTransitionActive = ref(false)
 const leavingForAdmin = ref(false)
 const transitionTimers = new Set<number>()
+const THEME_REVEAL_DURATION_MS = 680
+const FALLBACK_THEME_COMMIT_MS = 610
+const THEME_TRANSITION_FALLBACK_MS = THEME_REVEAL_DURATION_MS + 220
 let themeCommitTimer: number | null = null
 let themeFallbackTimer: number | null = null
-let pendingThemeMode: 'system' | 'light' | 'dark' | null = null
+let pendingThemeMode: ThemeMode | null = null
+let queuedThemeMode: ThemeMode | null = null
+let queuedThemeOrigin: ThemeOrigin | null = null
+let activeViewTransition: ViewTransition | null = null
+let componentUnmounting = false
 const logoVisible = ref(true)
 const refreshingCache = ref(false)
 type CachePanelPhase = 'idle' | 'update-ready' | ThemeCacheRefreshPhase | 'reloading' | 'error'
@@ -80,6 +94,38 @@ function scheduleTransitionTask(callback: () => void, delay: number): number {
   return timer
 }
 
+function cycleThemeMode(mode: ThemeMode): ThemeMode {
+  if (mode === 'system')
+    return 'light'
+  return mode === 'light' ? 'dark' : 'system'
+}
+
+function resolveThemeOrigin(element?: Element | null): ThemeOrigin {
+  const rect = element?.getBoundingClientRect()
+  const x = Math.min(window.innerWidth, Math.max(0, rect ? rect.left + rect.width / 2 : window.innerWidth))
+  const y = Math.min(window.innerHeight, Math.max(0, rect ? rect.top + rect.height / 2 : 0))
+  return {
+    x,
+    y,
+    radius: Math.hypot(Math.max(x, window.innerWidth - x), Math.max(y, window.innerHeight - y)),
+  }
+}
+
+function writeThemeOrigin(origin: ThemeOrigin) {
+  const root = document.documentElement
+  root.style.setProperty('--theme-x', `${origin.x}px`)
+  root.style.setProperty('--theme-y', `${origin.y}px`)
+  root.style.setProperty('--theme-radius', `${Math.ceil(origin.radius)}px`)
+}
+
+function commitPendingTheme() {
+  if (!pendingThemeMode)
+    return
+  const mode = pendingThemeMode
+  pendingThemeMode = null
+  appStore.updateThemeMode(mode)
+}
+
 function finishThemeTransition() {
   if (!themeTransitionActive.value)
     return
@@ -91,37 +137,78 @@ function finishThemeTransition() {
   }
   themeCommitTimer = null
   themeFallbackTimer = null
+  activeViewTransition = null
   themeTransitionActive.value = false
   themeTransition.value = null
-  document.documentElement.classList.remove('lnl-theme-transitioning')
+  const root = document.documentElement
+  root.classList.remove('lnl-theme-transitioning')
+  root.style.removeProperty('--theme-x')
+  root.style.removeProperty('--theme-y')
+  root.style.removeProperty('--theme-radius')
   window.dispatchEvent(new CustomEvent('leonetlab:theme-transition-end'))
+
+  const queuedMode = queuedThemeMode
+  const queuedOrigin = queuedThemeOrigin
+  queuedThemeMode = null
+  queuedThemeOrigin = null
+  if (!componentUnmounting && queuedMode) {
+    queueMicrotask(() => startThemeTransition(queuedMode, queuedOrigin ?? resolveThemeOrigin()))
+  }
 }
 
 function handleThemeWipeAnimationEnd(event: AnimationEvent) {
-  if (event.animationName === 'lnl-theme-orb-desktop')
+  if (event.animationName === 'lnl-theme-fallback-reveal') {
+    if (themeCommitTimer !== null) {
+      window.clearTimeout(themeCommitTimer)
+      transitionTimers.delete(themeCommitTimer)
+      themeCommitTimer = null
+    }
+    commitPendingTheme()
+    if (themeTransition.value)
+      themeTransition.value = { ...themeTransition.value, phase: 'settling' }
+    return
+  }
+  if (event.animationName === 'lnl-theme-fallback-settle')
     finishThemeTransition()
 }
 
 function settleThemeTransitionImmediately() {
-  if (pendingThemeMode) {
-    appStore.updateThemeMode(pendingThemeMode)
-    pendingThemeMode = null
-  }
+  commitPendingTheme()
+  activeViewTransition?.skipTransition()
   finishThemeTransition()
 }
 
-function toggleTheme() {
-  if (themeTransitionActive.value)
+function beginThemeTransition(origin: ThemeOrigin) {
+  writeThemeOrigin(origin)
+  themeTransitionActive.value = true
+  document.documentElement.classList.add('lnl-theme-transitioning')
+  window.dispatchEvent(new CustomEvent('leonetlab:theme-transition-start'))
+}
+
+function startFallbackThemeTransition(nextMode: ThemeMode, target: 'light' | 'dark') {
+  pendingThemeMode = nextMode
+  themeTransition.value = { target, phase: 'revealing' }
+  themeCommitTimer = scheduleTransitionTask(() => {
+    themeCommitTimer = null
+    commitPendingTheme()
+    if (themeTransition.value)
+      themeTransition.value = { ...themeTransition.value, phase: 'settling' }
+  }, FALLBACK_THEME_COMMIT_MS)
+  themeFallbackTimer = scheduleTransitionTask(() => {
+    themeFallbackTimer = null
+    settleThemeTransitionImmediately()
+  }, THEME_TRANSITION_FALLBACK_MS)
+}
+
+function startThemeTransition(nextMode: ThemeMode, origin: ThemeOrigin) {
+  if (themeTransitionActive.value) {
+    queuedThemeMode = nextMode
+    queuedThemeOrigin = origin
     return
+  }
 
-  const nextMode = appStore.themeMode === 'system'
-    ? 'light'
-    : appStore.themeMode === 'light'
-      ? 'dark'
-      : 'system'
-  const nextResolvedMode = appStore.resolveThemeMode(nextMode)
-
-  if (nextResolvedMode === appStore.resolvedThemeMode) {
+  const target = appStore.resolveThemeMode(nextMode)
+  if (target === appStore.resolvedThemeMode) {
     appStore.updateThemeMode(nextMode)
     return
   }
@@ -131,25 +218,49 @@ function toggleTheme() {
     return
   }
 
-  const startTransition = () => {
-    themeTransitionActive.value = true
-    document.documentElement.classList.add('lnl-theme-transitioning')
-    window.dispatchEvent(new CustomEvent('leonetlab:theme-transition-start'))
+  beginThemeTransition(origin)
+  const transitionDocument = document as Document & {
+    startViewTransition?: Document['startViewTransition']
   }
-  startTransition()
-  pendingThemeMode = nextMode
-  themeTransition.value = { target: nextResolvedMode }
-  themeCommitTimer = scheduleTransitionTask(() => {
-    themeCommitTimer = null
-    appStore.updateThemeMode(nextMode)
-    pendingThemeMode = null
-  }, 450)
-  // animationend is authoritative; the timer protects browsers that suppress
-  // pseudo-element animation events during a visibility or rendering change.
-  themeFallbackTimer = scheduleTransitionTask(() => {
-    themeFallbackTimer = null
-    finishThemeTransition()
-  }, 1100)
+  if (typeof transitionDocument.startViewTransition === 'function') {
+    pendingThemeMode = nextMode
+    try {
+      const transition = transitionDocument.startViewTransition(async () => {
+        commitPendingTheme()
+        await nextTick()
+      })
+      activeViewTransition = transition
+      themeFallbackTimer = scheduleTransitionTask(() => {
+        themeFallbackTimer = null
+        settleThemeTransitionImmediately()
+      }, THEME_TRANSITION_FALLBACK_MS)
+      void transition.finished.then(finishThemeTransition, settleThemeTransitionImmediately)
+      return
+    }
+    catch {
+      activeViewTransition = null
+    }
+  }
+
+  startFallbackThemeTransition(nextMode, target)
+}
+
+function toggleTheme(originElement?: Element | null) {
+  const baseMode = queuedThemeMode ?? pendingThemeMode ?? appStore.themeMode
+  const nextMode = cycleThemeMode(baseMode)
+  const origin = resolveThemeOrigin(originElement)
+  if (themeTransitionActive.value) {
+    // Preserve only the most recent request; it runs after the active reveal.
+    queuedThemeMode = nextMode
+    queuedThemeOrigin = origin
+    return
+  }
+  startThemeTransition(nextMode, origin)
+}
+
+function handleVisibilityChange() {
+  if (document.visibilityState === 'hidden' && themeTransitionActive.value)
+    settleThemeTransitionImmediately()
 }
 
 async function handleThemeCacheRefresh() {
@@ -182,7 +293,10 @@ function handlePwaUpdateReady() {
     cachePanelPhase.value = 'update-ready'
 }
 
-onMounted(() => window.addEventListener('leonetlab:pwa-update-ready', handlePwaUpdateReady))
+onMounted(() => {
+  window.addEventListener('leonetlab:pwa-update-ready', handlePwaUpdateReady)
+  document.addEventListener('visibilitychange', handleVisibilityChange)
+})
 
 watch(motionReduced, reduced => reduced && settleThemeTransitionImmediately())
 
@@ -227,9 +341,9 @@ function jumpToSetting() {
   }, 860)
 }
 
-function handleButtonClick(action: string) {
+function handleButtonClick(action: string, event: MouseEvent) {
   if (action === 'toggleTheme')
-    toggleTheme()
+    toggleTheme(event.currentTarget instanceof Element ? event.currentTarget : null)
   if (action === 'refreshThemeCache')
     void handleThemeCacheRefresh()
   if (action === 'installPwa')
@@ -239,7 +353,11 @@ function handleButtonClick(action: string) {
 }
 
 onUnmounted(() => {
+  componentUnmounting = true
+  queuedThemeMode = null
+  queuedThemeOrigin = null
   window.removeEventListener('leonetlab:pwa-update-ready', handlePwaUpdateReady)
+  document.removeEventListener('visibilitychange', handleVisibilityChange)
   transitionTimers.forEach(timer => window.clearTimeout(timer))
   transitionTimers.clear()
   if (cacheReloadTimer !== null)
@@ -286,7 +404,7 @@ function handleLogoError(event: Event) {
             :class="{ 'is-busy': button.action === 'refreshThemeCache' && refreshingCache }"
             :aria-label="button.title"
             :disabled="button.action === 'refreshThemeCache' && refreshingCache"
-            @click="handleButtonClick(button.action)"
+            @click="handleButtonClick(button.action, $event)"
           >
             <Transition name="lnl-action-icon" mode="out-in">
               <Icon
@@ -390,7 +508,7 @@ function handleLogoError(event: Event) {
     <div
       v-if="themeTransition"
       class="lnl-theme-wipe"
-      :class="`to-${themeTransition.target}`"
+      :class="[`to-${themeTransition.target}`, `is-${themeTransition.phase}`]"
       aria-hidden="true"
       @animationend="handleThemeWipeAnimationEnd"
     />
@@ -681,26 +799,31 @@ function handleLogoError(event: Event) {
   overflow: hidden;
   pointer-events: none;
   contain: strict;
+  clip-path: circle(0 at var(--theme-x, 100%) var(--theme-y, 0%));
+  will-change: clip-path, opacity;
 }
-.lnl-theme-wipe::before {
+.lnl-theme-wipe::after {
   position: absolute;
-  top: -50vmax;
-  right: -50vmax;
-  width: 100vmax;
-  height: 100vmax;
-  border-radius: 50%;
+  inset: 0;
   content: '';
-  opacity: 0;
-  transform: translate3d(0, 0, 0) scale(0.02);
-  transform-origin: center;
-  animation: lnl-theme-orb-desktop 0.86s cubic-bezier(0.4, 0, 0.2, 1) both;
-  will-change: transform, opacity;
+  background-image:
+    linear-gradient(rgb(116 230 178 / 3%) 1px, transparent 1px),
+    linear-gradient(90deg, rgb(117 201 212 / 3%) 1px, transparent 1px);
+  background-size: 42px 42px;
+  mask-image: radial-gradient(circle at var(--theme-x, 100%) var(--theme-y, 0%), #000, transparent 78%);
 }
-.lnl-theme-wipe.to-dark::before {
-  background: #06100d;
+.lnl-theme-wipe.to-dark {
+  background-color: #06100d;
 }
-.lnl-theme-wipe.to-light::before {
-  background: #edf7f1;
+.lnl-theme-wipe.to-light {
+  background-color: #edf7f1;
+}
+.lnl-theme-wipe.is-revealing {
+  animation: lnl-theme-fallback-reveal 680ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+.lnl-theme-wipe.is-settling {
+  clip-path: circle(var(--theme-radius, 150vmax) at var(--theme-x, 100%) var(--theme-y, 0%));
+  animation: lnl-theme-fallback-settle 90ms ease-out both;
 }
 .lnl-route-cover {
   --route-bg: #030b09;
@@ -830,25 +953,20 @@ function handleLogoError(event: Event) {
   transform-origin: left;
   animation: lnl-route-track 0.76s 0.1s cubic-bezier(0.2, 0.72, 0.2, 1) both;
 }
-@keyframes lnl-theme-orb-desktop {
-  0% {
+@keyframes lnl-theme-fallback-reveal {
+  from {
+    clip-path: circle(0 at var(--theme-x, 100%) var(--theme-y, 0%));
+  }
+  to {
+    clip-path: circle(var(--theme-radius, 150vmax) at var(--theme-x, 100%) var(--theme-y, 0%));
+  }
+}
+@keyframes lnl-theme-fallback-settle {
+  from {
+    opacity: 1;
+  }
+  to {
     opacity: 0;
-    transform: translate3d(0, 0, 0) scale(0.02);
-  }
-  6% {
-    opacity: 1;
-  }
-  52% {
-    opacity: 1;
-    transform: translate3d(0, 0, 0) scale(3.18);
-  }
-  78% {
-    opacity: 1;
-    transform: translate3d(0, 0, 0) scale(3.18);
-  }
-  100% {
-    opacity: 0;
-    transform: translate3d(0, 0, 0) scale(3.23);
   }
 }
 @keyframes lnl-route-cover-in {

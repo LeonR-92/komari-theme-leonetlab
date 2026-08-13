@@ -10,7 +10,7 @@ const props = defineProps<{
 }>()
 
 const { motionReduced } = useMotionPreference()
-const VISITOR_PRESENTATION_SESSION_KEY = 'komari-observatory:visitor-presentation:1.4.2-fix1'
+const VISITOR_PRESENTATION_SESSION_KEY = `komari-observatory:visitor-presentation:${__BUILD_VERSION__}`
 
 interface VisitorGeoData {
   ip: string
@@ -532,8 +532,8 @@ onUnmounted(() => {
     >
       <div class="lnl-visitor-expanded-layer" :aria-hidden="!isExpanded">
         <span v-if="keepExpandedRows" class="lnl-visitor-scan-head">
-          <span><i :class="{ 'is-live': presentationActive }" /> {{ greeting }} · 身份信息扫描</span>
-          <b>{{ presentationActive ? (presentationState === 'verified' ? '验证完成' : presentationState === 'morphing' ? '凭证已收束' : presentationState === 'entering' ? '建立会话' : '解析中') : '访客会话' }}</b>
+          <span><i :class="{ 'is-live': presentationActive }" /> {{ greeting }} · 身份扫描</span>
+          <b>{{ presentationActive ? (presentationState === 'verified' ? '验证完成' : presentationState === 'morphing' ? '收束中' : presentationState === 'entering' ? '建立会话' : '解析中') : '访客会话' }}</b>
         </span>
         <div
           class="lnl-visitor-rows"
@@ -745,6 +745,7 @@ onUnmounted(() => {
 
 .lnl-visitor-compact-source {
   display: flex;
+  flex: 1 1 auto;
   min-width: 0;
   align-items: center;
   gap: 7px;
@@ -758,11 +759,25 @@ onUnmounted(() => {
 
 .lnl-visitor-compact-source b,
 .lnl-visitor-compact-layer > span:last-child {
+  min-width: 0;
   overflow: hidden;
   font-size: 12px;
   font-weight: 560;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.lnl-visitor-compact-source b {
+  flex: 1 1 auto;
+}
+
+.lnl-visitor-compact-source,
+.lnl-visitor-compact-layer > span:last-child {
+  transform: translateY(1px);
+}
+
+.lnl-visitor-compact-layer > span:last-child {
+  flex: 0 1 42%;
 }
 
 .lnl-visitor-scan-head {
@@ -867,16 +882,25 @@ onUnmounted(() => {
 .lnl-visitor-action {
   display: flex;
   flex: none;
+  align-self: center;
   align-items: center;
+  justify-content: center;
+  height: 32px;
   gap: 3px;
   padding-left: 10px;
   border-left: 1px solid var(--lnl-line);
   color: var(--lnl-green);
-  font: 9px var(--font-mono);
+  font: 9px/1 var(--font-mono);
   letter-spacing: 0.08em;
+  white-space: nowrap;
   transition:
     opacity 240ms ease,
     transform 320ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.lnl-visitor-action :deep(svg) {
+  display: block;
+  flex: none;
 }
 
 .lnl-visitor.is-entering .lnl-visitor-row {
@@ -963,6 +987,37 @@ onUnmounted(() => {
       height 440ms cubic-bezier(0.22, 1, 0.36, 1),
       padding 360ms cubic-bezier(0.22, 1, 0.36, 1);
     will-change: height, padding;
+  }
+
+  .lnl-visitor-compact-layer {
+    gap: 6px;
+  }
+
+  .lnl-visitor-compact-source {
+    gap: 5px;
+  }
+
+  .lnl-visitor-compact-source b,
+  .lnl-visitor-compact-layer > span:last-child {
+    font-size: 11px;
+    letter-spacing: -0.01em;
+  }
+
+  .lnl-visitor-scan-head {
+    gap: 7px;
+    font-size: 10px;
+    letter-spacing: 0.04em;
+  }
+
+  .lnl-visitor-scan-head > span {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .lnl-visitor-scan-head > b {
+    flex: none;
   }
 
   .lnl-visitor.is-presenting .lnl-visitor-row p,

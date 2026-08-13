@@ -1,7 +1,8 @@
 import process from 'node:process'
 import { defineConfig, devices } from '@playwright/test'
 
-const fixturePort = 4179
+const fixturePort = Number(process.env.PLAYWRIGHT_FIXTURE_PORT || 4179)
+const useHeadedFirefox = process.env.PLAYWRIGHT_FIREFOX_HEADED === '1'
 
 export default defineConfig({
   testDir: './tests/browser',
@@ -25,16 +26,18 @@ export default defineConfig({
     trace: 'retain-on-failure',
     video: 'off',
   },
-  webServer: {
-    command: 'node scripts/smoke-komari-1.2.5.mjs --komari-version=1.4.2',
-    env: {
-      SMOKE_EXTERNAL_DRIVER: '1',
-      SMOKE_FIXTURE_PORT: String(fixturePort),
-    },
-    url: `http://127.0.0.1:${fixturePort}`,
-    reuseExistingServer: process.env.PLAYWRIGHT_REUSE_SERVER === '1',
-    timeout: 120_000,
-  },
+  webServer: process.env.PLAYWRIGHT_REUSE_SERVER === '1'
+    ? undefined
+    : {
+        command: 'node scripts/smoke-komari-1.2.5.mjs --komari-version=1.4.3',
+        env: {
+          SMOKE_EXTERNAL_DRIVER: '1',
+          SMOKE_FIXTURE_PORT: String(fixturePort),
+        },
+        url: `http://127.0.0.1:${fixturePort}`,
+        reuseExistingServer: false,
+        timeout: 120_000,
+      },
   projects: [
     {
       name: 'chromium-desktop',
@@ -44,7 +47,10 @@ export default defineConfig({
     {
       name: 'firefox-desktop',
       grepInvert: /compact viewports/,
-      use: { ...devices['Desktop Firefox'], viewport: { width: 1440, height: 900 } },
+      // Some Windows graphics/security stacks crash Firefox content processes
+      // only in headless mode. Headed mode remains opt-in for local recovery;
+      // CI and other platforms keep the normal headless default.
+      use: { ...devices['Desktop Firefox'], headless: !useHeadedFirefox, viewport: { width: 1440, height: 900 } },
     },
     {
       name: 'webkit-desktop',

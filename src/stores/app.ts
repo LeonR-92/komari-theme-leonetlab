@@ -5,6 +5,7 @@ import { useStorageAsync } from '@vueuse/core'
 import { defineStore } from 'pinia'
 import { computed, ref, watch } from 'vue'
 import { normalizeCurrency } from '@/utils/financeHelper'
+import { useVisibleMinuteClock } from '@/utils/visibleMinuteClock'
 
 export type ThemeMode = 'system' | 'light' | 'dark'
 export type NodeCardDensity = 'comfortable' | 'compact'
@@ -72,10 +73,7 @@ const useAppStore = defineStore('app', () => {
   const brandIntroEyebrow = computed(() => readThemeString('brandIntroEyebrow', 'NETWORK OBSERVATORY / GLOBAL EDGE'))
   const brandIntroSubtitle = computed(() => readThemeString('brandIntroSubtitle', '正在同步实时节点状态'))
   const brandFooterEyebrow = computed(() => readThemeString('brandFooterEyebrow', 'EDGE / OBSERVATION COMPLETE'))
-  const beijingClock = ref(Date.now())
-  window.setInterval(() => {
-    beijingClock.value = Date.now()
-  }, 60_000)
+  const beijingClock = useVisibleMinuteClock()
   const nodeSelectedGroup = useStorageAsync<string>('nodeSelectedGroup', 'all', localStorage)
   const isLoggedIn = ref<boolean>(false)
   const connectionError = ref<boolean>(false)
@@ -204,6 +202,18 @@ const useAppStore = defineStore('app', () => {
     }
     return true
   })
+
+  const readThemeBoolean = (key: string, fallback: boolean): boolean => {
+    const value = publicSettings.value?.theme_settings?.[key]
+    return typeof value === 'boolean' ? value : fallback
+  }
+
+  const extendedTelemetryEnabled = computed(() => readThemeBoolean('extendedTelemetryEnabled', true))
+  const extendedTelemetryConnectionsEnabled = computed(() => readThemeBoolean('extendedTelemetryConnectionsEnabled', true))
+  const extendedTelemetryProcessEnabled = computed(() => readThemeBoolean('extendedTelemetryProcessEnabled', true))
+  const extendedTelemetryGpuUsageEnabled = computed(() => readThemeBoolean('extendedTelemetryGpuUsageEnabled', true))
+  const extendedTelemetryGpuMemoryEnabled = computed(() => readThemeBoolean('extendedTelemetryGpuMemoryEnabled', true))
+  const extendedTelemetryGpuTemperatureEnabled = computed(() => readThemeBoolean('extendedTelemetryGpuTemperatureEnabled', true))
 
   const nodeCardDensity = computed<NodeCardDensity>(() => {
     const density = publicSettings.value?.theme_settings?.nodeCardDensity
@@ -419,6 +429,12 @@ const useAppStore = defineStore('app', () => {
     disablePageAnimation,
     introAnimationEnabled,
     regionalTelemetryEnabled,
+    extendedTelemetryEnabled,
+    extendedTelemetryConnectionsEnabled,
+    extendedTelemetryProcessEnabled,
+    extendedTelemetryGpuUsageEnabled,
+    extendedTelemetryGpuMemoryEnabled,
+    extendedTelemetryGpuTemperatureEnabled,
     nodeCardDensity,
     nodeCardCurrency,
     icpEnabled,

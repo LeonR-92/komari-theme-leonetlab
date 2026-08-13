@@ -85,10 +85,11 @@ class InitManager {
       const healthPromise = this.healthCheck()
       await this.fetchPublicSettings()
       await onPublicSettingsReady?.()
-      await healthPromise
 
-      // 用户状态与节点数据互不依赖，并行完成剩余初始化。
+      // 健康检查、用户状态和节点数据互不依赖。公开设置一旦绘制，
+      // 三者立即并行，避免慢 ping 串行阻塞节点首屏。
       await Promise.all([
+        healthPromise,
         this.fetchUserInfo(),
         this.fetchNodesData(),
       ])

@@ -1,5 +1,41 @@
 # Changelog
 
+## 1.4.3 — 2026-08-13
+
+- Replaced the full-page color interpolation with a single 680 ms circular View Transition reveal from the top-right theme control.
+- Added a lightweight clip-path fallback, last-request queueing, reduced-motion settlement and early theme boot synchronization without rebuilding page state.
+- Tightened the mobile visitor scan and compact-bar typography so the final shrink remains aligned without clipped or overflowing labels at 320–390 px.
+- Centered the compact visitor location, masked address and detail action on one shared horizontal axis.
+- Added focused desktop and mobile regression coverage for reveal geometry, both theme directions, rapid input and fallback cleanup.
+
+## 1.4.3-pre.0 — 2026-08-13
+
+- Refined the top-right light/dark circular wipe with a longer compositor-driven expansion, a smoother two-stage easing curve and a coverage-aligned theme commit.
+- Preserved immediate reduced-motion settlement, single completion, hidden-render fallback and managed color-mode priority.
+- Rechecked the Komari 1.4.3 settings contract, extended telemetry linkage and primary interface/transition paths before the release candidate stage.
+
+## 1.4.3-beta.3 — 2026-08-13
+
+- Aligned the primary runtime and fixture target with Komari 1.4.3 while preserving the legacy node normalization and controlled Ping fallbacks.
+- Added backend-managed switches for the extended telemetry workspace and each connection, process, GPU utilization, GPU memory and GPU temperature view.
+- Added capability-gated GPU memory and temperature charts using the official public metric definitions and query interface without introducing admin RPC access.
+- Re-audited the intro handoff, visitor morph, theme transition, chart lifecycle and responsive interaction paths.
+
+## 1.4.3-beta.2 — 2026-08-13
+
+- Fixed a desktop/PWA startup deadlock where an invalid or stale entry asset could leave the pre-mount loading screen visible forever.
+- Added one bounded, theme-only cache recovery attempt before presenting an actionable retry state; theme settings and user data are never cleared.
+- Restricted Service Worker reads to the current version cache, removed superseded theme caches on activation, and rejected HTML fallback responses for JavaScript or CSS assets.
+
+## 1.4.3-beta.1 — 2026-08-13
+
+- Restored the visible single-instance globe flight by committing its source geometry across a real paint boundary without a forced synchronous layout.
+- Isolated optional GPU telemetry states so unavailable, empty, stale or failed requests never block the connection and process charts.
+- Improved first-render concurrency, animation lifecycle cleanup and intentional node-reorder transitions.
+- Bundled the exact Iconify glyph set locally and expanded deterministic Windows PWA icon coverage.
+- Added capability-gated metric definitions and lazy GPU telemetry without changing managed settings or legacy compatibility fallbacks.
+- Consolidated optional connection, process and GPU charts into one viewport-lazy extended telemetry workspace.
+
 ## 1.4.2-fix1 — 2026-08-10
 
 - Formalized the `1.4.2-opt.a` and `1.4.2-opt.b` optimization work as the stable `1.4.2-fix1` release.

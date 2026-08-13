@@ -17,8 +17,44 @@
   "prefer_related_applications": false,
   "icons": [
     {
+      "src": "/icons/pwa-44.png",
+      "sizes": "44x44",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/icons/pwa-55.png",
+      "sizes": "55x55",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/icons/pwa-66.png",
+      "sizes": "66x66",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/icons/pwa-88.png",
+      "sizes": "88x88",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/icons/pwa-176.png",
+      "sizes": "176x176",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
       "src": "/icons/pwa-192.png",
       "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/icons/pwa-256.png",
+      "sizes": "256x256",
       "type": "image/png",
       "purpose": "any"
     },
@@ -29,7 +65,13 @@
       "purpose": "any"
     },
     {
-      "src": "/icons/pwa-512.png",
+      "src": "/icons/pwa-maskable-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "maskable"
+    },
+    {
+      "src": "/icons/pwa-maskable-512.png",
       "sizes": "512x512",
       "type": "image/png",
       "purpose": "maskable"

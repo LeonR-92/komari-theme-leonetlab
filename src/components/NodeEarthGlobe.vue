@@ -23,7 +23,7 @@ import { getCoordByCode, getCountryCodeFromRegion } from '@/utils/geoHelper'
 import { getGlobeProbe } from '@/utils/globeIntroShared'
 import { formatBytesPerSecondWithConfig } from '@/utils/helper'
 import { isMobileLike } from '@/utils/mobilePerf'
-import { getRegionDisplayName } from '@/utils/regionHelper'
+import { getRegionDisplayName, getRegionFlagUrl } from '@/utils/regionHelper'
 
 const props = defineProps<{
   nodes?: NodeData[]
@@ -44,7 +44,6 @@ const globeProbe = getGlobeProbe()
 
 const appStore = useAppStore()
 const nodesStore = useNodesStore()
-const buildVersion = __BUILD_VERSION__
 
 const displayNodes = computed(() => props.nodes ?? nodesStore.earthNodes)
 const liveNodes = computed(() => props.nodes ?? nodesStore.nodes)
@@ -992,7 +991,7 @@ const offlineServers = computed(() => totalServers.value - onlineServers.value)
         <span class="lnl-earth-flag absolute -bottom-2 -left-2 z-3" aria-hidden="true">
           <span>{{ cluster.code }}</span>
           <img
-            :src="`/images/flags/${cluster.code}.svg?v=${buildVersion}`" alt=""
+            :src="getRegionFlagUrl(cluster.code)" alt=""
             draggable="false"
             @load="handleFlagLoad"
             @error="handleFlagError"

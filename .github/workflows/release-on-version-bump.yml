@@ -71,6 +71,11 @@ jobs:
           CHROME_PATH: /usr/bin/google-chrome
         run: npm run smoke:1.4.2
 
+      - name: Smoke test Komari 1.4.3 response rendering
+        env:
+          CHROME_PATH: /usr/bin/google-chrome
+        run: npm run smoke:1.4.3
+
       - name: Build release package
         run: npm run build
 

@@ -15,6 +15,27 @@
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <script>
+      ;(() => {
+        try {
+          const stored = localStorage.getItem('appearance')
+          const mode = stored ? stored.replace(/^"|"$/g, '') : 'system'
+          const beijingHour = Number(
+            new Intl.DateTimeFormat('en-US', {
+              timeZone: 'Asia/Shanghai',
+              hour: '2-digit',
+              hourCycle: 'h23',
+            })
+              .formatToParts()
+              .find((part) => part.type === 'hour')?.value,
+          )
+          const dark = mode === 'dark' || (mode !== 'light' && (beijingHour < 7 || beijingHour >= 19))
+          document.documentElement.classList.toggle('dark', dark)
+          document.documentElement.style.colorScheme = dark ? 'dark' : 'light'
+          document.querySelector('meta[name="theme-color"]')?.setAttribute('content', dark ? '#04100d' : '#edf7f1')
+        } catch {}
+      })()
+    </script>
     <style>
       #lnl-boot-fallback {
         position: fixed;
@@ -47,6 +68,25 @@
       #lnl-boot-fallback b {
         font-weight: 600;
       }
+      #lnl-boot-fallback button {
+        min-height: 40px;
+        padding: 8px 18px;
+        border: 1px solid rgba(45, 156, 108, 0.5);
+        border-radius: 999px;
+        background: transparent;
+        color: inherit;
+        font: inherit;
+        cursor: pointer;
+      }
+      #lnl-boot-fallback button:focus-visible {
+        outline: 2px solid #2d9c6c;
+        outline-offset: 3px;
+      }
+      #lnl-boot-fallback small {
+        max-width: min(360px, calc(100vw - 48px));
+        color: color-mix(in srgb, currentColor 72%, transparent);
+        text-align: center;
+      }
       @keyframes lnl-boot-spin {
         to {
           transform: rotate(1turn);
@@ -77,6 +117,140 @@
         <span><i aria-hidden="true"></i><b>正在连接网络观测站</b></span>
       </div>
     </div>
+    <script>
+      ;(() => {
+        const RECOVERY_KEY = 'komari-observatory:boot-recovery'
+        const RECOVERY_PARAM = '__komari_boot_recovery'
+        const CACHE_PREFIXES = ['komari-observatory-', 'leonetlab-observatory-']
+        let mounted = false
+        let recovering = false
+
+        const fallback = () => document.getElementById('lnl-boot-fallback')
+        const readAttempts = () => {
+          try {
+            return Number(sessionStorage.getItem(RECOVERY_KEY) || 0)
+          } catch {
+            return 0
+          }
+        }
+        const writeAttempts = (value) => {
+          try {
+            sessionStorage.setItem(RECOVERY_KEY, String(value))
+          } catch {
+            // Storage can be disabled; the recovery query still prevents a silent hang.
+          }
+        }
+        const withTimeout = (promise, timeout) =>
+          Promise.race([promise, new Promise((_, reject) => setTimeout(() => reject(new Error('Timed out')), timeout))])
+
+        const clearThemeRuntime = async () => {
+          if ('serviceWorker' in navigator) {
+            const registrations = await withTimeout(navigator.serviceWorker.getRegistrations(), 2500).catch(() => [])
+            await Promise.allSettled(
+              registrations
+                .filter((registration) => {
+                  const scriptURL =
+                    registration.active?.scriptURL ||
+                    registration.waiting?.scriptURL ||
+                    registration.installing?.scriptURL
+                  if (!scriptURL) return false
+                  const url = new URL(scriptURL, location.href)
+                  return url.origin === location.origin && url.pathname === '/sw.js'
+                })
+                .map((registration) => registration.unregister()),
+            )
+          }
+
+          if ('caches' in globalThis) {
+            const keys = await withTimeout(caches.keys(), 2500).catch(() => [])
+            await Promise.allSettled(
+              keys
+                .filter((key) => CACHE_PREFIXES.some((prefix) => key.startsWith(prefix)))
+                .map((key) => caches.delete(key)),
+            )
+          }
+        }
+
+        const showFailure = () => {
+          const root = fallback()
+          if (!root) return
+          root.setAttribute('role', 'alert')
+          root.replaceChildren()
+          const content = document.createElement('span')
+          const title = document.createElement('b')
+          const detail = document.createElement('small')
+          const button = document.createElement('button')
+          title.textContent = '主题启动失败'
+          detail.textContent = '自动修复未能完成，请检查网络后重试。不会清除主题设置或用户数据。'
+          button.type = 'button'
+          button.textContent = '重新加载主题'
+          button.addEventListener('click', () => recover(false))
+          content.append(title, detail, button)
+          root.append(content)
+        }
+
+        const recover = async (automatic) => {
+          const root = fallback()
+          if (mounted || recovering || !root) return
+          const attempts = readAttempts()
+          if (automatic && attempts >= 1) {
+            showFailure()
+            return
+          }
+
+          recovering = true
+          const label = root.querySelector('b')
+          if (label) label.textContent = '正在修复主题缓存'
+          writeAttempts(attempts + 1)
+
+          try {
+            await withTimeout(clearThemeRuntime(), 3500)
+          } catch {
+            // Reload once even when browser cache APIs are unavailable.
+          }
+
+          const url = new URL(location.href)
+          url.searchParams.set(RECOVERY_PARAM, Date.now().toString(36))
+          location.replace(url)
+        }
+
+        window.addEventListener(
+          'komari-observatory:app-mounted',
+          () => {
+            mounted = true
+            try {
+              sessionStorage.removeItem(RECOVERY_KEY)
+            } catch {
+              // Ignore unavailable session storage.
+            }
+            const url = new URL(location.href)
+            if (url.searchParams.has(RECOVERY_PARAM)) {
+              url.searchParams.delete(RECOVERY_PARAM)
+              history.replaceState(history.state, '', `${url.pathname}${url.search}${url.hash}`)
+            }
+          },
+          { once: true },
+        )
+
+        window.addEventListener(
+          'error',
+          (event) => {
+            if (
+              !mounted &&
+              (event.target instanceof HTMLScriptElement ||
+                event.target instanceof HTMLLinkElement ||
+                event instanceof ErrorEvent)
+            )
+              setTimeout(() => recover(true), 0)
+          },
+          true,
+        )
+        window.addEventListener('unhandledrejection', () => {
+          if (!mounted) setTimeout(() => recover(true), 0)
+        })
+        setTimeout(() => recover(true), 10000)
+      })()
+    </script>
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>

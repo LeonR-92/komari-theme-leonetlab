@@ -3,6 +3,37 @@
 
 @custom-variant dark (&:where(.dark, .dark *));
 
+::view-transition-old(root),
+::view-transition-new(root) {
+  animation: none;
+  mix-blend-mode: normal;
+}
+
+html.lnl-theme-transitioning::view-transition-old(root) {
+  z-index: 1;
+}
+
+html.lnl-theme-transitioning::view-transition-new(root) {
+  z-index: 2;
+  animation: lnl-theme-reveal 680ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+html.lnl-theme-transitioning body,
+html.lnl-theme-transitioning body *,
+html.lnl-theme-transitioning body *::before,
+html.lnl-theme-transitioning body *::after {
+  transition: none !important;
+}
+
+@keyframes lnl-theme-reveal {
+  from {
+    clip-path: circle(0 at var(--theme-x, 100%) var(--theme-y, 0%));
+  }
+  to {
+    clip-path: circle(var(--theme-radius, 150vmax) at var(--theme-x, 100%) var(--theme-y, 0%));
+  }
+}
+
 :root {
   --background: oklch(0.975 0.004 164);
   --foreground: oklch(0.2 0.014 164);
@@ -266,14 +297,10 @@ a {
 }
 
 .lnl-reveal-header,
-.lnl-intro-reveal .lnl-dashboard-head,
 .lnl-intro-reveal .lnl-summary-metrics,
 .lnl-intro-reveal .node-info {
   animation: lnl-section-rise 0.45s cubic-bezier(0.16, 1, 0.3, 1) both;
   will-change: opacity, transform;
-}
-.lnl-intro-reveal .lnl-dashboard-head {
-  animation-delay: 10ms;
 }
 .lnl-intro-reveal .lnl-summary-metrics {
   animation-delay: 100ms;

@@ -9,9 +9,12 @@ import './styles/main.css'
 
 window.$message = message
 
-setupIconify().catch((err) => {
+try {
+  setupIconify()
+}
+catch (err) {
   console.warn('[main] iconify init failed', err)
-})
+}
 
 const pinia = createPinia()
 const app = createApp(App)
@@ -20,6 +23,11 @@ app.use(pinia)
 app.use(router)
 
 app.mount('#app')
+void router.isReady()
+  .catch(() => {
+    // The fallback has already been replaced; keep cache recovery state bounded.
+  })
+  .then(() => window.dispatchEvent(new CustomEvent('komari-observatory:app-mounted')))
 
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {

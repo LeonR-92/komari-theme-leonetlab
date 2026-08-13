@@ -20,7 +20,7 @@ const { motionReduced } = useMotionPreference()
 // again. The value still keeps the animation to once per browser session.
 // 1.2.8 重构为单 cobe 实例交接（Teleport 迁移同一 DOM，WebGL 上下文不重建），
 // 让老用户重放重构后的 intro。
-const INTRO_SESSION_KEY = 'komari-observatory:intro:1.4.2-fix1'
+const INTRO_SESSION_KEY = `komari-observatory:intro:${__BUILD_VERSION__}`
 // Public settings normally arrive immediately. A broken proxy or cold PWA must
 // never leave #app empty for the API client's full timeout, so mount the safe
 // default shell after a bounded decision window. Late settings still hydrate
@@ -210,10 +210,11 @@ async function startGlobeFlight(source: FlightRect, target: FlightRect) {
   }
   globePhase.value = 'flight'
   await nextTick()
-  // Flush the source geometry once after the flight class is active. This
-  // establishes a real transition start without adding one or two blank rAF
-  // waits; the globe remains painted in the persistent layer throughout.
-  document.querySelector('#lnl-globe-flight-shell')?.getBoundingClientRect()
+  // The first callback runs before paint, so wait for a second frame before
+  // writing the destination. This guarantees that the source geometry reaches
+  // the compositor without restoring the old synchronous layout flush.
+  await nextFrame()
+  await nextFrame()
   if (globePhase.value !== 'flight' || !flightSourceRect || !flightTargetRect)
     return
   flightShellStyle.value = {

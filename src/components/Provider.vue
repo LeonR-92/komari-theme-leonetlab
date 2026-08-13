@@ -23,14 +23,12 @@ watch(
 )
 
 watch(
-  [() => appStore.brandName, () => appStore.brandLogoUrl],
-  ([name, logoUrl]) => {
+  () => appStore.brandName,
+  (name) => {
     document.querySelector<HTMLMetaElement>('meta[name="application-name"]')
       ?.setAttribute('content', name)
     document.querySelector<HTMLMetaElement>('meta[name="apple-mobile-web-app-title"]')
       ?.setAttribute('content', name)
-    document.querySelector<HTMLLinkElement>('link[rel="apple-touch-icon"]')
-      ?.setAttribute('href', logoUrl)
   },
   { immediate: true },
 )
