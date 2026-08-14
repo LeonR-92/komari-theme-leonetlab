@@ -100,7 +100,7 @@ function updatePeriod(value: unknown) {
 
 .lnl-billing-trigger.is-card > svg:first-child {
   grid-column: 1;
-  grid-row: 1 / 3;
+  grid-row: 1;
   color: var(--lnl-green);
 }
 
@@ -112,11 +112,11 @@ function updatePeriod(value: unknown) {
 }
 
 .lnl-billing-trigger.is-card > strong {
-  grid-column: 2;
+  grid-column: 1 / 3;
   grid-row: 2;
   min-width: 0;
   overflow: hidden;
-  font-size: 11px;
+  font-size: 10px;
   font-weight: 700;
   text-overflow: ellipsis;
   white-space: nowrap;

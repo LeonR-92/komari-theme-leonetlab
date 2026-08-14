@@ -209,7 +209,7 @@ test('keeps native cursor mode free of pointer tracking listeners', async ({ pag
     }) as typeof window.removeEventListener
   })
   await page.goto('/')
-  await expect(page.getByText('Tokyo Fixture', { exact: true })).toBeVisible()
+  await expect(page.getByText('Tokyo Fixture', { exact: true }).first()).toBeVisible()
   const baseline = await page.evaluate(() => ({
     ...(window as Window & { __cursorListenerCounts: { added: number, removed: number } }).__cursorListenerCounts,
     customActive: document.documentElement.classList.contains('lnl-custom-cursor-active'),
@@ -445,7 +445,7 @@ test('does not flash false empty node cards while initial nodes are loading', as
   await page.goto('/')
   await expect(page.locator('.lnl-node-skeleton-card')).toHaveCount(0)
   await expect(page.locator('.lnl-node-loading-indicator')).toBeVisible()
-  await expect(page.getByText('Tokyo Fixture', { exact: true })).toBeVisible()
+  await expect(page.getByText('Tokyo Fixture', { exact: true }).first()).toBeVisible()
   await expect(page.locator('.lnl-node-loading-indicator')).toHaveCount(0)
 })
 

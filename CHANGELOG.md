@@ -4,7 +4,7 @@
 
 - Corrected finance semantics so homepage and detail summaries use the payment amount entered in Komari instead of depreciating it into a misleading remaining value.
 - Renamed source-price tooltips to “backend payment” and added daily-average spending alongside payment total and monthly-average spending.
-- Simplified the billing-period menu to direct monthly, quarterly and yearly choices, and rebuilt the compact trigger grid so its chevron stays centered in a dedicated control slot.
+- Simplified the billing-period menu to direct monthly, quarterly and yearly choices, and rebuilt the compact trigger grid so its chevron stays centered while three-digit amounts remain readable.
 - Made the first-visit cover, theme fallback texture, management handoff and the existing COBE globe inherit the active palette without recreating the WebGL instance.
 - Added focused regression coverage for billing-menu readability, chevron geometry, intro palette inheritance, in-place globe recoloring and managed appearance defaults.
 - Added a unified appearance panel with visitor-persisted brightness, four observatory palettes, native/halo cursor selection and restoration to managed site defaults.
