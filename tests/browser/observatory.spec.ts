@@ -236,6 +236,10 @@ test('synchronizes and persists the billing display period', async ({ page }, te
   await page.getByRole('menuitemradio', { name: /季付/ }).click()
   await expect(triggers).toContainText(['季付', '季付', '季付', '季付'])
   expect(await page.evaluate(() => localStorage.getItem('komari-observatory:billing-period'))).toContain('quarterly')
+  // The chevron rotates back from 180deg while the menu closes; measuring bounds
+  // mid-transition reads the inflated rotated box and flakes on CI. Wait for the
+  // rotation to settle before asserting static trigger geometry.
+  await expect(triggers.first().locator('.lnl-billing-chevron')).toHaveCSS('transform', 'none')
   const triggerGeometry = await triggers.evaluateAll(elements => elements.map((element) => {
     const triggerRect = element.getBoundingClientRect()
     const value = element.querySelector('strong')
