@@ -32,7 +32,7 @@ test('recovers once when the desktop entry asset is replaced by stale HTML', asy
   })
 
   await page.goto('/')
-  await expect(page.getByText('Tokyo Fixture', { exact: true })).toBeVisible({ timeout: 15_000 })
+  await expect(page.getByText('Tokyo Fixture', { exact: true }).first()).toBeVisible({ timeout: 15_000 })
   expect(entryRequests).toBeGreaterThanOrEqual(2)
   await expect(page.locator('#lnl-boot-fallback')).toHaveCount(0)
   await expect.poll(() => page.evaluate(() => ({
@@ -236,12 +236,20 @@ test('synchronizes and persists the billing display period', async ({ page }, te
   await page.getByRole('menuitemradio', { name: /季付/ }).click()
   await expect(triggers).toContainText(['季付', '季付', '季付', '季付'])
   expect(await page.evaluate(() => localStorage.getItem('komari-observatory:billing-period'))).toContain('quarterly')
-  const triggerGeometry = await triggers.evaluateAll(elements => elements.map(element => ({
-    clientWidth: element.clientWidth,
-    scrollWidth: element.scrollWidth,
-    text: element.textContent?.replace(/\s+/g, ' ').trim(),
-  })))
-  expect(triggerGeometry.every(item => item.scrollWidth <= item.clientWidth + 1), JSON.stringify(triggerGeometry)).toBe(true)
+  const triggerGeometry = await triggers.evaluateAll(elements => elements.map((element) => {
+    const triggerRect = element.getBoundingClientRect()
+    const value = element.querySelector('strong')
+    const visibleChildren = [...element.children].filter(child => getComputedStyle(child).display !== 'none')
+    return {
+      text: element.textContent?.replace(/\s+/g, ' ').trim(),
+      valueFits: Boolean(value && value.scrollWidth <= value.clientWidth + 1),
+      childrenContained: visibleChildren.every((child) => {
+        const rect = child.getBoundingClientRect()
+        return rect.left >= triggerRect.left - 0.5 && rect.right <= triggerRect.right + 0.5
+      }),
+    }
+  }))
+  expect(triggerGeometry.every(item => item.valueFits && item.childrenContained), JSON.stringify(triggerGeometry)).toBe(true)
   const chevronCenterError = await triggers.first().evaluate((element) => {
     const triggerRect = element.getBoundingClientRect()
     const chevronRect = element.querySelector('.lnl-billing-chevron')?.getBoundingClientRect()

@@ -165,6 +165,7 @@ function updatePeriod(value: unknown) {
 .lnl-billing-chevron {
   align-self: center;
   justify-self: end;
+  box-sizing: border-box;
   width: 16px;
   height: 16px;
   padding: 3px;
