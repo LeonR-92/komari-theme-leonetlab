@@ -8,13 +8,14 @@
 
 A responsive observatory theme for [Komari](https://github.com/komari-monitor/komari), derived from [Komari Emerald](https://github.com/Tokinx/komari-theme-emerald). It combines live node telemetry, a draggable COBE globe, Ping analytics, adaptive card and list views, light/dark modes, and installable PWA support.
 
-Latest release: `1.4.3` · Primary target: Komari `1.4.3`
+Latest release: `1.4.3-fix1` · Primary target: Komari `1.4.3`
 
 ## Features
 
 - Responsive node cards and lists with resources, traffic, uptime, billing, expiry, and Ping quality
 - Draggable COBE globe, regional telemetry, detailed charts, and optional GPU/process/network metrics
-- First-visit globe handoff, visitor scan, search reordering, and circular light/dark transitions
+- First-visit globe handoff, visitor scan, search reordering, and circular appearance transitions
+- Four light/dark color palettes, selectable native/halo cursor, and persistent monthly/quarterly/yearly billing display
 - Managed branding and display settings, keyboard/touch support, reduced motion, and installable PWA
 - Legacy `Client[]` and modern UUID-keyed node response compatibility
 
@@ -26,7 +27,7 @@ In **Komari → Settings → Theme management**, add this repository:
 https://github.com/LeonR-92/komari-theme-leonetlab
 ```
 
-Komari resolves the latest GitHub Release automatically. You can also upload `komari-theme-leonetlab-build-v1.4.3.zip` manually, then select **Komari Observatory**.
+Komari resolves the latest GitHub Release automatically. You can also upload `komari-theme-leonetlab-build-v1.4.3-fix1.zip` manually, then select **Komari Observatory**.
 
 ## Configuration and privacy
 
@@ -58,7 +59,7 @@ npm audit --audit-level=high
 npm audit --omit=dev --audit-level=high
 ```
 
-The build creates `komari-theme-leonetlab-build-v1.4.3.zip` with only the root manifest, root preview, and compiled `dist/` tree.
+The release build creates `komari-theme-leonetlab-build-v1.4.3-fix1.zip` with only the root manifest, root preview, and compiled `dist/` tree.
 
 ## Theme Market
 

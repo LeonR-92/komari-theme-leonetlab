@@ -8,6 +8,9 @@ import { normalizeCurrency } from '@/utils/financeHelper'
 import { useVisibleMinuteClock } from '@/utils/visibleMinuteClock'
 
 export type ThemeMode = 'system' | 'light' | 'dark'
+export type ColorPalette = 'emerald' | 'aurora' | 'cobalt' | 'amber'
+export type CursorStyle = 'halo' | 'native'
+export type BillingDisplayPeriod = 'monthly' | 'quarterly' | 'yearly'
 export type NodeCardDensity = 'comfortable' | 'compact'
 type Lang = 'zh-CN' | 'en-US'
 type NodeViewMode = 'card' | 'list'
@@ -25,9 +28,52 @@ const BYTE_DECIMALS: ByteDecimalsConfig = {
 
 const THEME_MODE_STORAGE_KEY = 'appearance'
 const THEME_MODE_OVERRIDE_KEY = 'leonetlab:appearance:user-override'
+const COLOR_PALETTE_STORAGE_KEY = 'komari-observatory:palette'
+const COLOR_PALETTE_OVERRIDE_KEY = 'komari-observatory:palette:override'
+const CURSOR_STYLE_STORAGE_KEY = 'komari-observatory:cursor-style'
+const CURSOR_STYLE_OVERRIDE_KEY = 'komari-observatory:cursor-style:override'
+const BILLING_PERIOD_STORAGE_KEY = 'komari-observatory:billing-period'
+
+export const PALETTE_THEME_COLORS: Record<ColorPalette, Record<'light' | 'dark', string>> = {
+  emerald: { light: '#edf7f1', dark: '#04100d' },
+  aurora: { light: '#edf8f8', dark: '#061013' },
+  cobalt: { light: '#f1f5fb', dark: '#070d18' },
+  amber: { light: '#fbf6eb', dark: '#151007' },
+}
+
+export const PALETTE_ACCENT_COLORS: Record<ColorPalette, Record<'light' | 'dark', { primary: string, secondary: string }>> = {
+  emerald: {
+    light: { primary: '#167a56', secondary: '#4a9eaa' },
+    dark: { primary: '#74e6b2', secondary: '#75c9d4' },
+  },
+  aurora: {
+    light: { primary: '#147f87', secondary: '#347fa5' },
+    dark: { primary: '#67e1e7', secondary: '#82baff' },
+  },
+  cobalt: {
+    light: { primary: '#315ea8', secondary: '#397ca8' },
+    dark: { primary: '#82aaff', secondary: '#72d1e7' },
+  },
+  amber: {
+    light: { primary: '#9a6515', secondary: '#8b7045' },
+    dark: { primary: '#f2bd62', secondary: '#d8a779' },
+  },
+}
 
 function isValidThemeMode(value: unknown): value is ThemeMode {
   return value === 'system' || value === 'light' || value === 'dark'
+}
+
+function isValidColorPalette(value: unknown): value is ColorPalette {
+  return value === 'emerald' || value === 'aurora' || value === 'cobalt' || value === 'amber'
+}
+
+function isValidCursorStyle(value: unknown): value is CursorStyle {
+  return value === 'halo' || value === 'native'
+}
+
+function isValidBillingDisplayPeriod(value: unknown): value is BillingDisplayPeriod {
+  return value === 'monthly' || value === 'quarterly' || value === 'yearly'
 }
 
 function getBeijingHour(timestamp = Date.now()): number {
@@ -52,6 +98,11 @@ const useAppStore = defineStore('app', () => {
   // 手动选择过主题。单独的 override 标记只由页头切换操作写入。
   const themeMode = useStorageAsync<ThemeMode>(THEME_MODE_STORAGE_KEY, 'system', localStorage)
   const hasThemeModeOverride = ref(localStorage.getItem(THEME_MODE_OVERRIDE_KEY) === '1')
+  const storedColorPalette = useStorageAsync<ColorPalette | null>(COLOR_PALETTE_STORAGE_KEY, null, localStorage)
+  const hasColorPaletteOverride = ref(localStorage.getItem(COLOR_PALETTE_OVERRIDE_KEY) === '1')
+  const storedCursorStyle = useStorageAsync<CursorStyle | null>(CURSOR_STYLE_STORAGE_KEY, null, localStorage)
+  const hasCursorStyleOverride = ref(localStorage.getItem(CURSOR_STYLE_OVERRIDE_KEY) === '1')
+  const storedBillingDisplayPeriod = useStorageAsync<BillingDisplayPeriod>(BILLING_PERIOD_STORAGE_KEY, 'monthly', localStorage)
   const lang = useStorageAsync<Lang>('language', 'zh-CN', localStorage)
   const publicSettings = ref<PublicSettings>()
   const readThemeString = (key: string, fallback = ''): string => {
@@ -346,10 +397,42 @@ const useAppStore = defineStore('app', () => {
     return 'system'
   })
 
+  const defaultColorPalette = computed<ColorPalette>(() => {
+    const palette = publicSettings.value?.theme_settings?.defaultColorPalette
+    return isValidColorPalette(palette) ? palette : 'emerald'
+  })
+
+  const defaultCursorStyle = computed<CursorStyle>(() => {
+    const style = publicSettings.value?.theme_settings?.defaultCursorStyle
+    return isValidCursorStyle(style) ? style : 'halo'
+  })
+
+  const colorPalette = computed<ColorPalette>(() => {
+    if (hasColorPaletteOverride.value && isValidColorPalette(storedColorPalette.value))
+      return storedColorPalette.value
+    return defaultColorPalette.value
+  })
+
+  const cursorStyle = computed<CursorStyle>(() => {
+    if (hasCursorStyleOverride.value && isValidCursorStyle(storedCursorStyle.value))
+      return storedCursorStyle.value
+    return defaultCursorStyle.value
+  })
+
+  const billingDisplayPeriod = computed<BillingDisplayPeriod>(() => {
+    return isValidBillingDisplayPeriod(storedBillingDisplayPeriod.value)
+      ? storedBillingDisplayPeriod.value
+      : 'monthly'
+  })
+
   watch(publicSettings, (settings) => {
     if (settings && !hasThemeModeOverride.value) {
       themeMode.value = defaultThemeMode.value
     }
+    if (settings && !hasColorPaletteOverride.value)
+      storedColorPalette.value = defaultColorPalette.value
+    if (settings && !hasCursorStyleOverride.value)
+      storedCursorStyle.value = defaultCursorStyle.value
   }, { immediate: true })
 
   watch(themeMode, (mode) => {
@@ -402,6 +485,38 @@ const useAppStore = defineStore('app', () => {
     themeMode.value = nextMode[currentMode]
   }
 
+  function updateColorPalette(palette: ColorPalette) {
+    if (!isValidColorPalette(palette))
+      return
+    hasColorPaletteOverride.value = true
+    localStorage.setItem(COLOR_PALETTE_OVERRIDE_KEY, '1')
+    storedColorPalette.value = palette
+  }
+
+  function updateCursorStyle(style: CursorStyle) {
+    if (!isValidCursorStyle(style))
+      return
+    hasCursorStyleOverride.value = true
+    localStorage.setItem(CURSOR_STYLE_OVERRIDE_KEY, '1')
+    storedCursorStyle.value = style
+  }
+
+  function updateBillingDisplayPeriod(period: BillingDisplayPeriod) {
+    storedBillingDisplayPeriod.value = isValidBillingDisplayPeriod(period) ? period : 'monthly'
+  }
+
+  function restoreAppearanceDefaults() {
+    hasThemeModeOverride.value = false
+    hasColorPaletteOverride.value = false
+    hasCursorStyleOverride.value = false
+    localStorage.removeItem(THEME_MODE_OVERRIDE_KEY)
+    localStorage.removeItem(COLOR_PALETTE_OVERRIDE_KEY)
+    localStorage.removeItem(CURSOR_STYLE_OVERRIDE_KEY)
+    themeMode.value = defaultThemeMode.value
+    storedColorPalette.value = defaultColorPalette.value
+    storedCursorStyle.value = defaultCursorStyle.value
+  }
+
   function updateLoginState(loggedIn: boolean) {
     isLoggedIn.value = loggedIn
   }
@@ -412,6 +527,13 @@ const useAppStore = defineStore('app', () => {
     themeMode,
     hasThemeModeOverride,
     defaultThemeMode,
+    colorPalette,
+    defaultColorPalette,
+    hasColorPaletteOverride,
+    cursorStyle,
+    defaultCursorStyle,
+    hasCursorStyleOverride,
+    billingDisplayPeriod,
     isDark,
     resolvedThemeMode,
     lang,
@@ -466,6 +588,10 @@ const useAppStore = defineStore('app', () => {
     connectionError,
     homeScrollPosition,
     updateThemeMode,
+    updateColorPalette,
+    updateCursorStyle,
+    updateBillingDisplayPeriod,
+    restoreAppearanceDefaults,
     resolveThemeMode,
     updateLoginState,
   }

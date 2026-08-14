@@ -1,13 +1,14 @@
 import assert from 'node:assert/strict'
 import { detectVisitorClient } from '../src/utils/clientDetection.ts'
 import {
-  calculateRemainingValueCNY,
+  calculateDailyCostCNY,
   calculateTotalDailyCostCNY,
   calculateTotalMonthlyAverageCostCNY,
   calculateTotalValueCNY,
   calculateValueCNY,
   DEFAULT_EXCHANGE_RATES,
   formatNodeMonthlyCost,
+  formatNodeRecurringCost,
 } from '../src/utils/financeHelper.ts'
 import { isMetricCapabilityUnavailable } from '../src/utils/metricCompatibility.ts'
 import { normalizeUuidCollection } from '../src/utils/nodeResponse.ts'
@@ -165,17 +166,18 @@ const paidNode = { price: 30, billing_cycle: 30, currency: 'CNY', tags: 'product
 const freeNode = { price: 300, billing_cycle: 30, currency: 'CNY', tags: 'edge; 白嫖 ;test' }
 assert.equal(calculateTotalValueCNY([paidNode, freeNode], DEFAULT_EXCHANGE_RATES), 30)
 assert.equal(calculateTotalMonthlyAverageCostCNY([paidNode, freeNode], DEFAULT_EXCHANGE_RATES), 30)
+assert.equal(calculateValueCNY({ ...paidNode, expired_at: '2026-08-04T00:00:00Z' }, DEFAULT_EXCHANGE_RATES), 30)
 
-const now = new Date('2026-07-20T00:00:00Z')
-const expiringNode = { ...paidNode, expired_at: '2026-08-04T00:00:00Z' }
-assert.equal(calculateRemainingValueCNY(expiringNode, DEFAULT_EXCHANGE_RATES, now), 15)
+assert.equal(calculateDailyCostCNY(paidNode, DEFAULT_EXCHANGE_RATES), 1)
 
 assert.equal(formatNodeMonthlyCost({ price: -1, billing_cycle: 30, currency: 'CNY' }, 'CNY', DEFAULT_EXCHANGE_RATES).text, '免费')
 assert.equal(formatNodeMonthlyCost({ price: 0, billing_cycle: 30, currency: 'CNY' }, 'CNY', DEFAULT_EXCHANGE_RATES).text, '未填写')
-assert.equal(formatNodeMonthlyCost({ price: 36, billing_cycle: 30, currency: 'CNY' }, 'CNY', DEFAULT_EXCHANGE_RATES).text, 'CNY 36.00')
+assert.equal(formatNodeMonthlyCost({ price: 36, billing_cycle: 30, currency: 'CNY' }, 'CNY', DEFAULT_EXCHANGE_RATES).text, '¥36.00')
 assert.equal(formatNodeMonthlyCost({ price: 12, billing_cycle: 0, currency: 'CNY' }, 'CNY', DEFAULT_EXCHANGE_RATES).text, '—')
 assert.equal(formatNodeMonthlyCost({ price: 30, billing_cycle: 30, currency: 'UNKNOWN' }, 'CNY', DEFAULT_EXCHANGE_RATES).text, 'UNKNOWN 30.00')
-assert.equal(formatNodeMonthlyCost({ price: 14.799, billing_cycle: 30, currency: 'USD' }, 'CNY', usdRates, true).text, 'CNY 100.00')
-assert.equal(formatNodeMonthlyCost({ price: 14.799, billing_cycle: 30, currency: 'USD' }, 'CNY', usdRates, false).text, 'USD 14.80')
+assert.equal(formatNodeMonthlyCost({ price: 14.799, billing_cycle: 30, currency: 'USD' }, 'CNY', usdRates, true).text, '¥100.00')
+assert.equal(formatNodeMonthlyCost({ price: 14.799, billing_cycle: 30, currency: 'USD' }, 'CNY', usdRates, false).text, '$14.80')
+assert.equal(formatNodeRecurringCost({ price: 36, billing_cycle: 30, currency: 'CNY' }, 'CNY', DEFAULT_EXCHANGE_RATES, 'quarterly').text, '¥108')
+assert.equal(formatNodeRecurringCost({ price: 36, billing_cycle: 30, currency: 'CNY' }, 'CNY', DEFAULT_EXCHANGE_RATES, 'yearly').text, '¥432')
 
 console.log('Komari 1.2.5-fix1/1.2.5-fix2/1.2.7 node, record, and Ping metric compatibility passed.')

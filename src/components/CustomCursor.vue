@@ -14,6 +14,7 @@ const grabbing = ref(false)
 let finePointerQuery: MediaQueryList | null = null
 let reducedMotionQuery: MediaQueryList | null = null
 let frame = 0
+let pointerListenersBound = false
 let lastFrameAt = 0
 let initialized = false
 let targetX = -100
@@ -83,14 +84,21 @@ function resetCursorState() {
 }
 
 function syncAvailability() {
-  enabled.value = Boolean(
-    finePointerQuery?.matches
+  const shouldEnable = Boolean(
+    appStore.cursorStyle === 'halo'
+    && finePointerQuery?.matches
     && !reducedMotionQuery?.matches
     && !appStore.disablePageAnimation,
   )
+  enabled.value = shouldEnable
   document.documentElement.classList.toggle('lnl-custom-cursor-active', enabled.value)
-  if (!enabled.value)
+  if (enabled.value) {
+    bindPointerListeners()
+  }
+  else {
+    unbindPointerListeners()
     resetCursorState()
+  }
 }
 
 function handlePointerMove(event: PointerEvent) {
@@ -150,11 +158,10 @@ function unbindMediaQuery(query: MediaQueryList | null, listener: () => void) {
   query?.removeEventListener?.('change', listener)
 }
 
-onMounted(() => {
-  finePointerQuery = window.matchMedia('(hover: hover) and (pointer: fine)')
-  reducedMotionQuery = window.matchMedia('(prefers-reduced-motion: reduce)')
-  bindMediaQuery(finePointerQuery, syncAvailability)
-  bindMediaQuery(reducedMotionQuery, syncAvailability)
+function bindPointerListeners() {
+  if (pointerListenersBound)
+    return
+  pointerListenersBound = true
   window.addEventListener('pointermove', handlePointerMove, { passive: true })
   window.addEventListener('pointerdown', handlePointerDown, { passive: true })
   window.addEventListener('pointerup', handlePointerUp, { passive: true })
@@ -163,15 +170,12 @@ onMounted(() => {
   document.addEventListener('mouseleave', resetCursorState)
   document.addEventListener('visibilitychange', resetCursorState)
   document.addEventListener('selectstart', handleSelectStart)
-  syncAvailability()
-})
+}
 
-watch(() => appStore.disablePageAnimation, syncAvailability)
-
-onUnmounted(() => {
-  stopFrame()
-  unbindMediaQuery(finePointerQuery, syncAvailability)
-  unbindMediaQuery(reducedMotionQuery, syncAvailability)
+function unbindPointerListeners() {
+  if (!pointerListenersBound)
+    return
+  pointerListenersBound = false
   window.removeEventListener('pointermove', handlePointerMove)
   window.removeEventListener('pointerdown', handlePointerDown)
   window.removeEventListener('pointerup', handlePointerUp)
@@ -180,6 +184,23 @@ onUnmounted(() => {
   document.removeEventListener('mouseleave', resetCursorState)
   document.removeEventListener('visibilitychange', resetCursorState)
   document.removeEventListener('selectstart', handleSelectStart)
+}
+
+onMounted(() => {
+  finePointerQuery = window.matchMedia('(hover: hover) and (pointer: fine)')
+  reducedMotionQuery = window.matchMedia('(prefers-reduced-motion: reduce)')
+  bindMediaQuery(finePointerQuery, syncAvailability)
+  bindMediaQuery(reducedMotionQuery, syncAvailability)
+  syncAvailability()
+})
+
+watch(() => [appStore.disablePageAnimation, appStore.cursorStyle] as const, syncAvailability)
+
+onUnmounted(() => {
+  stopFrame()
+  unbindMediaQuery(finePointerQuery, syncAvailability)
+  unbindMediaQuery(reducedMotionQuery, syncAvailability)
+  unbindPointerListeners()
   document.documentElement.classList.remove('lnl-custom-cursor-active', 'lnl-text-selecting')
 })
 </script>

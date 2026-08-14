@@ -1,5 +1,17 @@
 # Changelog
 
+## 1.4.3-fix1 — 2026-08-14
+
+- Corrected finance semantics so homepage and detail summaries use the payment amount entered in Komari instead of depreciating it into a misleading remaining value.
+- Renamed source-price tooltips to “backend payment” and added daily-average spending alongside payment total and monthly-average spending.
+- Simplified the billing-period menu to direct monthly, quarterly and yearly choices, and rebuilt the compact trigger grid so its chevron stays centered in a dedicated control slot.
+- Made the first-visit cover, theme fallback texture, management handoff and the existing COBE globe inherit the active palette without recreating the WebGL instance.
+- Added focused regression coverage for billing-menu readability, chevron geometry, intro palette inheritance, in-place globe recoloring and managed appearance defaults.
+- Added a unified appearance panel with visitor-persisted brightness, four observatory palettes, native/halo cursor selection and restoration to managed site defaults.
+- Added synchronized monthly, quarterly and yearly billing display with compact unambiguous currency symbols, precise tooltips and a portal-based keyboard menu.
+- Fixed the Ping dialog transform so every animation frame remains centered, and rebuilt the mobile Ping workspace around readable horizontal probe cards and tighter chart spacing.
+- Kept semantic health colors, legacy node normalization, controlled Ping fallback and Service Worker data-cache exclusions unchanged.
+
 ## 1.4.3 — 2026-08-13
 
 - Replaced the full-page color interpolation with a single 680 ms circular View Transition reveal from the top-right theme control.

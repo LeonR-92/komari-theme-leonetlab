@@ -795,7 +795,7 @@ const globeFlagThemeAuditExpression = `new Promise((resolve) => {
     const canvas = document.querySelector('.node-earth-globe:not(.is-intro) canvas');
     const globeContainer = document.querySelector('.node-earth-globe:not(.is-intro)');
     const overlays = [...document.querySelectorAll('.node-earth-globe:not(.is-intro) .lnl-earth-overlay')];
-    const themeButton = [...document.querySelectorAll('button')].find(button => /模式|北京时间/.test(button.getAttribute('aria-label') || ''));
+    const themeButton = document.querySelector('[data-action="toggleAppearance"]');
     const flagImagesReady = overlays.length === 4
       && overlays.every(overlay => {
         const image = overlay.querySelector('img');
@@ -823,6 +823,7 @@ const globeFlagThemeAuditExpression = `new Promise((resolve) => {
       };
       const samples = [sample()];
       themeButton.click();
+      requestAnimationFrame(() => document.querySelector('[data-theme-mode="dark"]')?.click());
       const start = performance.now();
       const capture = () => {
         samples.push(sample());
@@ -1470,6 +1471,8 @@ const mobileProbeMatrixAuditExpression = `new Promise((resolve) => {
             clientWidth: list.clientWidth,
             scrollWidth: list.scrollWidth,
             rows: new Set(cards.map(card => Math.round(card.getBoundingClientRect().top))).size,
+            cardWidths: cards.map(card => card.getBoundingClientRect().width),
+            allStatsVisible: cards.every(card => /LOSS/.test(card.textContent || '') && /JIT/.test(card.textContent || '')),
             contained: cards.every((card) => {
               const rect = card.getBoundingClientRect();
               return rect.left >= listRect.left - 0.5 && rect.right <= listRect.right + 0.5;
@@ -1845,7 +1848,7 @@ async function auditGlobeFlagsAcrossThemeChange() {
     780,
     globeFlagThemeAuditExpression,
     undefined,
-    `sessionStorage.setItem('komari-observatory:intro:1.4.3', 'seen'); localStorage.setItem('appearance', 'light'); localStorage.setItem('leonetlab:appearance:user-override', '1');`,
+    `sessionStorage.setItem('komari-observatory:intro:1.4.3-fix1', 'seen'); localStorage.setItem('appearance', 'light'); localStorage.setItem('leonetlab:appearance:user-override', '1');`,
   )
   reportBrowserAudit('globe-flags-theme-change', result)
   assert.equal(result?.initialCount, 4, `Expected four globe flag overlays: ${JSON.stringify(result)}`)
@@ -2037,9 +2040,10 @@ async function auditMobileProbeMatrix() {
   const result = await runInteractivePage('mobile-probe-matrix', 390, 844, mobileProbeMatrixAuditExpression)
   reportBrowserAudit('mobile-probe-matrix', result)
   assert.equal(result?.count, 3, `Expected three mobile probes: ${JSON.stringify(result)}`)
-  assert.ok(result?.scrollWidth <= result?.clientWidth + 1, `Mobile probes still require horizontal scrolling: ${JSON.stringify(result)}`)
-  assert.equal(result?.rows, 1, `Three probes should fit in one mobile row: ${JSON.stringify(result)}`)
-  assert.equal(result?.contained, true, `Mobile probe cards escaped their matrix: ${JSON.stringify(result)}`)
+  assert.ok(result?.scrollWidth > result?.clientWidth + 1, `Mobile probes did not expose the intended horizontal rail: ${JSON.stringify(result)}`)
+  assert.equal(result?.rows, 1, `Mobile probes should remain on one horizontal rail: ${JSON.stringify(result)}`)
+  assert.equal(result?.cardWidths?.every(width => width >= 190 && width <= 260), true, `Mobile probe width escaped the readable range: ${JSON.stringify(result)}`)
+  assert.equal(result?.allStatsVisible, true, `Mobile probe cards lost LOSS or JIT data: ${JSON.stringify(result)}`)
 }
 
 async function auditVisitorCollapse() {

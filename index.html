@@ -18,8 +18,19 @@
     <script>
       ;(() => {
         try {
-          const stored = localStorage.getItem('appearance')
-          const mode = stored ? stored.replace(/^"|"$/g, '') : 'system'
+          const readStored = (key, fallback) => {
+            const stored = localStorage.getItem(key)
+            return stored ? stored.replace(/^"|"$/g, '') : fallback
+          }
+          const mode = readStored('appearance', 'system')
+          const paletteValue = readStored('komari-observatory:palette', 'emerald')
+          const palette = ['emerald', 'aurora', 'cobalt', 'amber'].includes(paletteValue) ? paletteValue : 'emerald'
+          const colors = {
+            emerald: { light: '#edf7f1', dark: '#04100d' },
+            aurora: { light: '#edf8f8', dark: '#061013' },
+            cobalt: { light: '#f1f5fb', dark: '#070d18' },
+            amber: { light: '#fbf6eb', dark: '#151007' },
+          }
           const beijingHour = Number(
             new Intl.DateTimeFormat('en-US', {
               timeZone: 'Asia/Shanghai',
@@ -31,8 +42,11 @@
           )
           const dark = mode === 'dark' || (mode !== 'light' && (beijingHour < 7 || beijingHour >= 19))
           document.documentElement.classList.toggle('dark', dark)
+          document.documentElement.dataset.palette = palette
           document.documentElement.style.colorScheme = dark ? 'dark' : 'light'
-          document.querySelector('meta[name="theme-color"]')?.setAttribute('content', dark ? '#04100d' : '#edf7f1')
+          document
+            .querySelector('meta[name="theme-color"]')
+            ?.setAttribute('content', colors[palette][dark ? 'dark' : 'light'])
         } catch {}
       })()
     </script>

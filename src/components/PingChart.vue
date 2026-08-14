@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { Icon } from '@iconify/vue'
+import { useMediaQuery } from '@vueuse/core'
 import dayjs from 'dayjs'
 import { computed, onMounted, onUnmounted, ref, shallowRef, watch } from 'vue'
 import VChart from 'vue-echarts'
@@ -27,6 +28,7 @@ const isDark = computed(() => appStore.isDark)
 const motionEnabled = computed(() => !motionReduced.value)
 // ECharts 动画在移动端关闭：图表动画是持续 GPU/CPU 负载，移动端只保留 CSS 入场。
 const chartMotionEnabled = computed(() => motionEnabled.value && !isMobileLike)
+const narrowViewport = useMediaQuery('(max-width: 640px)')
 // 使用共享的 RPC 实例，避免重复创建连接
 const rpc = getSharedRpc()
 
@@ -227,7 +229,10 @@ const userClearedSelection = ref(false)
 const cutPeak = ref(false)
 const showDelay = ref(true)
 const showLoss = ref(true)
-const chartMargin = { top: 30, right: 24, bottom: 52, left: 56 }
+const chartMargin = computed(() => narrowViewport.value
+  ? { top: 22, right: 10, bottom: 42, left: 40 }
+  : { top: 30, right: 24, bottom: 52, left: 56 })
+const chartAxisFontSize = computed(() => narrowViewport.value ? 9 : 11)
 
 const mergeToleranceMs = computed(() => {
   const taskIntervals = tasks.value
@@ -841,15 +846,15 @@ const pingChartOption = computed(() => {
       itemHeight: 12,
       itemGap: 16,
       icon: 'roundRect',
-      textStyle: { fontSize: 11, color: chartThemeColors.value.textSecondary },
+      textStyle: { fontSize: chartAxisFontSize.value, color: chartThemeColors.value.textSecondary },
       data: taskList.map(t => t.name),
     },
-    grid: chartMargin,
+    grid: chartMargin.value,
     xAxis: {
       type: 'category',
       data: data.map(d => formatTime(d.time as string, showDateInAxis.value)),
       axisLabel: {
-        fontSize: 11,
+        fontSize: chartAxisFontSize.value,
         color: chartThemeColors.value.textSecondary,
         margin: 12,
       },
@@ -873,7 +878,7 @@ const pingChartOption = computed(() => {
         return Math.ceil((range.max + padding) / 10) * 10
       },
       nameTextStyle: { color: chartThemeColors.value.textSecondary },
-      axisLabel: { fontSize: 11, color: chartThemeColors.value.textSecondary, formatter: '{value}' },
+      axisLabel: { fontSize: chartAxisFontSize.value, color: chartThemeColors.value.textSecondary, formatter: '{value}' },
       axisLine: { show: false },
       axisTick: { show: false },
       splitLine: {
@@ -998,7 +1003,7 @@ onUnmounted(() => {
                 </div>
                 <div class="lnl-ping-probe-meta">
                   <span>LOSS{{ task.lossApproximate ? '≈' : '' }} {{ Number.isFinite(task.loss) ? task.loss.toFixed(2) : '0.00' }}%</span>
-                  <span v-if="task.p99_p50_ratio !== undefined">JIT {{ task.p99_p50_ratio.toFixed(2) }}</span>
+                  <span>JIT {{ task.p99_p50_ratio !== undefined ? task.p99_p50_ratio.toFixed(2) : '—' }}</span>
                 </div>
                 <DataTooltip portal placement="top" content-class="!rounded-xl p-3 w-64">
                   <Button variant="ghost" size="icon-xs" class="lnl-ping-probe-info" @click.stop>
@@ -1405,48 +1410,6 @@ onUnmounted(() => {
   .lnl-ping-probes-head::before {
     display: none;
   }
-  .lnl-ping-probe-list {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(98px, 1fr));
-    overflow: visible;
-  }
-  .lnl-ping-probe {
-    grid-template-columns: 3px minmax(0, 1fr) auto auto;
-    width: auto;
-    min-width: 0;
-    min-height: 78px;
-    gap: 2px 5px;
-    padding: 8px 7px;
-    border: 1px solid var(--lnl-line);
-    border-radius: var(--lnl-radius-control);
-  }
-  .lnl-ping-probe > i {
-    width: 3px;
-    height: 34px;
-  }
-  .lnl-ping-probe-copy strong {
-    font-size: 12px;
-  }
-  .lnl-ping-probe-copy small {
-    font-size: 7px;
-  }
-  .lnl-ping-probe-value {
-    gap: 2px;
-  }
-  .lnl-ping-probe-value strong {
-    font-size: 16px;
-  }
-  .lnl-ping-probe-value small,
-  .lnl-ping-probe-meta {
-    font-size: 7px;
-  }
-  .lnl-ping-probe-meta {
-    gap: 4px;
-  }
-  .lnl-ping-probe-info {
-    width: 22px;
-    height: 22px;
-  }
   .lnl-ping-plot-head {
     min-height: 72px;
     align-items: flex-start;
@@ -1460,14 +1423,107 @@ onUnmounted(() => {
     overflow: visible;
   }
   .lnl-ping-chart {
-    min-height: 300px;
-    height: 300px;
+    min-height: 260px;
+    height: clamp(260px, 38dvh, 320px);
     padding-inline: 2px;
   }
 }
-@media (max-width: 520px) {
-  .lnl-ping-probe-meta span:nth-child(2) {
+
+@media (max-width: 640px) {
+  .lnl-ping-panel {
+    border-radius: var(--lnl-radius-inner);
+  }
+
+  .lnl-ping-toolbar {
+    min-height: 0;
+    padding: 6px;
+  }
+
+  .lnl-ping-window > span,
+  .lnl-ping-selection > span,
+  .lnl-ping-probes-head::before {
     display: none;
+  }
+
+  .lnl-ping-selection {
+    gap: 5px;
+  }
+
+  .lnl-ping-probes {
+    padding: 5px;
+  }
+
+  .lnl-ping-probes-head {
+    min-height: 34px;
+    padding: 4px 7px;
+  }
+
+  .lnl-ping-probe-list {
+    display: flex;
+    gap: 7px;
+    padding: 2px 1px 7px;
+    overflow-x: auto;
+    scroll-padding-inline: 1px;
+    scroll-snap-type: x proximity;
+    scrollbar-width: thin;
+  }
+
+  .lnl-ping-probe {
+    grid-template-columns: 3px minmax(0, 1fr) auto auto;
+    width: clamp(190px, 72vw, 260px);
+    min-width: clamp(190px, 72vw, 260px);
+    min-height: 82px;
+    gap: 2px 6px;
+    padding: 8px;
+    scroll-snap-align: start;
+  }
+
+  .lnl-ping-probe > i {
+    width: 3px;
+    height: 36px;
+  }
+
+  .lnl-ping-probe-copy strong {
+    display: -webkit-box;
+    overflow: hidden;
+    font-size: 12px;
+    line-height: 1.25;
+    text-overflow: unset;
+    white-space: normal;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+  }
+
+  .lnl-ping-probe-copy small,
+  .lnl-ping-probe-value small,
+  .lnl-ping-probe-meta {
+    font-size: 7.5px;
+  }
+
+  .lnl-ping-probe-value strong {
+    font-size: 17px;
+  }
+
+  .lnl-ping-probe-meta {
+    gap: 7px;
+  }
+
+  .lnl-ping-probe-info {
+    width: 28px;
+    height: 28px;
+  }
+
+  .lnl-ping-plot {
+    margin: 5px;
+  }
+
+  .lnl-ping-plot-head {
+    min-height: 60px;
+    padding: 6px 8px;
+  }
+
+  .lnl-ping-chart {
+    padding: 2px 0 6px;
   }
 }
 @media (prefers-reduced-motion: reduce) {

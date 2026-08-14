@@ -7,6 +7,7 @@
 <script setup lang="ts">
 import type { COBEOptions, Globe, Marker } from 'cobe'
 import type { ComponentPublicInstance } from 'vue'
+import type { ColorPalette } from '@/stores/app'
 import type { NodeData } from '@/stores/nodes'
 import {
   useDocumentVisibility,
@@ -17,7 +18,7 @@ import {
 } from '@vueuse/core'
 import createGlobe from 'cobe'
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { useAppStore } from '@/stores/app'
+import { PALETTE_ACCENT_COLORS, PALETTE_THEME_COLORS, useAppStore } from '@/stores/app'
 import { useNodesStore } from '@/stores/nodes'
 import { getCoordByCode, getCountryCodeFromRegion } from '@/utils/geoHelper'
 import { getGlobeProbe } from '@/utils/globeIntroShared'
@@ -82,6 +83,7 @@ const GLOBE_RADIUS = 0.8
 const GLOBE_SCALE = 1
 const MARKER_ELEVATION = 0
 const AUTO_ROTATION_RADIANS_PER_MS = 0.00015
+type RgbTuple = [number, number, number]
 let phi = DEFAULT_PHI
 let targetPhi = phi
 let theta = INITIAL_THETA
@@ -374,27 +376,50 @@ const markers = computed<Marker[]>(() => {
   }))
 })
 
-const themeColors = computed(() => {
-  if (appStore.isDark) {
+function hexToRgbTuple(hex: string): RgbTuple {
+  const normalized = hex.replace('#', '')
+  const value = Number.parseInt(normalized, 16)
+  return [
+    ((value >> 16) & 255) / 255,
+    ((value >> 8) & 255) / 255,
+    (value & 255) / 255,
+  ]
+}
+
+function mixRgb(base: RgbTuple, accent: RgbTuple, accentWeight: number): RgbTuple {
+  const baseWeight = 1 - accentWeight
+  return [
+    base[0] * baseWeight + accent[0] * accentWeight,
+    base[1] * baseWeight + accent[1] * accentWeight,
+    base[2] * baseWeight + accent[2] * accentWeight,
+  ]
+}
+
+function resolveGlobePalette(palette: ColorPalette, mode: 'light' | 'dark') {
+  const markerColor = hexToRgbTuple(PALETTE_ACCENT_COLORS[palette][mode].primary)
+  const backgroundColor = hexToRgbTuple(PALETTE_THEME_COLORS[palette][mode])
+  if (mode === 'dark') {
     return {
       dark: 1,
       mapBrightness: 4,
       mapBaseBrightness: 0.055,
-      baseColor: [0.32, 0.33, 0.4] as [number, number, number],
-      markerColor: [0.45, 0.95, 0.72] as [number, number, number],
-      glowColor: [0.09, 0.22, 0.16] as [number, number, number],
+      baseColor: mixRgb([0.32, 0.33, 0.4], markerColor, 0.18),
+      markerColor,
+      glowColor: mixRgb(backgroundColor, markerColor, 0.14),
     }
   }
   return {
     dark: 0,
-    // Light mode stays neutral: soften the original gray land dots without
-    // tinting the entire sphere green. Theme color remains on markers/glow.
     mapBrightness: 5,
     mapBaseBrightness: 0.07,
-    baseColor: [1, 1, 1] as [number, number, number],
-    markerColor: [0.08, 0.48, 0.31] as [number, number, number],
-    glowColor: [0.88, 0.96, 0.91] as [number, number, number],
+    baseColor: [1, 1, 1] as RgbTuple,
+    markerColor,
+    glowColor: mixRgb(backgroundColor, markerColor, 0.06),
   }
+}
+
+const themeColors = computed(() => {
+  return resolveGlobePalette(appStore.colorPalette, appStore.isDark ? 'dark' : 'light')
 })
 
 function buildInitialOptions(): COBEOptions {
@@ -594,7 +619,7 @@ function handleThemeTransitionEnd() {
 
 // Theme changes must update the existing WebGL instance in place. Recreating
 // cobe briefly detaches its canvas wrapper and desynchronizes the DOM flags.
-watch(() => appStore.isDark, () => {
+watch([() => appStore.isDark, () => appStore.colorPalette], () => {
   if (!globe)
     return
   const colors = themeColors.value
@@ -935,6 +960,8 @@ const offlineServers = computed(() => totalServers.value - onlineServers.value)
       variant === 'intro' ? '' : '-translate-y-6 md:-translate-y-12',
       interactive ? 'touch-none cursor-grab active:cursor-grabbing' : '',
     ]"
+    :data-globe-palette="appStore.colorPalette"
+    :data-globe-mode="appStore.isDark ? 'dark' : 'light'"
     :role="interactive ? 'region' : undefined"
     :aria-label="interactive ? '可拖动旋转的全球节点地球' : undefined"
     @pointerdown.capture="onPointerDown"

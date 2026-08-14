@@ -1,3 +1,4 @@
+import type { BillingDisplayPeriod } from '@/stores/app'
 import type { NodeData } from '@/stores/nodes'
 
 const FINANCE_CURRENCY_CONFIG = {
@@ -48,9 +49,7 @@ interface ExchangeRatesCache {
 }
 
 const CACHE_KEY = 'komari_finance_exchange_rates_cny_v1'
-const MS_PER_DAY = 24 * 60 * 60 * 1000
 const MONTH_DAYS = 30
-const LONG_TERM_YEARS = 100
 let pendingExchangeRateRequest: Promise<ExchangeRateResult> | null = null
 let resolvedExchangeRateResult: ExchangeRateResult | null = null
 
@@ -61,6 +60,28 @@ export const DEFAULT_EXCHANGE_RATES = Object.fromEntries(
 export const CURRENCY_SYMBOLS = Object.fromEntries(
   Object.entries(FINANCE_CURRENCY_CONFIG).map(([currency, config]) => [currency, config.symbol]),
 ) as Record<CurrencyCode, string>
+
+export const COMPACT_CURRENCY_SYMBOLS: Record<CurrencyCode, string> = {
+  ...CURRENCY_SYMBOLS,
+  CNY: '¥',
+  JPY: 'JP¥',
+  HKD: 'HK$',
+  USD: '$',
+  CAD: 'C$',
+  AUD: 'A$',
+  SGD: 'S$',
+}
+
+export const BILLING_PERIOD_LABELS: Record<BillingDisplayPeriod, string> = {
+  monthly: '月付',
+  quarterly: '季付',
+  yearly: '年付',
+}
+const BILLING_PERIOD_MULTIPLIERS: Record<BillingDisplayPeriod, number> = {
+  monthly: 1,
+  quarterly: 3,
+  yearly: 12,
+}
 
 const EXCHANGE_RATE_APIS = [
   {
@@ -149,20 +170,6 @@ export function setStoredFinanceCurrency(currency: CurrencyCode): void {
   setLocalStorageItem('fin_currency', currency)
 }
 
-export function calculateTotalRemainingValueCNY(
-  nodes: NodeData[],
-  exchangeRates: ExchangeRates,
-  excludeFreeTags = true,
-  now = new Date(),
-): number {
-  return nodes.reduce((sum, node) => {
-    if (excludeFreeTags && isComplimentaryNode(node))
-      return sum
-
-    return sum + calculateRemainingValueCNY(node, exchangeRates, now)
-  }, 0)
-}
-
 export function calculateTotalValueCNY(
   nodes: NodeData[],
   exchangeRates: ExchangeRates,
@@ -220,43 +227,23 @@ export function calculateTotalDailyCostCNY(
     if (excludeFreeTags && isComplimentaryNode(node))
       return sum
 
-    const priceCNY = getPriceCNY(node, exchangeRates)
-    const billingCycle = Number(node.billing_cycle)
-    if (priceCNY <= 0 || !Number.isFinite(billingCycle) || billingCycle <= 0)
-      return sum
-
-    return sum + priceCNY / billingCycle
+    return sum + calculateDailyCostCNY(node, exchangeRates)
   }, 0)
 }
 
-export function calculateRemainingValueCNY(
+export function calculateDailyCostCNY(
   node: NodeData,
   exchangeRates: ExchangeRates,
-  now = new Date(),
 ): number {
-  if (!node.expired_at)
-    return 0
-
   const priceCNY = getPriceCNY(node, exchangeRates)
   if (priceCNY <= 0)
     return 0
 
-  const expiredAt = new Date(node.expired_at).getTime()
-  if (!Number.isFinite(expiredAt))
+  const billingCycle = Number(node.billing_cycle)
+  if (!Number.isFinite(billingCycle) || billingCycle <= 0)
     return 0
 
-  const diffMs = expiredAt - now.getTime()
-  const diffYears = diffMs / (MS_PER_DAY * 365)
-
-  if (diffYears > LONG_TERM_YEARS)
-    return priceCNY
-
-  const billingCycle = Number(node.billing_cycle)
-  const billingCycleMs = billingCycle * MS_PER_DAY
-  if (diffMs > 0 && billingCycleMs > 0)
-    return priceCNY * (diffMs / billingCycleMs)
-
-  return 0
+  return priceCNY / billingCycle
 }
 
 export function formatFinanceAmount(amount: number, currency: CurrencyCode): {
@@ -280,6 +267,7 @@ export function formatFinanceAmount(amount: number, currency: CurrencyCode): {
 
 export interface MonthlyCostDisplay {
   text: string
+  exactText: string
   currency: string
   amount: number | null
   converted: boolean
@@ -292,22 +280,33 @@ export function formatNodeMonthlyCost(
   exchangeRates: ExchangeRates,
   allowConversion = true,
 ): MonthlyCostDisplay {
+  return formatNodeRecurringCost(node, targetCurrency, exchangeRates, 'monthly', allowConversion)
+}
+
+export function formatNodeRecurringCost(
+  node: Pick<NodeData, 'price' | 'billing_cycle' | 'currency'>,
+  targetCurrency: CurrencyCode,
+  exchangeRates: ExchangeRates,
+  period: BillingDisplayPeriod,
+  allowConversion = true,
+): MonthlyCostDisplay {
   const price = Number(node.price)
   if (price === -1)
-    return { text: '免费', currency: '', amount: null, converted: false, state: 'free' }
+    return { text: '免费', exactText: '免费', currency: '', amount: null, converted: false, state: 'free' }
   if (!Number.isFinite(price) || price === 0)
-    return { text: '未填写', currency: '', amount: null, converted: false, state: 'missing' }
+    return { text: '未填写', exactText: '未填写', currency: '', amount: null, converted: false, state: 'missing' }
 
   const billingCycle = Number(node.billing_cycle)
   if (price < 0 || !Number.isFinite(billingCycle) || billingCycle <= 0)
-    return { text: '—', currency: '', amount: null, converted: false, state: 'invalid' }
+    return { text: '—', exactText: '计费周期无效', currency: '', amount: null, converted: false, state: 'invalid' }
 
-  const monthlyOriginal = price / billingCycle * MONTH_DAYS
+  const monthlyOriginal = price / billingCycle * MONTH_DAYS * BILLING_PERIOD_MULTIPLIERS[period]
   const sourceCurrency = resolveCurrency(node.currency)
   const rawCurrency = String(node.currency || '').trim().toUpperCase() || 'CNY'
   if (!sourceCurrency) {
     return {
       text: `${rawCurrency} ${formatCompactMoney(monthlyOriginal)}`,
+      exactText: `${formatExactMoney(monthlyOriginal)} ${rawCurrency}`,
       currency: rawCurrency,
       amount: monthlyOriginal,
       converted: false,
@@ -317,7 +316,8 @@ export function formatNodeMonthlyCost(
 
   if (sourceCurrency === targetCurrency) {
     return {
-      text: `${targetCurrency} ${formatCompactMoney(monthlyOriginal)}`,
+      text: `${COMPACT_CURRENCY_SYMBOLS[targetCurrency]}${formatCompactMoney(monthlyOriginal)}`,
+      exactText: `${formatExactMoney(monthlyOriginal)} ${targetCurrency}`,
       currency: targetCurrency,
       amount: monthlyOriginal,
       converted: false,
@@ -327,7 +327,8 @@ export function formatNodeMonthlyCost(
 
   if (!allowConversion) {
     return {
-      text: `${sourceCurrency} ${formatCompactMoney(monthlyOriginal)}`,
+      text: `${COMPACT_CURRENCY_SYMBOLS[sourceCurrency]}${formatCompactMoney(monthlyOriginal)}`,
+      exactText: `${formatExactMoney(monthlyOriginal)} ${sourceCurrency}`,
       currency: sourceCurrency,
       amount: monthlyOriginal,
       converted: false,
@@ -339,7 +340,8 @@ export function formatNodeMonthlyCost(
   const targetRate = Number(exchangeRates[targetCurrency])
   if (!Number.isFinite(sourceRate) || sourceRate <= 0 || !Number.isFinite(targetRate) || targetRate <= 0) {
     return {
-      text: `${sourceCurrency} ${formatCompactMoney(monthlyOriginal)}`,
+      text: `${COMPACT_CURRENCY_SYMBOLS[sourceCurrency]}${formatCompactMoney(monthlyOriginal)}`,
+      exactText: `${formatExactMoney(monthlyOriginal)} ${sourceCurrency}`,
       currency: sourceCurrency,
       amount: monthlyOriginal,
       converted: false,
@@ -349,7 +351,8 @@ export function formatNodeMonthlyCost(
 
   const converted = monthlyOriginal / sourceRate * targetRate
   return {
-    text: `${targetCurrency} ${formatCompactMoney(converted)}`,
+    text: `${COMPACT_CURRENCY_SYMBOLS[targetCurrency]}${formatCompactMoney(converted)}`,
+    exactText: `${formatExactMoney(converted)} ${targetCurrency}`,
     currency: targetCurrency,
     amount: converted,
     converted: true,
@@ -359,9 +362,19 @@ export function formatNodeMonthlyCost(
 
 function formatCompactMoney(amount: number): string {
   return new Intl.NumberFormat('en-US', {
+    minimumFractionDigits: Math.abs(amount) < 100 ? 2 : 0,
+    maximumFractionDigits: Math.abs(amount) < 100 ? 2 : Math.abs(amount) < 1000 ? 1 : 0,
+    notation: Math.abs(amount) >= 100000 ? 'compact' : 'standard',
+    compactDisplay: 'short',
+    useGrouping: Math.abs(amount) < 100000,
+  }).format(amount)
+}
+
+function formatExactMoney(amount: number): string {
+  return new Intl.NumberFormat('zh-CN', {
     minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-    useGrouping: false,
+    maximumFractionDigits: 4,
+    useGrouping: true,
   }).format(amount)
 }
 

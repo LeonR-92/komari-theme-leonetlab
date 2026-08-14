@@ -1,4 +1,4 @@
-const CACHE_NAME = 'komari-observatory-v1.4.3'
+const CACHE_NAME = 'komari-observatory-v1.4.3-fix1'
 const THEME_CACHE_PREFIXES = ['komari-observatory-', 'leonetlab-observatory-']
 const SCRIPT_ASSET_PATTERN = /\.m?js$/
 const STYLE_ASSET_PATTERN = /\.css$/

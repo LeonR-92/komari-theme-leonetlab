@@ -560,7 +560,7 @@ function clearLeavingNodeRect(element: Element) {
             </DialogTitle>
           </div>
         </DialogHeader>
-        <div class="max-h-[calc(92dvh-64px)] overflow-y-auto p-2 sm:p-3">
+        <div class="lnl-ping-dialog-body max-h-[calc(92dvh-64px)] overflow-y-auto p-2 sm:p-3">
           <PingChart :uuid="selectedPingNode.uuid" />
         </div>
       </DialogContent>
@@ -801,22 +801,57 @@ function clearLeavingNodeRect(element: Element) {
 @keyframes lnl-ping-dialog-in {
   from {
     opacity: 0;
-    transform: translate3d(0, 20px, 0) scale(0.985);
+    translate: -50% -50%;
+    transform: scale(0.985);
   }
   to {
     opacity: 1;
-    transform: translate3d(0, 0, 0) scale(1);
+    translate: -50% -50%;
+    transform: scale(1);
   }
 }
 
 @keyframes lnl-ping-dialog-out {
   from {
     opacity: 1;
-    transform: translate3d(0, 0, 0) scale(1);
+    translate: -50% -50%;
+    transform: scale(1);
   }
   to {
     opacity: 0;
-    transform: translate3d(0, 12px, 0) scale(0.992);
+    translate: -50% -50%;
+    transform: scale(0.992);
+  }
+}
+
+@media (max-width: 640px) {
+  :global(.lnl-ping-dialog) {
+    width: calc(100vw - 12px);
+    max-height: calc(100dvh - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px) - 12px);
+  }
+
+  .lnl-ping-dialog-head {
+    min-height: 52px;
+    gap: 8px;
+    padding: 7px 52px 7px 10px;
+  }
+
+  .lnl-ping-dialog-index,
+  .lnl-ping-dialog-kicker {
+    display: none;
+  }
+
+  .lnl-ping-dialog-body {
+    max-height: calc(100dvh - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px) - 68px);
+    overscroll-behavior: contain;
+    padding: 4px;
+  }
+
+  :global(.lnl-ping-dialog > button[aria-label='关闭']) {
+    width: 44px;
+    height: 44px;
+    top: 4px;
+    right: 4px;
   }
 }
 

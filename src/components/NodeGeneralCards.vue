@@ -116,16 +116,7 @@ const formattedMemoryTotal = computed(() => formatBytesSplit(totalMemory.value.t
 const formattedDiskUsed = computed(() => formatBytesSplit(totalDisk.value.used, appStore.byteDecimals))
 const formattedDiskTotal = computed(() => formatBytesSplit(totalDisk.value.total, appStore.byteDecimals))
 
-const remainingValueCNY = computed(() => {
-  return financeHelper.calculateTotalRemainingValueCNY(summaryNodes.value, exchangeRates.value, excludeFreeNodes.value)
-})
 const targetExchangeRate = computed(() => exchangeRates.value[exchangeRateBaseCurrency.value] || 1)
-const remainingValue = computed(() => {
-  return remainingValueCNY.value * targetExchangeRate.value
-})
-const formattedRemainingValue = computed(() => {
-  return financeHelper.formatFinanceAmount(remainingValue.value, exchangeRateBaseCurrency.value)
-})
 const totalValueCNY = computed(() => {
   return financeHelper.calculateTotalValueCNY(summaryNodes.value, exchangeRates.value, excludeFreeNodes.value)
 })
@@ -144,9 +135,16 @@ const monthlyAverageCost = computed(() => {
 const formattedMonthlyAverageCost = computed(() => {
   return financeHelper.formatFinanceAmount(monthlyAverageCost.value, exchangeRateBaseCurrency.value)
 })
+const dailyAverageCostCNY = computed(() => {
+  return financeHelper.calculateTotalDailyCostCNY(summaryNodes.value, exchangeRates.value, excludeFreeNodes.value)
+})
+const dailyAverageCost = computed(() => dailyAverageCostCNY.value * targetExchangeRate.value)
+const formattedDailyAverageCost = computed(() => {
+  return financeHelper.formatFinanceAmount(dailyAverageCost.value, exchangeRateBaseCurrency.value)
+})
 const financeSummaryItems = computed(() => [
   {
-    label: '总价值',
+    label: '付款总额',
     icon: 'tabler:wallet',
     value: formattedTotalValue.value.value,
     symbol: formattedTotalValue.value.symbol,
@@ -160,11 +158,11 @@ const financeSummaryItems = computed(() => [
     currency: `${formattedMonthlyAverageCost.value.currency}/月`,
   },
   {
-    label: '剩余价值',
-    icon: 'tabler:coins',
-    value: formattedRemainingValue.value.value,
-    symbol: formattedRemainingValue.value.symbol,
-    currency: formattedRemainingValue.value.currency,
+    label: '日均支出',
+    icon: 'tabler:calendar-dollar',
+    value: formattedDailyAverageCost.value.value,
+    symbol: formattedDailyAverageCost.value.symbol,
+    currency: `${formattedDailyAverageCost.value.currency}/日`,
   },
 ])
 const exchangeRateRows = computed(() => financeRateCurrencies.map((currency) => {
@@ -289,19 +287,19 @@ onBeforeUnmount(() => {
           <div class="flex h-full flex-col justify-between gap-1">
             <span class="sr-only">按下查看财务汇率详情</span>
             <div class="flex items-start justify-between">
-              <span class="text-xs font-medium tracking-wider text-muted-foreground">剩余价值</span>
+              <span class="text-xs font-medium tracking-wider text-muted-foreground">付款总额</span>
               <span class="lnl-metric-tag" aria-hidden="true">VAL</span>
             </div>
             <Transition v-bind="metricSwitchTransitionProps">
               <div
-                :key="`remaining-value-${summaryTransitionKey}`" class="flex flex-wrap items-baseline gap-1 min-w-0"
+                :key="`payment-total-${summaryTransitionKey}`" class="flex flex-wrap items-baseline gap-1 min-w-0"
                 :style="getMetricSwitchStyle(2)"
               >
                 <span class="text-md md:text-2xl font-bold leading-none tracking-tight">
-                  {{ formattedRemainingValue.symbol }}{{ formattedRemainingValue.value }}
+                  {{ formattedTotalValue.symbol }}{{ formattedTotalValue.value }}
                 </span>
                 <span class="block truncate text-[11px] md:text-xs font-medium text-muted-foreground">
-                  {{ formattedRemainingValue.currency }}
+                  {{ formattedTotalValue.currency }}
                 </span>
               </div>
             </Transition>

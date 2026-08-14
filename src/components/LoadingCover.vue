@@ -68,6 +68,7 @@ onUnmounted(() => timers.forEach(timer => window.clearTimeout(timer)))
       appStore.isDark ? 'lnl-intro-dark' : 'lnl-intro-light',
       { 'has-globe-handoff': props.handoffReady },
     ]"
+    :data-intro-palette="appStore.colorPalette"
     role="status"
     aria-live="polite"
     aria-label="正在连接监控数据"
@@ -142,11 +143,11 @@ onUnmounted(() => timers.forEach(timer => window.clearTimeout(timer)))
 
 <style scoped>
 .lnl-intro {
-  --intro-bg: #030b09;
-  --intro-ink: #e5eee9;
-  --intro-muted: #91a79e;
-  --intro-accent: #74e6b2;
-  --intro-cyan: #75c9d4;
+  --intro-bg: var(--background);
+  --intro-ink: var(--foreground);
+  --intro-muted: var(--muted-foreground);
+  --intro-accent: var(--lnl-green);
+  --intro-cyan: var(--lnl-cyan);
   position: fixed;
   z-index: 100;
   inset: 0;
@@ -160,11 +161,7 @@ onUnmounted(() => timers.forEach(timer => window.clearTimeout(timer)))
 }
 
 .lnl-intro-light {
-  --intro-bg: #edf6f1;
-  --intro-ink: #10251d;
-  --intro-muted: #506c61;
-  --intro-accent: #167a56;
-  --intro-cyan: #227f89;
+  color-scheme: light;
 }
 
 .lnl-intro-grid,

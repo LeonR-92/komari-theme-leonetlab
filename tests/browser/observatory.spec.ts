@@ -1,8 +1,10 @@
 import { expect, test } from '@playwright/test'
 
-const introSessionKey = 'komari-observatory:intro:1.4.3'
+const introSessionKey = 'komari-observatory:intro:1.4.3-fix1'
 
-test.beforeEach(async ({ page }) => {
+test.beforeEach(async ({ page }, testInfo) => {
+  if (testInfo.title.includes('applies the managed palette to the intro'))
+    return
   await page.addInitScript((key) => {
     sessionStorage.setItem(key, 'seen')
   }, introSessionKey)
@@ -49,7 +51,7 @@ test('renders the Komari 1.4.3 fixture without viewport overflow', async ({ page
   })
 
   await page.goto('/')
-  await expect(page.getByText('Tokyo Fixture', { exact: true })).toBeVisible()
+  await expect(page.getByText('Tokyo Fixture', { exact: true }).first()).toBeVisible()
   await expect(page.getByText('Frankfurt Fixture', { exact: true })).toBeVisible()
 
   const geometry = await page.evaluate(() => ({
@@ -100,6 +102,157 @@ test('renders the Komari 1.4.3 fixture without viewport overflow', async ({ page
       expect(widths.scroll, `${viewport.width}x${viewport.height} overflow`).toBeLessThanOrEqual(widths.client + 1)
     }
   }
+})
+
+test('persists visitor appearance overrides and restores managed defaults', async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== 'chromium-desktop', 'One desktop engine covers appearance persistence and managed defaults.')
+  await page.addInitScript(() => {
+    localStorage.setItem('komari-observatory:palette', 'amber')
+    localStorage.setItem('komari-observatory:palette:override', '1')
+    localStorage.setItem('komari-observatory:cursor-style', 'native')
+    localStorage.setItem('komari-observatory:cursor-style:override', '1')
+  })
+  await page.route('**/api/public', async (route) => {
+    const response = await route.fetch()
+    const payload = await response.json() as { data?: { theme_settings?: Record<string, unknown> } }
+    if (payload.data?.theme_settings) {
+      payload.data.theme_settings.defaultColorPalette = 'cobalt'
+      payload.data.theme_settings.defaultCursorStyle = 'halo'
+    }
+    await route.fulfill({ response, json: payload })
+  })
+
+  await page.goto('/')
+  await expect(page.getByText('Tokyo Fixture', { exact: true }).first()).toBeVisible()
+  await expect(page.locator('html')).toHaveAttribute('data-palette', 'amber')
+  await page.locator('[data-action="toggleAppearance"]').click()
+  await expect(page.locator('[data-color-palette="amber"]')).toHaveAttribute('aria-pressed', 'true')
+  await expect(page.locator('[data-cursor-style="native"]')).toHaveAttribute('aria-pressed', 'true')
+  await page.getByRole('button', { name: '恢复站点默认' }).click()
+  await expect.poll(() => page.locator('html').getAttribute('data-palette')).toBe('cobalt')
+  await expect(page.locator('[data-cursor-style="halo"]')).toHaveAttribute('aria-pressed', 'true')
+  expect(await page.evaluate(() => localStorage.getItem('komari-observatory:palette:override'))).toBeNull()
+  expect(await page.evaluate(() => localStorage.getItem('komari-observatory:cursor-style:override'))).toBeNull()
+})
+
+test('applies every palette in light and dark mode without semantic-state drift', async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== 'chromium-desktop', 'One deterministic engine covers the palette token matrix.')
+  await page.emulateMedia({ reducedMotion: 'reduce' })
+  await page.goto('/')
+  await expect(page.getByText('Tokyo Fixture', { exact: true }).first()).toBeVisible()
+  await page.locator('[data-action="toggleAppearance"]').click()
+  for (const palette of ['emerald', 'aurora', 'cobalt', 'amber']) {
+    await page.locator(`[data-color-palette="${palette}"]`).click()
+    for (const mode of ['light', 'dark']) {
+      await page.locator(`[data-theme-mode="${mode}"]`).click()
+      await expect(page.locator('html')).toHaveAttribute('data-palette', palette)
+      await expect.poll(() => page.locator('html').evaluate(root => root.classList.contains('dark'))).toBe(mode === 'dark')
+      await expect(page.locator('.lnl-node-live-state').first()).toContainText('在线')
+    }
+  }
+})
+
+test('applies the managed palette to the intro and recolors the existing globe in place', async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== 'chromium-desktop', 'One deterministic engine covers intro and WebGL palette inheritance.')
+  await page.route('**/api/public', async (route) => {
+    const response = await route.fetch()
+    const payload = await response.json() as { data?: { theme_settings?: Record<string, unknown> } }
+    if (payload.data?.theme_settings) {
+      payload.data.theme_settings.introAnimationEnabled = true
+      payload.data.theme_settings.defaultColorPalette = 'cobalt'
+      payload.data.theme_settings.defaultThemeMode = 'dark'
+    }
+    await route.fulfill({ response, json: payload })
+  })
+
+  await page.goto('/')
+  const intro = page.locator('.lnl-intro')
+  await expect(intro).toBeVisible()
+  await expect(intro).toHaveAttribute('data-intro-palette', 'cobalt')
+  const introGlobe = page.locator('.node-earth-globe.is-intro')
+  await expect(introGlobe).toHaveAttribute('data-globe-palette', 'cobalt')
+  await expect(introGlobe).toHaveAttribute('data-globe-mode', 'dark')
+  const canvas = await introGlobe.locator('canvas').elementHandle()
+  expect(canvas).not.toBeNull()
+
+  await page.getByRole('button', { name: '跳过' }).click()
+  await expect(intro).toHaveCount(0, { timeout: 6_000 })
+  const dashboardGlobe = page.locator('.node-earth-globe')
+  await expect(dashboardGlobe).toHaveAttribute('data-globe-palette', 'cobalt')
+  expect(await canvas?.evaluate(element => element === document.querySelector('.node-earth-globe canvas'))).toBe(true)
+
+  await page.emulateMedia({ reducedMotion: 'reduce' })
+  await page.locator('[data-action="toggleAppearance"]').click()
+  await page.locator('[data-color-palette="amber"]').click()
+  await expect(dashboardGlobe).toHaveAttribute('data-globe-palette', 'amber')
+  expect(await canvas?.evaluate(element => element === document.querySelector('.node-earth-globe canvas'))).toBe(true)
+})
+
+test('keeps native cursor mode free of pointer tracking listeners', async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== 'chromium-desktop', 'Desktop fine-pointer mode covers cursor listener lifecycle.')
+  await page.addInitScript(() => {
+    localStorage.setItem('komari-observatory:cursor-style', 'native')
+    localStorage.setItem('komari-observatory:cursor-style:override', '1')
+    const originalAdd = window.addEventListener.bind(window)
+    const originalRemove = window.removeEventListener.bind(window)
+    const counts = { added: 0, removed: 0 }
+    Object.defineProperty(window, '__cursorListenerCounts', { value: counts })
+    window.addEventListener = ((type: string, listener: EventListenerOrEventListenerObject, options?: boolean | AddEventListenerOptions) => {
+      if (type === 'pointermove')
+        counts.added += 1
+      originalAdd(type, listener, options)
+    }) as typeof window.addEventListener
+    window.removeEventListener = ((type: string, listener: EventListenerOrEventListenerObject, options?: boolean | EventListenerOptions) => {
+      if (type === 'pointermove')
+        counts.removed += 1
+      originalRemove(type, listener, options)
+    }) as typeof window.removeEventListener
+  })
+  await page.goto('/')
+  await expect(page.getByText('Tokyo Fixture', { exact: true })).toBeVisible()
+  const baseline = await page.evaluate(() => ({
+    ...(window as Window & { __cursorListenerCounts: { added: number, removed: number } }).__cursorListenerCounts,
+    customActive: document.documentElement.classList.contains('lnl-custom-cursor-active'),
+  }))
+  expect(baseline.customActive).toBe(false)
+  await page.locator('[data-action="toggleAppearance"]').click()
+  await page.locator('[data-cursor-style="halo"]').click()
+  await expect.poll(() => page.evaluate(() => (window as Window & { __cursorListenerCounts: { added: number } }).__cursorListenerCounts.added)).toBe(baseline.added + 1)
+  await page.locator('[data-cursor-style="native"]').click()
+  await expect.poll(() => page.evaluate(() => (window as Window & { __cursorListenerCounts: { removed: number } }).__cursorListenerCounts.removed)).toBe(baseline.removed + 1)
+})
+
+test('synchronizes and persists the billing display period', async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== 'chromium-desktop', 'One desktop engine covers the shared billing preference.')
+  await page.goto('/')
+  await expect(page.getByText('Tokyo Fixture', { exact: true })).toBeVisible()
+  const triggers = page.locator('.lnl-billing-trigger')
+  await expect(triggers.first()).toContainText('月付')
+  await triggers.first().click()
+  const menuItems = page.getByRole('menuitemradio')
+  await expect(menuItems).toHaveText(['月付', '季付', '年付'])
+  expect(await menuItems.evaluateAll(items => items.every(item => item.scrollWidth <= item.clientWidth + 1))).toBe(true)
+  await expect(page.locator('.lnl-billing-menu')).not.toContainText('×')
+  await page.getByRole('menuitemradio', { name: /季付/ }).click()
+  await expect(triggers).toContainText(['季付', '季付', '季付', '季付'])
+  expect(await page.evaluate(() => localStorage.getItem('komari-observatory:billing-period'))).toContain('quarterly')
+  const triggerGeometry = await triggers.evaluateAll(elements => elements.map(element => ({
+    clientWidth: element.clientWidth,
+    scrollWidth: element.scrollWidth,
+    text: element.textContent?.replace(/\s+/g, ' ').trim(),
+  })))
+  expect(triggerGeometry.every(item => item.scrollWidth <= item.clientWidth + 1), JSON.stringify(triggerGeometry)).toBe(true)
+  const chevronCenterError = await triggers.first().evaluate((element) => {
+    const triggerRect = element.getBoundingClientRect()
+    const chevronRect = element.querySelector('.lnl-billing-chevron')?.getBoundingClientRect()
+    if (!chevronRect)
+      return Number.POSITIVE_INFINITY
+    return Math.abs((triggerRect.top + triggerRect.height / 2) - (chevronRect.top + chevronRect.height / 2))
+  })
+  expect(chevronCenterError).toBeLessThanOrEqual(1)
+  await page.reload()
+  await expect(page.getByText('Tokyo Fixture', { exact: true })).toBeVisible()
+  await expect(page.locator('.lnl-billing-trigger').first()).toContainText('季付')
 })
 
 test('loads capability-gated GPU telemetry only after the tab is opened', async ({ page }) => {
@@ -319,6 +472,19 @@ test('supports keyboard search, FLIP reordering, and Ping details', async ({ pag
 
   await page.locator('[data-node-ping-panel="latency"]').first().click()
   await expect(page.locator('.lnl-ping-dialog')).toBeVisible()
+  const centerErrors = await page.locator('.lnl-ping-dialog').evaluate(async (dialog) => {
+    const errors: number[] = []
+    for (let index = 0; index < 8; index += 1) {
+      await new Promise<void>(resolve => requestAnimationFrame(() => resolve()))
+      const rect = dialog.getBoundingClientRect()
+      errors.push(Math.max(
+        Math.abs(rect.left + rect.width / 2 - innerWidth / 2),
+        Math.abs(rect.top + rect.height / 2 - innerHeight / 2),
+      ))
+    }
+    return errors
+  })
+  expect(Math.max(...centerErrors)).toBeLessThanOrEqual(1)
   await expect(page.getByText('Tokyo route probe', { exact: true })).toBeVisible()
   await page.keyboard.press('Escape')
   await expect(page.locator('.lnl-ping-dialog')).toBeHidden()
@@ -334,11 +500,10 @@ test('settles an active theme transition when reduced motion changes at runtime'
   await page.goto('/')
   await expect(page.getByText('Tokyo Fixture', { exact: true })).toBeVisible()
 
-  const themeToggle = page.locator('[data-action="toggleTheme"]')
-  await themeToggle.click()
+  const appearanceToggle = page.locator('[data-action="toggleAppearance"]')
+  await appearanceToggle.click()
+  await page.locator('[data-theme-mode="dark"]').click()
   await page.waitForTimeout(120)
-  if (!await page.locator('html').evaluate(element => element.classList.contains('lnl-theme-transitioning')))
-    await themeToggle.click()
   await expect.poll(() => page.locator('html').evaluate(element => element.classList.contains('lnl-theme-transitioning'))).toBe(true)
 
   await page.emulateMedia({ reducedMotion: 'reduce' })
@@ -356,7 +521,9 @@ test('reveals the new theme snapshot from the toggle button without rebuilding t
   await page.goto('/')
   await expect(page.getByText('Tokyo Fixture', { exact: true })).toBeVisible()
 
-  const result = await page.locator('[data-action="toggleTheme"]').evaluate(async (button) => {
+  await page.locator('[data-action="toggleAppearance"]').click()
+  const result = await page.locator('[data-theme-mode="dark"]').evaluate(async (option) => {
+    const button = document.querySelector('[data-action="toggleAppearance"]') as HTMLElement
     const root = document.documentElement
     const rect = button.getBoundingClientRect()
     const expectedX = rect.left + rect.width / 2
@@ -378,7 +545,7 @@ test('reveals the new theme snapshot from the toggle button without rebuilding t
       }, { once: true })
     })
     const startedAt = performance.now()
-    ;(button as HTMLButtonElement).click()
+    ;(option as HTMLButtonElement).click()
     let revealAnimation: Animation | undefined
     const animationDeadline = performance.now() + 400
     while (!revealAnimation && performance.now() < animationDeadline) {
@@ -435,10 +602,7 @@ test('reveals the new theme snapshot from the toggle button without rebuilding t
   expect(result.scrollUnchanged).toBe(true)
   expect(result.finished).toBe(true)
 
-  const button = page.locator('[data-action="toggleTheme"]')
-  await button.click()
-  if (await page.locator('html').evaluate(root => root.classList.contains('dark')))
-    await button.click()
+  await page.locator('[data-theme-mode="light"]').click()
   await expect.poll(() => page.locator('html').evaluate(root => root.classList.contains('dark'))).toBe(false)
   await expect.poll(() => page.locator('html').evaluate(root => root.classList.contains('lnl-theme-transitioning'))).toBe(false)
   await expect.poll(() => page.evaluate(() => localStorage.getItem('appearance'))).toBe('light')
@@ -455,9 +619,10 @@ test('uses the lightweight circular fallback when View Transitions are unavailab
   await page.goto('/')
   await expect(page.getByText('Tokyo Fixture', { exact: true })).toBeVisible()
 
-  const button = page.locator('[data-action="toggleTheme"]')
+  const button = page.locator('[data-action="toggleAppearance"]')
   const rect = await button.boundingBox()
   await button.click()
+  await page.locator('[data-theme-mode="dark"]').click()
   const wipe = page.locator('.lnl-theme-wipe.is-revealing')
   await expect(wipe).toBeVisible()
   const fallback = await wipe.evaluate((element) => {
@@ -487,20 +652,22 @@ test('keeps only the final request during rapid theme toggles', async ({ page },
   await page.goto('/')
   await expect(page.getByText('Tokyo Fixture', { exact: true })).toBeVisible()
 
-  const result = await page.locator('[data-action="toggleTheme"]').evaluate(async (button) => {
+  await page.locator('[data-action="toggleAppearance"]').click()
+  const result = await page.locator('[data-theme-mode="dark"]').evaluate(async (darkOption) => {
     let starts = 0
     let ends = 0
     window.addEventListener('leonetlab:theme-transition-start', () => starts += 1)
     window.addEventListener('leonetlab:theme-transition-end', () => ends += 1)
-    ;(button as HTMLButtonElement).click()
+    ;(darkOption as HTMLButtonElement).click()
     await new Promise(resolve => setTimeout(resolve, 40))
-    ;(button as HTMLButtonElement).click()
-    ;(button as HTMLButtonElement).click()
+    ;(document.querySelector('[data-color-palette="aurora"]') as HTMLButtonElement).click()
+    ;(document.querySelector('[data-color-palette="amber"]') as HTMLButtonElement).click()
     await new Promise(resolve => setTimeout(resolve, 1800))
     return {
       starts,
       ends,
       appearance: localStorage.getItem('appearance'),
+      palette: localStorage.getItem('komari-observatory:palette'),
       dark: document.documentElement.classList.contains('dark'),
       active: document.documentElement.classList.contains('lnl-theme-transitioning'),
     }
@@ -508,8 +675,9 @@ test('keeps only the final request during rapid theme toggles', async ({ page },
 
   expect(result.starts).toBe(2)
   expect(result.ends).toBe(2)
-  expect(result.appearance).toBe('light')
-  expect(result.dark).toBe(false)
+  expect(result.appearance).toBe('dark')
+  expect(result.palette).toBe('amber')
+  expect(result.dark).toBe(true)
   expect(result.active).toBe(false)
 })
 

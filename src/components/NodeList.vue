@@ -2,6 +2,7 @@
 import type { NodeData } from '@/stores/nodes'
 import { Icon } from '@iconify/vue'
 import { computed, ref, watch } from 'vue'
+import BillingPeriodPicker from '@/components/BillingPeriodPicker.vue'
 import NodePingListCell from '@/components/NodePingListCell.vue'
 import TrafficProgress from '@/components/TrafficProgress.vue'
 import { Badge } from '@/components/ui/badge'
@@ -10,7 +11,7 @@ import { ProgressThin } from '@/components/ui/progress-thin'
 import { useBackgroundSurface } from '@/composables/useBackgroundSurface'
 import { useFinanceRates } from '@/composables/useFinanceRates'
 import { useAppStore } from '@/stores/app'
-import { formatNodeMonthlyCost, resolveCurrency } from '@/utils/financeHelper'
+import { BILLING_PERIOD_LABELS, formatNodeRecurringCost, resolveCurrency } from '@/utils/financeHelper'
 import { formatBytesPerSecondWithConfig, formatBytesWithConfig, formatDateTime, formatUptimeWithFormat, getStatus } from '@/utils/helper'
 import { isMobileLike, MOBILE_NO_MOVE_CLASS } from '@/utils/mobilePerf'
 import { getOSImage, getOSName } from '@/utils/osImageHelper'
@@ -51,7 +52,7 @@ const { rates: exchangeRates, conversionAvailable, ensureFinanceRates } = useFin
 const columns: ColumnConfig[] = [
   { key: 'status', label: '状态', width: '34px', sortable: false },
   { key: 'name', label: '节点信息', width: 'minmax(250px, 1.4fr)', sortable: true },
-  { key: 'finance', label: '月付', width: '112px', sortable: false },
+  { key: 'finance', label: '费用', width: '112px', sortable: false },
   { key: 'uptime', label: '运行时间', width: '116px', sortable: true },
   { key: 'cpu', label: 'CPU', width: '96px', sortable: false },
   { key: 'mem', label: '内存', width: '96px', sortable: false },
@@ -233,25 +234,26 @@ function getExpiryTags(node: NodeData): PriceTagItem[] {
   return tags
 }
 
-function getMonthlyCost(node: NodeData) {
-  return formatNodeMonthlyCost(
+function getRecurringCost(node: NodeData) {
+  return formatNodeRecurringCost(
     node,
     appStore.nodeCardCurrency,
     exchangeRates.value,
+    appStore.billingDisplayPeriod,
     conversionAvailable.value,
   )
 }
 
 function getFinanceTooltip(node: NodeData): string {
-  const monthly = getMonthlyCost(node)
-  if (monthly.state === 'free')
+  const recurring = getRecurringCost(node)
+  if (recurring.state === 'free')
     return '该节点标记为免费'
-  if (monthly.state === 'missing')
+  if (recurring.state === 'missing')
     return '请在 Komari 后台填写价格与计费周期'
-  if (monthly.state === 'invalid')
-    return '计费周期无效，无法折算月付'
+  if (recurring.state === 'invalid')
+    return `计费周期无效，无法折算${BILLING_PERIOD_LABELS[appStore.billingDisplayPeriod]}`
   const source = resolveCurrency(node.currency) ?? String(node.currency || '未知币种').trim()
-  return `原价 ${source} ${Number(node.price).toFixed(2)} / ${node.billing_cycle} 天`
+  return `${BILLING_PERIOD_LABELS[appStore.billingDisplayPeriod]} ${recurring.exactText} · 后台付款 ${source} ${Number(node.price).toFixed(2)} / ${node.billing_cycle} 天`
 }
 
 const needsCurrencyConversion = computed(() => props.nodes.some(node => (
@@ -364,16 +366,17 @@ function getCustomTags(node: NodeData): Array<string> {
                 </div>
               </div>
 
-              <!-- 月付 -->
-              <DataTooltip
+              <!-- 费用周期 -->
+              <div
                 v-else-if="col.key === 'finance'"
-                placement="top"
-                :content="getFinanceTooltip(node)"
                 class="lnl-node-list-finance"
               >
-                <span>月付</span>
-                <strong>{{ getMonthlyCost(node).text }}</strong>
-              </DataTooltip>
+                <BillingPeriodPicker
+                  variant="list"
+                  :text="getRecurringCost(node).text"
+                  :tooltip="getFinanceTooltip(node)"
+                />
+              </div>
 
               <!-- 运行时间 -->
               <div v-else-if="col.key === 'uptime'" class="flex flex-col gap-0.5">

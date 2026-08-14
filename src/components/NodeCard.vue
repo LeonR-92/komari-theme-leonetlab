@@ -2,6 +2,7 @@
 import type { NodeData } from '@/stores/nodes'
 import { Icon } from '@iconify/vue'
 import { computed, watch } from 'vue'
+import BillingPeriodPicker from '@/components/BillingPeriodPicker.vue'
 import { Badge } from '@/components/ui/badge'
 import { CardX } from '@/components/ui/card-x'
 import { DataTooltip } from '@/components/ui/data-tooltip'
@@ -9,7 +10,7 @@ import { useBackgroundSurface } from '@/composables/useBackgroundSurface'
 import { useFinanceRates } from '@/composables/useFinanceRates'
 import { useNodePingDisplay } from '@/composables/useNodePingDisplay'
 import { useAppStore } from '@/stores/app'
-import { formatNodeMonthlyCost, resolveCurrency } from '@/utils/financeHelper'
+import { BILLING_PERIOD_LABELS, formatNodeRecurringCost, resolveCurrency } from '@/utils/financeHelper'
 import { formatBytesPerSecondWithConfig, formatBytesWithConfig, formatDateTime, formatUptimeWithFormat, getStatus } from '@/utils/helper'
 import { getOSImage, getOSName } from '@/utils/osImageHelper'
 import { getRegionDisplayName, getRegionFlagUrl } from '@/utils/regionHelper'
@@ -115,23 +116,24 @@ function gaugeClass(status: GaugeStatus): string {
   return `is-${status}`
 }
 
-const monthlyCost = computed(() => formatNodeMonthlyCost(
+const recurringCost = computed(() => formatNodeRecurringCost(
   props.node,
   appStore.nodeCardCurrency,
   exchangeRates.value,
+  appStore.billingDisplayPeriod,
   conversionAvailable.value,
 ))
 const financeTooltip = computed(() => {
   const node = props.node
-  if (monthlyCost.value.state === 'free')
+  if (recurringCost.value.state === 'free')
     return '该节点标记为免费'
-  if (monthlyCost.value.state === 'missing')
+  if (recurringCost.value.state === 'missing')
     return '请在 Komari 后台填写价格与计费周期'
-  if (monthlyCost.value.state === 'invalid')
-    return '计费周期无效，无法折算月付'
+  if (recurringCost.value.state === 'invalid')
+    return `计费周期无效，无法折算${BILLING_PERIOD_LABELS[appStore.billingDisplayPeriod]}`
   const source = resolveCurrency(node.currency) ?? String(node.currency || '未知币种').trim()
   const expiry = node.expired_at ? ` · 到期 ${expiredDate.value}` : ''
-  return `原价 ${source} ${Number(node.price).toFixed(2)} / ${node.billing_cycle} 天${expiry}`
+  return `${BILLING_PERIOD_LABELS[appStore.billingDisplayPeriod]} ${recurringCost.value.exactText} · 后台付款 ${source} ${Number(node.price).toFixed(2)} / ${node.billing_cycle} 天${expiry}`
 })
 
 watch(
@@ -332,18 +334,12 @@ function openPingDialog() {
                 <span>下载</span>
                 <strong>{{ formatBytesPerSecond(props.node.net_in ?? 0) }}</strong>
               </div>
-              <DataTooltip
-                placement="left"
-                :content="financeTooltip"
-                content-class="whitespace-nowrap right-0 mr-0"
+              <div
                 class="lnl-node-lifecycle-item lnl-node-finance"
-                aria-label="月付与到期信息"
                 :data-finance-state="props.node.price === 0 ? 'missing' : props.node.price < 0 ? 'free' : 'paid'"
               >
-                <Icon icon="tabler:calendar-dollar" :width="15" :height="15" />
-                <span>月付</span>
-                <strong class="lnl-node-finance-value">{{ monthlyCost.text }}</strong>
-              </DataTooltip>
+                <BillingPeriodPicker :text="recurringCost.text" :tooltip="financeTooltip" />
+              </div>
             </div>
 
             <div class="lnl-node-quality-head">

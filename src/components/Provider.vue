@@ -2,22 +2,22 @@
 import { provide, ref, watch } from 'vue'
 import CustomCursor from '@/components/CustomCursor.vue'
 import { BackTop } from '@/components/ui/back-top'
-import { useAppStore } from '@/stores/app'
+import { PALETTE_THEME_COLORS, useAppStore } from '@/stores/app'
 
 const appStore = useAppStore()
 
 const isScrolled = ref(false)
 provide('isScrolled', isScrolled)
 watch(
-  () => appStore.isDark,
-  (dark) => {
+  () => [appStore.resolvedThemeMode, appStore.colorPalette] as const,
+  ([mode, palette]) => {
+    const dark = mode === 'dark'
     const root = document.documentElement
-    if (dark)
-      root.classList.add('dark')
-    else root.classList.remove('dark')
+    root.classList.toggle('dark', dark)
+    root.dataset.palette = palette
     root.style.colorScheme = dark ? 'dark' : 'light'
     document.querySelector<HTMLMetaElement>('meta[name="theme-color"]')
-      ?.setAttribute('content', dark ? '#04100d' : '#edf7f1')
+      ?.setAttribute('content', PALETTE_THEME_COLORS[palette][mode])
   },
   { immediate: true },
 )

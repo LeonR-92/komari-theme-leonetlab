@@ -122,12 +122,15 @@ const remainingTimeText = computed(() => {
   return getExpireText(data.value.expired_at, appStore.lang)
 })
 
-const remainingValueText = computed(() => {
+const dailyAverageCostText = computed(() => {
   if (!data.value)
     return '-'
 
-  const remainingValueCNY = financeHelper.calculateRemainingValueCNY(data.value, exchangeRates.value)
-  return formatFinanceMetricValue(remainingValueCNY, financeBaseCurrency.value)
+  if (Number(data.value.billing_cycle) <= 0)
+    return appStore.lang === 'zh-CN' ? '不适用' : 'N/A'
+
+  const dailyAverageCostCNY = financeHelper.calculateDailyCostCNY(data.value, exchangeRates.value)
+  return `${formatFinanceMetricValue(dailyAverageCostCNY, financeBaseCurrency.value)} / 日`
 })
 
 const remainingTimeValueClass = computed(() => {
@@ -144,7 +147,7 @@ const metricCards = computed<MetricCard[]>(() => {
   const nodePrice = splitMetricValue(nodePriceText.value)
   const monthlyAverageCost = splitMetricValue(monthlyAverageCostText.value)
   const remainingTime = splitMetricValue(remainingTimeText.value)
-  const remainingValue = splitMetricValue(remainingValueText.value)
+  const dailyAverageCost = splitMetricValue(dailyAverageCostText.value)
 
   return [
     {
@@ -167,10 +170,10 @@ const metricCards = computed<MetricCard[]>(() => {
       valueClass: remainingTimeValueClass.value,
     },
     {
-      label: '剩余价值',
-      value: remainingValue.value,
-      unit: remainingValue.unit,
-      icon: 'tabler:coins',
+      label: '日均支出',
+      value: dailyAverageCost.value,
+      unit: dailyAverageCost.unit,
+      icon: 'tabler:calendar-dollar',
     },
   ]
 })
