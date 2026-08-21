@@ -1171,7 +1171,14 @@ const introHandoffAuditExpression = `new Promise((resolve) => {
         resolve({
           staged,
           introMarkerCount,
-          introRotated: introPhiBefore !== null && introPhiAfter !== null && introPhiBefore !== introPhiAfter,
+          // The CI runner can observe the intro immediately after a rendered frame and
+          // move the single globe into the flight shell before the next intro-labelled
+          // sample. Compare with the component's mount orientation as the stable proof,
+          // while retaining the short-window comparison as a secondary signal.
+          introRotated: Boolean(
+            (probe.intro?.initialPhi !== undefined && Math.abs(probe.intro.phi - probe.intro.initialPhi) > 0.005)
+            || (introPhiBefore !== null && introPhiAfter !== null && introPhiBefore !== introPhiAfter)
+          ),
           sourceRect: sourceRect.toJSON(),
           targetRect: targetRect.toJSON(),
           initialDistance,

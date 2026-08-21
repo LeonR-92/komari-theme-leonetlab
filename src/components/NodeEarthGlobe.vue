@@ -519,6 +519,7 @@ function updateGlobeFrame() {
   if (globeProbe) {
     globeProbe[props.variant === 'intro' ? 'intro' : 'dashboard'] = {
       phi,
+      initialPhi: DEFAULT_PHI,
       theta,
       t: performance.now(),
       autoRotate: shouldAutoRotate.value,

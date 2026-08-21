@@ -11,6 +11,8 @@
 /** 无头浏览器回归探针样本 */
 export interface GlobeProbeSample {
   phi: number
+  /** Component mount orientation, used to prove that the intro rotated at least once. */
+  initialPhi?: number
   theta: number
   t: number
   /** 采样时是否允许自动旋转 / 是否满足渲染条件（定位交接期暂停用） */
