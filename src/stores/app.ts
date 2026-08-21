@@ -12,6 +12,7 @@ export type ColorPalette = 'emerald' | 'aurora' | 'cobalt' | 'amber'
 export type CursorStyle = 'halo' | 'native'
 export type BillingDisplayPeriod = 'monthly' | 'quarterly' | 'yearly'
 export type NodeCardDensity = 'comfortable' | 'compact'
+export type HomeHeroLayout = 'compact' | 'standard' | 'hidden'
 type Lang = 'zh-CN' | 'en-US'
 type NodeViewMode = 'card' | 'list'
 type RpcTransportMode = 'websocket' | 'http'
@@ -33,6 +34,27 @@ const COLOR_PALETTE_OVERRIDE_KEY = 'komari-observatory:palette:override'
 const CURSOR_STYLE_STORAGE_KEY = 'komari-observatory:cursor-style'
 const CURSOR_STYLE_OVERRIDE_KEY = 'komari-observatory:cursor-style:override'
 const BILLING_PERIOD_STORAGE_KEY = 'komari-observatory:billing-period'
+
+function readStorageFlag(key: string): boolean {
+  try {
+    return localStorage.getItem(key) === '1'
+  }
+  catch {
+    return false
+  }
+}
+
+function writeStorageFlag(key: string, enabled: boolean): void {
+  try {
+    if (enabled)
+      localStorage.setItem(key, '1')
+    else
+      localStorage.removeItem(key)
+  }
+  catch {
+    // Appearance remains usable for the current page when storage is blocked.
+  }
+}
 
 export const PALETTE_THEME_COLORS: Record<ColorPalette, Record<'light' | 'dark', string>> = {
   emerald: { light: '#edf7f1', dark: '#04100d' },
@@ -76,6 +98,10 @@ function isValidBillingDisplayPeriod(value: unknown): value is BillingDisplayPer
   return value === 'monthly' || value === 'quarterly' || value === 'yearly'
 }
 
+function isValidHomeHeroLayout(value: unknown): value is HomeHeroLayout {
+  return value === 'compact' || value === 'standard' || value === 'hidden'
+}
+
 function getBeijingHour(timestamp = Date.now()): number {
   const parts = new Intl.DateTimeFormat('en-US', {
     timeZone: 'Asia/Shanghai',
@@ -97,11 +123,11 @@ const useAppStore = defineStore('app', () => {
   // appearance 会被存储组件自动写入，不能仅凭它是否存在来判断访客是否
   // 手动选择过主题。单独的 override 标记只由页头切换操作写入。
   const themeMode = useStorageAsync<ThemeMode>(THEME_MODE_STORAGE_KEY, 'system', localStorage)
-  const hasThemeModeOverride = ref(localStorage.getItem(THEME_MODE_OVERRIDE_KEY) === '1')
+  const hasThemeModeOverride = ref(readStorageFlag(THEME_MODE_OVERRIDE_KEY))
   const storedColorPalette = useStorageAsync<ColorPalette | null>(COLOR_PALETTE_STORAGE_KEY, null, localStorage)
-  const hasColorPaletteOverride = ref(localStorage.getItem(COLOR_PALETTE_OVERRIDE_KEY) === '1')
+  const hasColorPaletteOverride = ref(readStorageFlag(COLOR_PALETTE_OVERRIDE_KEY))
   const storedCursorStyle = useStorageAsync<CursorStyle | null>(CURSOR_STYLE_STORAGE_KEY, null, localStorage)
-  const hasCursorStyleOverride = ref(localStorage.getItem(CURSOR_STYLE_OVERRIDE_KEY) === '1')
+  const hasCursorStyleOverride = ref(readStorageFlag(CURSOR_STYLE_OVERRIDE_KEY))
   const storedBillingDisplayPeriod = useStorageAsync<BillingDisplayPeriod>(BILLING_PERIOD_STORAGE_KEY, 'monthly', localStorage)
   const lang = useStorageAsync<Lang>('language', 'zh-CN', localStorage)
   const publicSettings = ref<PublicSettings>()
@@ -121,6 +147,10 @@ const useAppStore = defineStore('app', () => {
   const brandHeroKicker = computed(() => readThemeString('brandHeroKicker', 'GLOBAL NETWORK / LIVE OBSERVATION'))
   const brandHeroTitle = computed(() => readThemeString('brandHeroTitle', '全球节点观测'))
   const brandHeroDescription = computed(() => readThemeString('brandHeroDescription', `${brandName.value} 的实时状态、资源占用与网络质量。`))
+  const homeHeroLayout = computed<HomeHeroLayout>(() => {
+    const value = publicSettings.value?.theme_settings?.homeHeroLayout
+    return isValidHomeHeroLayout(value) ? value : 'compact'
+  })
   const brandIntroEyebrow = computed(() => readThemeString('brandIntroEyebrow', 'NETWORK OBSERVATORY / GLOBAL EDGE'))
   const brandIntroSubtitle = computed(() => readThemeString('brandIntroSubtitle', '正在同步实时节点状态'))
   const brandFooterEyebrow = computed(() => readThemeString('brandFooterEyebrow', 'EDGE / OBSERVATION COMPLETE'))
@@ -468,7 +498,7 @@ const useAppStore = defineStore('app', () => {
 
   function updateThemeMode(mode?: ThemeMode) {
     hasThemeModeOverride.value = true
-    localStorage.setItem(THEME_MODE_OVERRIDE_KEY, '1')
+    writeStorageFlag(THEME_MODE_OVERRIDE_KEY, true)
 
     if (mode) {
       themeMode.value = isValidThemeMode(mode) ? mode : 'system'
@@ -489,7 +519,7 @@ const useAppStore = defineStore('app', () => {
     if (!isValidColorPalette(palette))
       return
     hasColorPaletteOverride.value = true
-    localStorage.setItem(COLOR_PALETTE_OVERRIDE_KEY, '1')
+    writeStorageFlag(COLOR_PALETTE_OVERRIDE_KEY, true)
     storedColorPalette.value = palette
   }
 
@@ -497,7 +527,7 @@ const useAppStore = defineStore('app', () => {
     if (!isValidCursorStyle(style))
       return
     hasCursorStyleOverride.value = true
-    localStorage.setItem(CURSOR_STYLE_OVERRIDE_KEY, '1')
+    writeStorageFlag(CURSOR_STYLE_OVERRIDE_KEY, true)
     storedCursorStyle.value = style
   }
 
@@ -509,9 +539,9 @@ const useAppStore = defineStore('app', () => {
     hasThemeModeOverride.value = false
     hasColorPaletteOverride.value = false
     hasCursorStyleOverride.value = false
-    localStorage.removeItem(THEME_MODE_OVERRIDE_KEY)
-    localStorage.removeItem(COLOR_PALETTE_OVERRIDE_KEY)
-    localStorage.removeItem(CURSOR_STYLE_OVERRIDE_KEY)
+    writeStorageFlag(THEME_MODE_OVERRIDE_KEY, false)
+    writeStorageFlag(COLOR_PALETTE_OVERRIDE_KEY, false)
+    writeStorageFlag(CURSOR_STYLE_OVERRIDE_KEY, false)
     themeMode.value = defaultThemeMode.value
     storedColorPalette.value = defaultColorPalette.value
     storedCursorStyle.value = defaultCursorStyle.value
@@ -582,6 +612,7 @@ const useAppStore = defineStore('app', () => {
     brandHeroKicker,
     brandHeroTitle,
     brandHeroDescription,
+    homeHeroLayout,
     brandIntroEyebrow,
     brandIntroSubtitle,
     brandFooterEyebrow,

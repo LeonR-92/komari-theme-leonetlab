@@ -75,7 +75,9 @@ const clients = [
   client(thirdNodeUuid, 'Singapore Edge', 'SG', 8),
   client(fourthNodeUuid, 'Los Angeles Edge', 'US', 6),
 ]
-clients[0].price = 30
+clients[0].price = 119
+clients[0].billing_cycle = 365
+clients[0].currency = 'USD'
 clients[0].gpu_name = 'Fixture GPU'
 clients[0].expired_at = new Date(Date.now() + 2 * 24 * 60 * 60 * 1000).toISOString()
 clients[1].price = -1
@@ -630,7 +632,7 @@ async function runInteractivePage(name, width, height, expression, screenshotNam
 const pingDialogOpenExpression = `new Promise((resolve) => {
   const deadline = Date.now() + 12000;
   const timer = setInterval(() => {
-    const button = document.querySelector('button[aria-label^="Tokyo Fixture 延迟"]');
+    const button = document.querySelector('button[aria-label*="查看 Tokyo Fixture Ping 详情"]');
     if (button) {
       clearInterval(timer);
       button.click();
@@ -670,21 +672,24 @@ const pingDialogOpenExpression = `new Promise((resolve) => {
 const financeOverflowAuditExpression = `new Promise((resolve) => {
   const deadline = Date.now() + 12000;
   const timer = setInterval(() => {
-    const button = document.querySelector('[data-finance-trigger]');
+    const button = document.querySelector('.node-card .lnl-billing-trigger:not(.is-static)');
     if (button) {
       clearInterval(timer);
       button.click();
       setTimeout(() => {
-        const popover = document.querySelector('[data-finance-popover]');
+        const popover = document.querySelector('.lnl-billing-menu');
         const rect = popover?.getBoundingClientRect();
         const viewportWidth = document.documentElement.clientWidth;
+        const triggerRect = button.getBoundingClientRect();
+        const financeCellRect = button.closest('[data-finance-state]')?.getBoundingClientRect();
+        const chevronRect = button.querySelector('.lnl-billing-chevron')?.getBoundingClientRect();
         const assistiveHint = button.querySelector('.sr-only');
         const visibleCopy = button.cloneNode(true);
         visibleCopy.querySelectorAll('.sr-only').forEach(node => node.remove());
         resolve({
-          state: popover?.classList.contains('is-open') ? 'opened' : 'closed',
+          state: popover ? 'opened' : 'closed',
           triggerText: visibleCopy.textContent?.replace(/\s+/g, ' ').trim() || '',
-          assistiveHintHidden: assistiveHint ? getComputedStyle(assistiveHint).position === 'absolute' && assistiveHint.getBoundingClientRect().width <= 1 : false,
+          assistiveHintHidden: !assistiveHint || (getComputedStyle(assistiveHint).position === 'absolute' && assistiveHint.getBoundingClientRect().width <= 1),
           textFits: [...button.querySelectorAll('span:not(.sr-only)')].every((span) => {
             const spanRect = span.getBoundingClientRect();
             const buttonRect = button.getBoundingClientRect();
@@ -694,6 +699,12 @@ const financeOverflowAuditExpression = `new Promise((resolve) => {
           documentWidth: Math.max(document.documentElement.scrollWidth, document.body.scrollWidth),
           left: rect?.left ?? -1,
           right: rect?.right ?? -1,
+          triggerFillsCell: Boolean(financeCellRect
+            && triggerRect.width >= financeCellRect.width * 0.75
+            && triggerRect.left >= financeCellRect.left - 0.5
+            && triggerRect.right <= financeCellRect.right + 0.5),
+          triggerCellRightInset: financeCellRect ? financeCellRect.right - triggerRect.right : -1,
+          chevronRightInset: chevronRect ? triggerRect.right - chevronRect.right : -1,
         });
       }, 420);
     }
@@ -971,7 +982,8 @@ const globeRegionInteractionAuditExpression = `new Promise((resolve) => {
 const globeRouteRippleAuditExpression = `new Promise((resolve) => {
   const deadline = Date.now() + 12000;
   const timer = setInterval(() => {
-    const trigger = document.querySelector('[role="link"][aria-label="查看节点 Tokyo Fixture 详情"]');
+    const trigger = [...document.querySelectorAll('.node-card[role="link"]')]
+      .find(card => card.textContent?.includes('Tokyo Fixture'));
     const initialHalo = document.querySelector('#lnl-globe-dashboard-slot .lnl-dashboard-halo');
     if (trigger && initialHalo) {
       clearInterval(timer);
@@ -1017,7 +1029,7 @@ const globeRouteRippleAuditExpression = `new Promise((resolve) => {
 const pingDialogCloseAuditExpression = `new Promise((resolve) => {
   const deadline = Date.now() + 12000;
   const timer = setInterval(() => {
-    const trigger = document.querySelector('button[aria-label^="Tokyo Fixture 延迟"]');
+    const trigger = document.querySelector('button[aria-label*="查看 Tokyo Fixture Ping 详情"]');
     if (!trigger) {
       if (Date.now() >= deadline) {
         clearInterval(timer);
@@ -1159,7 +1171,14 @@ const introHandoffAuditExpression = `new Promise((resolve) => {
         resolve({
           staged,
           introMarkerCount,
-          introRotated: introPhiBefore !== null && introPhiAfter !== null && introPhiBefore !== introPhiAfter,
+          // The CI runner can observe the intro immediately after a rendered frame and
+          // move the single globe into the flight shell before the next intro-labelled
+          // sample. Compare with the component's mount orientation as the stable proof,
+          // while retaining the short-window comparison as a secondary signal.
+          introRotated: Boolean(
+            (probe.intro?.initialPhi !== undefined && Math.abs(probe.intro.phi - probe.intro.initialPhi) > 0.005)
+            || (introPhiBefore !== null && introPhiAfter !== null && introPhiBefore !== introPhiAfter)
+          ),
           sourceRect: sourceRect.toJSON(),
           targetRect: targetRect.toJSON(),
           initialDistance,
@@ -1260,7 +1279,7 @@ const globeMotionAuditExpression = `new Promise((resolve) => {
 const pingContentMotionAuditExpression = `new Promise((resolve) => {
   const deadline = Date.now() + 12000;
   const timer = setInterval(() => {
-    const trigger = document.querySelector('button[aria-label^="Tokyo Fixture 延迟"]');
+    const trigger = document.querySelector('button[aria-label*="查看 Tokyo Fixture Ping 详情"]');
     if (!trigger) {
       if (Date.now() >= deadline) {
         clearInterval(timer);
@@ -1460,7 +1479,7 @@ const mobileSearchMoveAuditExpression = `new Promise((resolve) => {
 const mobileProbeMatrixAuditExpression = `new Promise((resolve) => {
   const deadline = Date.now() + 12000;
   const timer = setInterval(() => {
-    const button = document.querySelector('button[aria-label^="Tokyo Fixture 延迟"]');
+    const button = document.querySelector('button[aria-label*="查看 Tokyo Fixture Ping 详情"]');
     if (button) {
       clearInterval(timer);
       button.click();
@@ -1728,7 +1747,7 @@ const slowPublicSettingsShellAuditExpression = `new Promise((resolve) => {
 })`
 
 const visitorFixtureInitScript = `(() => {
-  sessionStorage.setItem('komari-observatory:intro:1.4.3', 'seen');
+  sessionStorage.setItem('komari-observatory:intro:1.4.3-fix2', 'seen');
   sessionStorage.removeItem('komari-observatory:visitor-presentation:1.4.3');
   const nativeFetch = window.fetch.bind(window);
   window.fetch = (input, init) => {
@@ -1747,7 +1766,7 @@ const visitorFixtureInitScript = `(() => {
 })()`
 
 async function capturePingDialogScreenshot(name, width, height) {
-  const result = await runInteractivePage(name, width, height, pingDialogOpenExpression, name, `sessionStorage.setItem('komari-observatory:intro:1.4.3', 'seen');`)
+  const result = await runInteractivePage(name, width, height, pingDialogOpenExpression, name, `sessionStorage.setItem('komari-observatory:intro:1.4.3-fix2', 'seen');`)
   assert.equal(result?.state, 'opened')
   assert.ok(result?.left >= -0.5 && result?.right <= result?.viewportWidth + 0.5, `Ping dialog escaped viewport: ${JSON.stringify(result)}`)
   assert.ok(result?.centerError <= 1, `Ping dialog is not centered: ${JSON.stringify(result)}`)
@@ -1755,7 +1774,7 @@ async function capturePingDialogScreenshot(name, width, height) {
 
 async function auditMobileFinanceOverflow(width) {
   const screenshotName = process.env.SMOKE_SCREENSHOT_DIR && width === 390 ? 'mobile-finance-open' : undefined
-  const result = await runInteractivePage(`mobile-finance-audit-${width}`, width, 844, financeOverflowAuditExpression, screenshotName, `sessionStorage.setItem('komari-observatory:intro:1.4.3', 'seen');`)
+  const result = await runInteractivePage(`mobile-finance-audit-${width}`, width, 844, financeOverflowAuditExpression, screenshotName, `sessionStorage.setItem('komari-observatory:intro:1.4.3-fix2', 'seen');`)
   assert.equal(result?.state, 'opened')
   assert.doesNotMatch(result?.triggerText ?? '', financeDetailsLabelPattern)
   assert.equal(result?.assistiveHintHidden, true, `Finance assistive hint became visible: ${JSON.stringify(result)}`)
@@ -1763,10 +1782,13 @@ async function auditMobileFinanceOverflow(width) {
   assert.equal(result?.viewportWidth, width)
   assert.ok(result?.documentWidth <= result?.viewportWidth, `Mobile document overflowed: ${JSON.stringify(result)}`)
   assert.ok(result?.left >= 0 && result?.right <= result?.viewportWidth + 0.5, `Finance panel escaped viewport: ${JSON.stringify(result)}`)
+  assert.equal(result?.triggerFillsCell, true, `Finance trigger did not fill its mobile cell: ${JSON.stringify(result)}`)
+  assert.ok(result?.triggerCellRightInset >= -0.5 && result?.triggerCellRightInset <= 12, `Finance trigger was not aligned within the mobile cell: ${JSON.stringify(result)}`)
+  assert.ok(result?.chevronRightInset >= -0.5 && result?.chevronRightInset <= 2, `Finance chevron was not aligned to the mobile cell edge: ${JSON.stringify(result)}`)
 }
 
 async function auditNodeFinanceStates(width) {
-  const initScript = `sessionStorage.setItem('komari-observatory:intro:1.4.3', 'seen');`
+  const initScript = `sessionStorage.setItem('komari-observatory:intro:1.4.3-fix2', 'seen');`
   const defaultResult = await runInteractivePage(
     `node-finance-states-default-${width}`,
     width,
@@ -1812,7 +1834,7 @@ async function auditPingBarGeometry() {
     900,
     pingBarGeometryAuditExpression,
     undefined,
-    `sessionStorage.setItem('komari-observatory:intro:1.4.3', 'seen');`,
+    `sessionStorage.setItem('komari-observatory:intro:1.4.3-fix2', 'seen');`,
   )
   reportBrowserAudit('node-ping-bar-geometry', result)
   assert.equal(result?.length, 2, `Expected latency and loss panels: ${JSON.stringify(result)}`)
@@ -1852,7 +1874,7 @@ async function auditGlobeFlagsAcrossThemeChange() {
     780,
     globeFlagThemeAuditExpression,
     undefined,
-    `sessionStorage.setItem('komari-observatory:intro:1.4.3-fix1', 'seen'); localStorage.setItem('appearance', 'light'); localStorage.setItem('leonetlab:appearance:user-override', '1');`,
+    `sessionStorage.setItem('komari-observatory:intro:1.4.3-fix2', 'seen'); localStorage.setItem('appearance', 'light'); localStorage.setItem('leonetlab:appearance:user-override', '1');`,
   )
   reportBrowserAudit('globe-flags-theme-change', result)
   assert.equal(result?.initialCount, 4, `Expected four globe flag overlays: ${JSON.stringify(result)}`)
@@ -1879,7 +1901,7 @@ async function auditGlobeRegionInteraction() {
     780,
     globeRegionInteractionAuditExpression,
     undefined,
-    `window.__lnlGlobeProbe = {}; sessionStorage.setItem('komari-observatory:intro:1.4.3', 'seen');`,
+    `window.__lnlGlobeProbe = {}; sessionStorage.setItem('komari-observatory:intro:1.4.3-fix2', 'seen');`,
   )
   reportBrowserAudit('globe-region-interaction', result)
   assert.equal(result?.openedTooEarly, false, `Region preview skipped hover intent delay: ${JSON.stringify(result)}`)
@@ -1900,7 +1922,7 @@ async function auditGlobeRouteRipple() {
     780,
     globeRouteRippleAuditExpression,
     undefined,
-    `sessionStorage.setItem('komari-observatory:intro:1.4.3', 'seen');`,
+    `sessionStorage.setItem('komari-observatory:intro:1.4.3-fix2', 'seen');`,
   )
   reportBrowserAudit('globe-route-ripple', result)
   assert.equal(result?.routeRipple, true, `Returning home did not trigger the route ripple: ${JSON.stringify(result)}`)
@@ -1916,7 +1938,7 @@ async function auditPingDialogCloseAnimation() {
     780,
     pingDialogCloseAuditExpression,
     undefined,
-    `sessionStorage.setItem('komari-observatory:intro:1.4.3', 'seen');`,
+    `sessionStorage.setItem('komari-observatory:intro:1.4.3-fix2', 'seen');`,
   )
   reportBrowserAudit('ping-dialog-close-animation', result)
   assert.equal(result?.closedSeen, true, `Ping dialog skipped its closed state: ${JSON.stringify(result)}`)
@@ -1987,7 +2009,7 @@ async function auditMetricStoreFallback() {
       780,
       pingDialogOpenExpression,
       undefined,
-      `sessionStorage.setItem('komari-observatory:intro:1.4.3', 'seen');`,
+      `sessionStorage.setItem('komari-observatory:intro:1.4.3-fix2', 'seen');`,
     )
     reportBrowserAudit('metric-store-fallback', result)
     assert.equal(result?.state, 'opened', `Ping dialog did not open behind an uninitialized metric store: ${JSON.stringify(result)}`)
@@ -2012,7 +2034,7 @@ async function auditGlobeMotionMode(mode, expectedMoved) {
       780,
       globeMotionAuditExpression.replace('__EARTH_MODE__', mode),
       undefined,
-      `sessionStorage.setItem('komari-observatory:intro:1.4.3', 'seen');`,
+      `sessionStorage.setItem('komari-observatory:intro:1.4.3-fix2', 'seen');`,
     )
     reportBrowserAudit(`globe-motion-${mode}`, result)
     assert.equal(result?.moved, expectedMoved, `Unexpected ${mode} globe motion: ${JSON.stringify(result)}`)
@@ -2029,7 +2051,7 @@ async function auditPingContentMotion() {
     780,
     pingContentMotionAuditExpression,
     undefined,
-    `sessionStorage.setItem('komari-observatory:intro:1.4.3', 'seen');`,
+    `sessionStorage.setItem('komari-observatory:intro:1.4.3-fix2', 'seen');`,
   )
   reportBrowserAudit('ping-content-motion', result)
   assert.match(result?.toolbarAnimation || '', pingSectionInPattern, `Ping toolbar has no entrance transition: ${JSON.stringify(result)}`)
@@ -2112,7 +2134,7 @@ async function auditSearchGeometry(width) {
     width <= 760 ? 844 : 900,
     searchGeometryAuditExpression,
     undefined,
-    `sessionStorage.setItem('komari-observatory:intro:1.4.3', 'seen');`,
+    `sessionStorage.setItem('komari-observatory:intro:1.4.3-fix2', 'seen');`,
   )
   reportBrowserAudit(`search-geometry-${width}`, result)
   assert.equal(result?.drawerContained, true, `Search drawer escaped its viewport: ${JSON.stringify(result)}`)
@@ -2144,7 +2166,7 @@ async function auditSlowPublicSettingsShell() {
 async function auditMobileChromeLayout() {
   visitorInfoEnabledFixture = true
   try {
-    const initScript = `${visitorFixtureInitScript}\nsessionStorage.setItem('komari-observatory:intro:1.4.3', 'seen');`
+    const initScript = `${visitorFixtureInitScript}\nsessionStorage.setItem('komari-observatory:intro:1.4.3-fix2', 'seen');`
     const result = await runInteractivePage('mobile-chrome-layout', 390, 844, mobileChromeLayoutAuditExpression, undefined, initScript)
     reportBrowserAudit('mobile-chrome-layout', result)
     assert.ok(Math.abs(result?.logoWidth - result?.logoHeight) < 0.5, `Mobile logo frame is not square: ${JSON.stringify(result)}`)
@@ -2172,7 +2194,7 @@ async function auditMobileIntroTypography() {
     844,
     mobileIntroTypographyAuditExpression,
     undefined,
-    `sessionStorage.removeItem('komari-observatory:intro:1.4.3');`,
+    `sessionStorage.removeItem('komari-observatory:intro:1.4.3-fix2');`,
   )
   reportBrowserAudit('mobile-intro-typography', result)
   assert.ok(result?.left >= -0.5 && result?.right <= result?.viewportWidth + 0.5, `Mobile intro title escaped viewport: ${JSON.stringify(result)}`)
@@ -2202,7 +2224,7 @@ async function auditMobileSearchMove() {
     844,
     mobileSearchMoveAuditExpression,
     undefined,
-    `sessionStorage.setItem('komari-observatory:intro:1.4.3', 'seen');`,
+    `sessionStorage.setItem('komari-observatory:intro:1.4.3-fix2', 'seen');`,
   )
   reportBrowserAudit('mobile-search-move', result)
   assert.ok(result?.after < result?.before - 100, `Filtered card did not move to the first slot: ${JSON.stringify(result)}`)

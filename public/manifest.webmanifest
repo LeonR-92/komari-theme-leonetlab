@@ -8,8 +8,6 @@
   "start_url": "/",
   "scope": "/",
   "display": "standalone",
-  "display_override": ["standalone", "minimal-ui"],
-  "launch_handler": { "client_mode": "navigate-existing" },
   "orientation": "any",
   "background_color": "#030b09",
   "theme_color": "#04100d",

@@ -41,6 +41,8 @@ class InitManager {
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null
   private isPolling = false
   private isInitialized = false
+  private destroyed = false
+  private redirectingToAdmin = false
   private useWebSocket: boolean | null = null // 根据主题配置决定
   private wsCloseUnsubscribe: (() => void) | null = null
   private wsErrorUnsubscribe: (() => void) | null = null
@@ -82,30 +84,40 @@ class InitManager {
     try {
       // 公开设置决定首访/骨架，应尽早提交到 UI；健康检查继续并行，
       // 不再让一个慢 ping 阻塞首帧和首访封面。
-      const healthPromise = this.healthCheck()
+      const healthPromise = this.healthCheck().then<unknown>(
+        () => null,
+        error => error,
+      )
       await this.fetchPublicSettings()
+      if (this.destroyed)
+        return
       await onPublicSettingsReady?.()
+      if (this.destroyed)
+        return
 
       // 健康检查、用户状态和节点数据互不依赖。公开设置一旦绘制，
       // 三者立即并行，避免慢 ping 串行阻塞节点首屏。
-      await Promise.all([
+      const [healthError] = await Promise.all([
         healthPromise,
         this.fetchUserInfo(),
         this.fetchNodesData(),
       ])
+      if (this.destroyed)
+        return
+      if (healthError)
+        throw healthError
 
-      // 5. 解除加载状态
-      this.appStore.loading = false
-
-      // 6. 建立 WebSocket 连接并开始轮询
-      this.startWebSocketAndPolling()
-
-      this.isInitialized = true
+      this.ensureRuntimeUpdatesStarted()
     }
     catch (error) {
+      if (this.destroyed)
+        return
       console.error('[InitManager] Initialization failed:', error)
       // 即使失败也解除加载状态，显示错误页面
       this.appStore.loading = false
+      // 初始请求可能只遭遇一次网络抖动。只要不是私有站点跳转，仍启动
+      // 运行期更新链，让后续轮询自行恢复节点和连接状态，避免空页面永久停住。
+      this.ensureRuntimeUpdatesStarted()
       throw error
     }
   }
@@ -115,14 +127,19 @@ class InitManager {
    */
   private async healthCheck(): Promise<void> {
     try {
-      const result = await this.rpc.ping()
+      const result = await this.rpc.ping(this.config.healthCheckTimeout)
+      if (this.destroyed)
+        return
       if (result !== 'pong') {
         throw new RpcError(-32000, 'Unexpected health check response')
       }
     }
     catch (error) {
+      if (this.destroyed)
+        return
       if (error instanceof RpcError && error.code === 401) {
         console.warn('[InitManager] Private site detected, redirecting to /admin')
+        this.redirectingToAdmin = true
         this.appStore.updateLoginState(false)
         this.appStore.loading = false
         location.href = '/admin'
@@ -142,9 +159,13 @@ class InitManager {
     try {
       const api = getSharedApi()
       const publicSettings = await api.getPublicSettings()
+      if (this.destroyed)
+        return
       this.appStore.publicSettings = publicSettings
     }
     catch (error) {
+      if (this.destroyed)
+        return
       console.error('[InitManager] Failed to fetch public settings:', error)
       // 非关键错误，继续初始化
     }
@@ -157,9 +178,13 @@ class InitManager {
     try {
       const api = getSharedApi()
       const userInfo = await api.getMe()
+      if (this.destroyed)
+        return
       this.appStore.updateLoginState(userInfo.logged_in)
     }
     catch (error) {
+      if (this.destroyed)
+        return
       this.appStore.updateLoginState(false)
       console.error('[InitManager] Failed to fetch user info:', error)
       // 非关键错误，继续初始化
@@ -176,12 +201,16 @@ class InitManager {
         this.rpc.getNodes() as Promise<Record<string, Client>>,
         this.rpc.getNodesLatestStatus() as Promise<Record<string, NodeStatus>>,
       ])
+      if (this.destroyed)
+        return
 
       // 初始化节点数据
       this.nodesStore.initNodes(clientsResult, statusesResult)
       this.lastClientRefreshAt = Date.now()
     }
     catch (error) {
+      if (this.destroyed)
+        return
       console.error('[InitManager] Failed to fetch nodes data:', error)
       throw error
     }
@@ -191,6 +220,8 @@ class InitManager {
    * 启动 WebSocket 连接和轮询
    */
   private startWebSocketAndPolling(): void {
+    if (this.destroyed)
+      return
     // 根据主题配置决定初始连接模式
     const configuredMode = this.appStore.rpcTransportMode
     this.useWebSocket = configuredMode === 'websocket'
@@ -211,12 +242,20 @@ class InitManager {
     this.startPolling()
   }
 
+  private ensureRuntimeUpdatesStarted(): void {
+    if (this.destroyed || this.redirectingToAdmin || this.isInitialized)
+      return
+    this.appStore.loading = false
+    this.startWebSocketAndPolling()
+    this.isInitialized = true
+  }
+
   /**
    * 建立 WebSocket 连接
    */
   private async connectWebSocket(): Promise<void> {
     // 如果已回落到 POST 模式或配置为 HTTP 模式，不再尝试 WebSocket
-    if (this.useWebSocket === false) {
+    if (this.destroyed || this.useWebSocket === false) {
       return
     }
 
@@ -229,6 +268,8 @@ class InitManager {
     try {
       // 使用 ping 验证连接，10 秒超时
       await client.ensureWebSocketConnectedWithPing(10000)
+      if (this.destroyed)
+        return
       this.nodesStore.updateWsState('connected', 0)
       this.clearReconnectTimer()
 
@@ -239,6 +280,8 @@ class InitManager {
       this.monitorWebSocketConnection()
     }
     catch (error) {
+      if (this.destroyed)
+        return
       console.error('[InitManager] WebSocket connection failed:', error)
       this.nodesStore.updateWsState('disconnected')
       this.scheduleReconnect()
@@ -249,11 +292,15 @@ class InitManager {
    * 监控 WebSocket 连接状态
    */
   private monitorWebSocketConnection(): void {
+    if (this.destroyed)
+      return
     const client = this.rpc.getClient()
     this.wsCloseUnsubscribe?.()
     this.wsErrorUnsubscribe?.()
 
     this.wsCloseUnsubscribe = client.onWebSocketClose(({ event, manuallyClosed, url }) => {
+      if (this.destroyed)
+        return
       console.warn('[InitManager] WebSocket closed:', {
         code: event.code,
         reason: event.reason,
@@ -271,6 +318,8 @@ class InitManager {
     })
 
     this.wsErrorUnsubscribe = client.onWebSocketError(({ url }) => {
+      if (this.destroyed)
+        return
       console.error('[InitManager] WebSocket error:', url)
     })
   }
@@ -279,7 +328,7 @@ class InitManager {
    * 安排重连
    */
   private scheduleReconnect(): void {
-    if (this.useWebSocket !== true) {
+    if (this.destroyed || this.useWebSocket !== true) {
       return
     }
 
@@ -306,7 +355,7 @@ class InitManager {
     this.reconnectTimer = setTimeout(async () => {
       this.reconnectTimer = null
 
-      if (this.useWebSocket !== true) {
+      if (this.destroyed || this.useWebSocket !== true) {
         return
       }
 
@@ -326,6 +375,8 @@ class InitManager {
    * 回落到 POST 模式
    */
   private fallbackToPostMode(): void {
+    if (this.destroyed)
+      return
     this.useWebSocket = false
     this.clearReconnectTimer()
     this.nodesStore.updateWsState('disconnected', this.config.wsMaxReconnectAttempts)
@@ -350,6 +401,8 @@ class InitManager {
    * 开始轮询
    */
   private startPolling(): void {
+    if (this.destroyed)
+      return
     if (this.pollTimer) {
       clearInterval(this.pollTimer)
     }
@@ -363,7 +416,7 @@ class InitManager {
    * 执行轮询任务
    */
   private async poll(): Promise<void> {
-    if (this.isPolling) {
+    if (this.destroyed || this.isPolling) {
       return
     }
 
@@ -388,6 +441,8 @@ class InitManager {
         this.rpc.getNodesLatestStatus() as Promise<Record<string, NodeStatus>>,
         clientsPromise,
       ])
+      if (this.destroyed)
+        return
 
       if (clientsResult) {
         this.nodesStore.updateNodeClients(clientsResult)
@@ -401,6 +456,8 @@ class InitManager {
       this.appStore.connectionError = false
     }
     catch (error) {
+      if (this.destroyed)
+        return
       if (error instanceof RpcError) {
         console.error('[InitManager] Poll RPC error:', error.message)
       }
@@ -433,6 +490,9 @@ class InitManager {
    * 销毁管理器
    */
   destroy(): void {
+    if (this.destroyed)
+      return
+    this.destroyed = true
     this.stopPolling()
     this.clearReconnectTimer()
     this.wsCloseUnsubscribe?.()

@@ -10,17 +10,22 @@ import {
   DropdownMenuRoot,
   DropdownMenuTrigger,
 } from 'reka-ui'
+import { computed } from 'vue'
 import { useAppStore } from '@/stores/app'
 import { BILLING_PERIOD_LABELS } from '@/utils/financeHelper'
 
-defineProps<{
+const props = withDefaults(defineProps<{
   text: string
   tooltip: string
   variant?: 'card' | 'list'
-}>()
+  disabled?: boolean
+}>(), {
+  disabled: false,
+})
 
 const appStore = useAppStore()
 const periods = Object.entries(BILLING_PERIOD_LABELS) as Array<[BillingDisplayPeriod, string]>
+const displayLabel = computed(() => props.disabled ? '一次性' : BILLING_PERIOD_LABELS[appStore.billingDisplayPeriod])
 
 function updatePeriod(value: unknown) {
   if (value === 'monthly' || value === 'quarterly' || value === 'yearly')
@@ -29,19 +34,29 @@ function updatePeriod(value: unknown) {
 </script>
 
 <template>
-  <DropdownMenuRoot :modal="false">
+  <div
+    v-if="disabled"
+    class="lnl-billing-trigger is-static"
+    :class="`is-${variant ?? 'card'}`"
+    :title="tooltip"
+  >
+    <Icon icon="tabler:calendar-dollar" :width="15" :height="15" />
+    <span>{{ displayLabel }}</span>
+    <strong>{{ text }}</strong>
+  </div>
+  <DropdownMenuRoot v-else :modal="false">
     <DropdownMenuTrigger as-child>
       <button
         type="button"
         class="lnl-billing-trigger"
         :class="`is-${variant ?? 'card'}`"
         :title="tooltip"
-        aria-label="切换费用展示周期"
+        :aria-label="`${displayLabel}${text}，切换费用展示周期`"
         @click.stop
         @pointerdown.stop
       >
         <Icon icon="tabler:calendar-dollar" :width="15" :height="15" />
-        <span>{{ BILLING_PERIOD_LABELS[appStore.billingDisplayPeriod] }}</span>
+        <span>{{ displayLabel }}</span>
         <strong>{{ text }}</strong>
         <Icon class="lnl-billing-chevron" icon="tabler:chevron-down" :width="13" :height="13" />
       </button>
@@ -81,6 +96,7 @@ function updatePeriod(value: unknown) {
 <style>
 .lnl-billing-trigger {
   width: 100%;
+  height: 100%;
   min-width: 0;
   padding: 0;
   border: 0;
@@ -91,7 +107,7 @@ function updatePeriod(value: unknown) {
 
 .lnl-billing-trigger.is-card {
   display: grid;
-  grid-template-columns: 15px minmax(0, 1fr) 16px;
+  grid-template-columns: 15px minmax(0, 1fr) 18px;
   grid-template-rows: auto auto;
   align-items: center;
   column-gap: 3px;
@@ -129,7 +145,7 @@ function updatePeriod(value: unknown) {
 
 .lnl-billing-trigger.is-list {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 16px;
+  grid-template-columns: minmax(0, 1fr) 18px;
   gap: 2px 4px;
   padding: 0;
   text-align: left;
@@ -166,9 +182,9 @@ function updatePeriod(value: unknown) {
   align-self: center;
   justify-self: end;
   box-sizing: border-box;
-  width: 16px;
-  height: 16px;
-  padding: 3px;
+  width: 18px;
+  height: 18px;
+  padding: 4px;
   border-radius: 6px;
   background: color-mix(in srgb, var(--lnl-green) 8%, transparent);
   color: var(--muted-foreground);
@@ -176,6 +192,14 @@ function updatePeriod(value: unknown) {
     color var(--lnl-motion-fast) ease,
     background-color var(--lnl-motion-fast) ease,
     transform var(--lnl-motion-standard) var(--lnl-ease-out);
+}
+
+.lnl-billing-trigger.is-static.is-card {
+  grid-template-columns: 15px minmax(0, 1fr);
+}
+
+.lnl-billing-trigger.is-static.is-list {
+  grid-template-columns: minmax(0, 1fr);
 }
 
 .lnl-billing-trigger:hover .lnl-billing-chevron,

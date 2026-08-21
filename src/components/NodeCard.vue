@@ -10,7 +10,7 @@ import { useBackgroundSurface } from '@/composables/useBackgroundSurface'
 import { useFinanceRates } from '@/composables/useFinanceRates'
 import { useNodePingDisplay } from '@/composables/useNodePingDisplay'
 import { useAppStore } from '@/stores/app'
-import { BILLING_PERIOD_LABELS, formatNodeRecurringCost, resolveCurrency } from '@/utils/financeHelper'
+import { formatNodeRecurringCost, formatRecurringCostTooltip, resolveCurrency } from '@/utils/financeHelper'
 import { formatBytesPerSecondWithConfig, formatBytesWithConfig, formatDateTime, formatUptimeWithFormat, getStatus } from '@/utils/helper'
 import { getOSImage, getOSName } from '@/utils/osImageHelper'
 import { getRegionDisplayName, getRegionFlagUrl } from '@/utils/regionHelper'
@@ -124,16 +124,8 @@ const recurringCost = computed(() => formatNodeRecurringCost(
   conversionAvailable.value,
 ))
 const financeTooltip = computed(() => {
-  const node = props.node
-  if (recurringCost.value.state === 'free')
-    return '该节点标记为免费'
-  if (recurringCost.value.state === 'missing')
-    return '请在 Komari 后台填写价格与计费周期'
-  if (recurringCost.value.state === 'invalid')
-    return `计费周期无效，无法折算${BILLING_PERIOD_LABELS[appStore.billingDisplayPeriod]}`
-  const source = resolveCurrency(node.currency) ?? String(node.currency || '未知币种').trim()
-  const expiry = node.expired_at ? ` · 到期 ${expiredDate.value}` : ''
-  return `${BILLING_PERIOD_LABELS[appStore.billingDisplayPeriod]} ${recurringCost.value.exactText} · 后台付款 ${source} ${Number(node.price).toFixed(2)} / ${node.billing_cycle} 天${expiry}`
+  const expiry = props.node.expired_at ? ` · 到期 ${expiredDate.value}` : ''
+  return `${formatRecurringCostTooltip(recurringCost.value, appStore.billingDisplayPeriod)}${expiry}`
 })
 
 watch(
@@ -161,7 +153,6 @@ function openPingDialog() {
     hoverable
     role="link"
     tabindex="0"
-    :aria-label="`查看节点 ${props.node.name} 详情`"
     :size="appStore.nodeCardDensity === 'compact' ? 'small' : 'medium'"
     class="node-card h-full w-full cursor-pointer"
     header-class="lnl-node-card-header"
@@ -338,7 +329,11 @@ function openPingDialog() {
                 class="lnl-node-lifecycle-item lnl-node-finance"
                 :data-finance-state="props.node.price === 0 ? 'missing' : props.node.price < 0 ? 'free' : 'paid'"
               >
-                <BillingPeriodPicker :text="recurringCost.text" :tooltip="financeTooltip" />
+                <BillingPeriodPicker
+                  :text="recurringCost.text"
+                  :tooltip="financeTooltip"
+                  :disabled="recurringCost.oneTime"
+                />
               </div>
             </div>
 
@@ -351,7 +346,7 @@ function openPingDialog() {
                 type="button"
                 data-node-ping-panel="latency"
                 class="group/panel"
-                :aria-label="`${props.node.name} 延迟`"
+                :aria-label="`延迟${latencyDisplay}，查看 ${props.node.name} Ping 详情`"
                 @click.stop="openPingDialog"
               >
                 <span><i>延迟</i><b>{{ latencyDisplay }}</b></span>
@@ -371,7 +366,7 @@ function openPingDialog() {
                 type="button"
                 data-node-ping-panel="loss"
                 class="group/panel"
-                :aria-label="`${props.node.name} 丢包`"
+                :aria-label="`丢包${lossDisplay}，查看 ${props.node.name} Ping 详情`"
                 @click.stop="openPingDialog"
               >
                 <span><i>丢包</i><b>{{ lossDisplay }}</b></span>
@@ -745,6 +740,10 @@ function openPingDialog() {
   border-radius: 10px;
   border: 1px solid color-mix(in srgb, var(--lnl-line) 56%, transparent);
   background: color-mix(in srgb, var(--lnl-surface-raised, var(--background)) 86%, var(--card));
+}
+
+.lnl-node-finance {
+  display: block;
 }
 
 .lnl-node-lifecycle-item > svg {

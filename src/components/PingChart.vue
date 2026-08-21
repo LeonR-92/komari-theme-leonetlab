@@ -12,6 +12,7 @@ import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { useBackgroundSurface } from '@/composables/useBackgroundSurface'
 import { useMotionPreference } from '@/composables/useMotionPreference'
 import { useAppStore } from '@/stores/app'
+import { isMetricCapabilityUnavailable } from '@/utils/metricCompatibility'
 import { isMobileLike } from '@/utils/mobilePerf'
 import { bridgeShortDisplayGaps, cutPeakValues } from '@/utils/recordHelper'
 import { getSharedRpc, RpcError } from '@/utils/rpc'
@@ -252,20 +253,14 @@ function isMethodNotFoundError(err: unknown): boolean {
   return err instanceof RpcError && err.code === -32601
 }
 
-// 官方 metric store 未初始化错误消息的识别模式（模块作用域，避免重复编译）
-const METRIC_STORE_ERROR_PATTERN = /metric store/i
-
 function canFallbackToLegacyRecords(err: unknown): boolean {
-  if (isMethodNotFoundError(err))
+  if (isMethodNotFoundError(err) || isMetricCapabilityUnavailable(err))
     return true
   if (!(err instanceof RpcError))
     return false
   if (err.code === -32602)
     return true
-  // 官方 public:queryMetrics 在 metric store 初始化失败时返回
-  // InternalError(-32603) "metric store not initialized"；仅该场景回退到
-  // common:getRecords，其它 -32603 内部错误继续上抛，不静默吞掉。
-  return err.code === -32603 && METRIC_STORE_ERROR_PATTERN.test(err.message)
+  return false
 }
 
 function getMetricTaskId(series: MetricSeries, point: MetricPoint): number | null {
@@ -306,8 +301,10 @@ async function fetchMetricRecords(uuid: string, hours: number): Promise<PingChar
 
   const records: PingRecord[] = []
   const lossPoints: PingLossPoint[] = []
-  for (const series of metricResult?.series ?? []) {
-    for (const point of series.points ?? []) {
+  const metricSeries = Array.isArray(metricResult?.series) ? metricResult.series : []
+  for (const series of metricSeries) {
+    const points = Array.isArray(series?.points) ? series.points : []
+    for (const point of points) {
       const taskId = getMetricTaskId(series, point)
       if (taskId === null)
         continue
@@ -333,7 +330,8 @@ async function fetchMetricRecords(uuid: string, hours: number): Promise<PingChar
     }
   }
 
-  const metricTasks = (statsResult?.stats ?? []).map(task => ({
+  const metricStats = Array.isArray(statsResult?.stats) ? statsResult.stats : []
+  const metricTasks = metricStats.map(task => ({
     id: Number(task.task_id),
     weight: taskWeights.get(Number(task.task_id)),
     name: task.name || `Ping ${task.task_id}`,
@@ -365,12 +363,14 @@ async function fetchLegacyRecords(uuid: string, hours: number): Promise<PingChar
     fetchPublicPingTaskWeights(),
   ])
 
+  const records = Array.isArray(result?.records) ? result.records : []
+  const legacyTasks = Array.isArray(result?.tasks) ? result.tasks : []
   return {
-    records: result?.records ?? [],
-    lossPoints: (result?.records ?? [])
+    records,
+    lossPoints: records
       .filter(record => record.value < 0)
       .map(record => ({ task_id: record.task_id, time: record.time, loss: 1 })),
-    tasks: (result?.tasks ?? [])
+    tasks: legacyTasks
       .map(task => ({ ...task, weight: task.weight ?? taskWeights.get(task.id) }))
       .sort(compareTasks),
   }
@@ -388,7 +388,8 @@ async function fetchPublicPingTaskWeights(): Promise<Map<number, number>> {
 
   try {
     const publicTasks = await rpc.getClient().call<PublicPingTask[]>('public:getPublicPingTasks')
-    pingTaskWeightCache = new Map((publicTasks ?? [])
+    const taskList = Array.isArray(publicTasks) ? publicTasks : []
+    pingTaskWeightCache = new Map(taskList
       .filter(task => Number.isInteger(task.id) && Number.isFinite(task.weight))
       .map(task => [task.id, task.weight!] as const))
     pingTaskWeightCacheExpiresAt = Date.now() + 5 * 60_000

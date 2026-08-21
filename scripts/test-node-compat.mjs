@@ -9,6 +9,7 @@ import {
   DEFAULT_EXCHANGE_RATES,
   formatNodeMonthlyCost,
   formatNodeRecurringCost,
+  formatRecurringCostTooltip,
 } from '../src/utils/financeHelper.ts'
 import { isMetricCapabilityUnavailable } from '../src/utils/metricCompatibility.ts'
 import { normalizeUuidCollection } from '../src/utils/nodeResponse.ts'
@@ -175,9 +176,32 @@ assert.equal(formatNodeMonthlyCost({ price: 0, billing_cycle: 30, currency: 'CNY
 assert.equal(formatNodeMonthlyCost({ price: 36, billing_cycle: 30, currency: 'CNY' }, 'CNY', DEFAULT_EXCHANGE_RATES).text, '¥36.00')
 assert.equal(formatNodeMonthlyCost({ price: 12, billing_cycle: 0, currency: 'CNY' }, 'CNY', DEFAULT_EXCHANGE_RATES).text, '—')
 assert.equal(formatNodeMonthlyCost({ price: 30, billing_cycle: 30, currency: 'UNKNOWN' }, 'CNY', DEFAULT_EXCHANGE_RATES).text, 'UNKNOWN 30.00')
-assert.equal(formatNodeMonthlyCost({ price: 14.799, billing_cycle: 30, currency: 'USD' }, 'CNY', usdRates, true).text, '¥100.00')
+assert.equal(formatNodeMonthlyCost({ price: 14.799, billing_cycle: 30, currency: 'USD' }, 'CNY', usdRates, true).text, '$14.80')
+assert.equal(formatNodeMonthlyCost({ price: 14.799, billing_cycle: 30, currency: 'USD' }, 'CNY', usdRates, true).referenceText, '¥100.00 CNY')
 assert.equal(formatNodeMonthlyCost({ price: 14.799, billing_cycle: 30, currency: 'USD' }, 'CNY', usdRates, false).text, '$14.80')
 assert.equal(formatNodeRecurringCost({ price: 36, billing_cycle: 30, currency: 'CNY' }, 'CNY', DEFAULT_EXCHANGE_RATES, 'quarterly').text, '¥108')
 assert.equal(formatNodeRecurringCost({ price: 36, billing_cycle: 30, currency: 'CNY' }, 'CNY', DEFAULT_EXCHANGE_RATES, 'yearly').text, '¥432')
+
+const annualUsdNode = { price: 119, billing_cycle: 365, currency: 'USD' }
+const annualUsdMonthly = formatNodeRecurringCost(annualUsdNode, 'CNY', usdRates, 'monthly', true)
+const annualUsdQuarterly = formatNodeRecurringCost(annualUsdNode, 'CNY', usdRates, 'quarterly', true)
+const annualUsdYearly = formatNodeRecurringCost(annualUsdNode, 'CNY', usdRates, 'yearly', true)
+assert.equal(annualUsdMonthly.text, '$9.92')
+assert.equal(annualUsdQuarterly.text, '$29.75')
+assert.equal(annualUsdYearly.text, '$119')
+assert.equal(annualUsdYearly.amount, 119)
+assert.equal(annualUsdYearly.derived, false)
+assert.equal(annualUsdYearly.referenceText, '¥804.1084 CNY')
+assert.match(formatRecurringCostTooltip(annualUsdYearly, 'yearly'), /后台原值 119\.00 USD \/ 年（365 天）/)
+assert.equal(formatNodeRecurringCost({ price: 60, billing_cycle: 180, currency: 'USD' }, 'USD', usdRates, 'monthly').text, '$10.00')
+assert.equal(formatNodeRecurringCost({ price: 240, billing_cycle: 730, currency: 'USD' }, 'USD', usdRates, 'yearly').text, '$120')
+const customCycle = formatNodeRecurringCost({ price: 100, billing_cycle: 100, currency: 'USD' }, 'USD', usdRates, 'quarterly')
+assert.equal(customCycle.text, '$90.00')
+assert.equal(customCycle.estimated, true)
+assert.match(formatRecurringCostTooltip(customCycle, 'quarterly'), /按自定义天数估算/)
+const oneTime = formatNodeRecurringCost({ price: 499, billing_cycle: -1, currency: 'USD' }, 'USD', usdRates, 'yearly')
+assert.equal(oneTime.text, '$499')
+assert.equal(oneTime.oneTime, true)
+assert.match(formatRecurringCostTooltip(oneTime, 'yearly'), /^一次性 499\.00 USD · 后台原值/)
 
 console.log('Komari 1.2.5-fix1/1.2.5-fix2/1.2.7 node, record, and Ping metric compatibility passed.')
