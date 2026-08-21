@@ -1,5 +1,7 @@
+import type { BillingCycleType } from './tagHelper.ts'
 import type { BillingDisplayPeriod } from '@/stores/app'
 import type { NodeData } from '@/stores/nodes'
+import { getBillingCycleText, parseBillingCycleType } from './tagHelper.ts'
 
 const FINANCE_CURRENCY_CONFIG = {
   AUD: { rate: 0.20941, symbol: 'A$' },
@@ -77,10 +79,24 @@ export const BILLING_PERIOD_LABELS: Record<BillingDisplayPeriod, string> = {
   quarterly: '季付',
   yearly: '年付',
 }
-const BILLING_PERIOD_MULTIPLIERS: Record<BillingDisplayPeriod, number> = {
+const BILLING_PERIOD_MONTHS: Record<BillingDisplayPeriod, number> = {
   monthly: 1,
   quarterly: 3,
   yearly: 12,
+}
+const BILLING_PERIOD_DAYS: Record<BillingDisplayPeriod, number> = {
+  monthly: 30,
+  quarterly: 90,
+  yearly: 365,
+}
+const BILLING_CYCLE_MONTHS: Partial<Record<BillingCycleType, number>> = {
+  monthly: 1,
+  quarterly: 3,
+  semi_annual: 6,
+  annual: 12,
+  biennial: 24,
+  triennial: 36,
+  quinquennial: 60,
 }
 
 const EXCHANGE_RATE_APIS = [
@@ -265,12 +281,18 @@ export function formatFinanceAmount(amount: number, currency: CurrencyCode): {
   }
 }
 
-export interface MonthlyCostDisplay {
+export interface RecurringCostDisplay {
   text: string
   exactText: string
   currency: string
   amount: number | null
-  converted: boolean
+  sourceExactText: string
+  sourceCycleText: string
+  referenceText: string | null
+  estimated: boolean
+  derived: boolean
+  oneTime: boolean
+  billingCycle: number | null
   state: 'paid' | 'free' | 'missing' | 'invalid'
 }
 
@@ -279,7 +301,7 @@ export function formatNodeMonthlyCost(
   targetCurrency: CurrencyCode,
   exchangeRates: ExchangeRates,
   allowConversion = true,
-): MonthlyCostDisplay {
+): RecurringCostDisplay {
   return formatNodeRecurringCost(node, targetCurrency, exchangeRates, 'monthly', allowConversion)
 }
 
@@ -289,75 +311,137 @@ export function formatNodeRecurringCost(
   exchangeRates: ExchangeRates,
   period: BillingDisplayPeriod,
   allowConversion = true,
-): MonthlyCostDisplay {
+): RecurringCostDisplay {
   const price = Number(node.price)
   if (price === -1)
-    return { text: '免费', exactText: '免费', currency: '', amount: null, converted: false, state: 'free' }
+    return createEmptyRecurringCost('免费', 'free')
   if (!Number.isFinite(price) || price === 0)
-    return { text: '未填写', exactText: '未填写', currency: '', amount: null, converted: false, state: 'missing' }
+    return createEmptyRecurringCost('未填写', 'missing')
 
   const billingCycle = Number(node.billing_cycle)
-  if (price < 0 || !Number.isFinite(billingCycle) || billingCycle <= 0)
-    return { text: '—', exactText: '计费周期无效', currency: '', amount: null, converted: false, state: 'invalid' }
+  if (price < 0 || !Number.isFinite(billingCycle) || billingCycle === 0 || billingCycle < -1)
+    return createEmptyRecurringCost('—', 'invalid')
 
-  const monthlyOriginal = price / billingCycle * MONTH_DAYS * BILLING_PERIOD_MULTIPLIERS[period]
+  const cycleType = parseBillingCycleType(billingCycle)
+  const oneTime = cycleType === 'once'
+  const sourceMonths = BILLING_CYCLE_MONTHS[cycleType]
+  const targetMonths = BILLING_PERIOD_MONTHS[period]
+  const targetDays = BILLING_PERIOD_DAYS[period]
+  const estimated = cycleType === 'custom'
+  const derived = oneTime
+    ? false
+    : sourceMonths
+      ? sourceMonths !== targetMonths
+      : billingCycle !== targetDays
+  const sourceAmount = oneTime
+    ? price
+    : sourceMonths
+      ? price * targetMonths / sourceMonths
+      : price * targetDays / billingCycle
   const sourceCurrency = resolveCurrency(node.currency)
   const rawCurrency = String(node.currency || '').trim().toUpperCase() || 'CNY'
+  const sourceCurrencyText = sourceCurrency ?? rawCurrency
+  const sourceExactText = `${formatExactMoney(price)} ${sourceCurrencyText}`
+  const sourceCycleText = getBillingCycleText(billingCycle, 'zh-CN')
+  const common = {
+    sourceExactText,
+    sourceCycleText,
+    estimated,
+    derived,
+    oneTime,
+    billingCycle,
+    state: 'paid' as const,
+  }
+
   if (!sourceCurrency) {
     return {
-      text: `${rawCurrency} ${formatCompactMoney(monthlyOriginal)}`,
-      exactText: `${formatExactMoney(monthlyOriginal)} ${rawCurrency}`,
+      text: `${rawCurrency} ${formatCompactMoney(sourceAmount)}`,
+      exactText: `${formatExactMoney(sourceAmount)} ${rawCurrency}`,
       currency: rawCurrency,
-      amount: monthlyOriginal,
-      converted: false,
-      state: 'paid',
+      amount: sourceAmount,
+      referenceText: null,
+      ...common,
     }
   }
 
-  if (sourceCurrency === targetCurrency) {
-    return {
-      text: `${COMPACT_CURRENCY_SYMBOLS[targetCurrency]}${formatCompactMoney(monthlyOriginal)}`,
-      exactText: `${formatExactMoney(monthlyOriginal)} ${targetCurrency}`,
-      currency: targetCurrency,
-      amount: monthlyOriginal,
-      converted: false,
-      state: 'paid',
-    }
+  const referenceText = formatReferenceAmount(
+    sourceAmount,
+    sourceCurrency,
+    targetCurrency,
+    exchangeRates,
+    allowConversion,
+  )
+  return {
+    text: `${COMPACT_CURRENCY_SYMBOLS[sourceCurrency]}${formatCompactMoney(sourceAmount)}`,
+    exactText: `${formatExactMoney(sourceAmount)} ${sourceCurrency}`,
+    currency: sourceCurrency,
+    amount: sourceAmount,
+    referenceText,
+    ...common,
   }
+}
 
-  if (!allowConversion) {
-    return {
-      text: `${COMPACT_CURRENCY_SYMBOLS[sourceCurrency]}${formatCompactMoney(monthlyOriginal)}`,
-      exactText: `${formatExactMoney(monthlyOriginal)} ${sourceCurrency}`,
-      currency: sourceCurrency,
-      amount: monthlyOriginal,
-      converted: false,
-      state: 'paid',
-    }
+export function formatRecurringCostTooltip(
+  display: RecurringCostDisplay,
+  period: BillingDisplayPeriod,
+): string {
+  if (display.state === 'free')
+    return '该节点标记为免费'
+  if (display.state === 'missing')
+    return '请在 Komari 后台填写价格与计费周期'
+  if (display.state === 'invalid')
+    return '计费周期无效，无法推算费用'
+
+  const reference = display.referenceText ? ` · 参考换算约 ${display.referenceText}` : ''
+  if (display.oneTime)
+    return `一次性 ${display.sourceExactText} · 后台原值${reference}`
+
+  const selected = `${BILLING_PERIOD_LABELS[period]} ${display.exactText}`
+  const source = `${display.sourceExactText} / ${display.sourceCycleText}（${display.billingCycle} 天）`
+  if (!display.derived)
+    return `${selected} · 后台原值 ${source}${reference}`
+
+  const estimate = display.estimated ? '按自定义天数估算' : '按后台付款周期推算'
+  return `${selected} · ${estimate}，基准 ${source}${reference}`
+}
+
+function createEmptyRecurringCost(
+  text: string,
+  state: Exclude<RecurringCostDisplay['state'], 'paid'>,
+): RecurringCostDisplay {
+  return {
+    text,
+    exactText: text === '—' ? '计费周期无效' : text,
+    currency: '',
+    amount: null,
+    sourceExactText: '',
+    sourceCycleText: '',
+    referenceText: null,
+    estimated: false,
+    derived: false,
+    oneTime: false,
+    billingCycle: null,
+    state,
   }
+}
+
+function formatReferenceAmount(
+  sourceAmount: number,
+  sourceCurrency: CurrencyCode,
+  targetCurrency: CurrencyCode,
+  exchangeRates: ExchangeRates,
+  allowConversion: boolean,
+): string | null {
+  if (!allowConversion || sourceCurrency === targetCurrency)
+    return null
 
   const sourceRate = Number(exchangeRates[sourceCurrency])
   const targetRate = Number(exchangeRates[targetCurrency])
-  if (!Number.isFinite(sourceRate) || sourceRate <= 0 || !Number.isFinite(targetRate) || targetRate <= 0) {
-    return {
-      text: `${COMPACT_CURRENCY_SYMBOLS[sourceCurrency]}${formatCompactMoney(monthlyOriginal)}`,
-      exactText: `${formatExactMoney(monthlyOriginal)} ${sourceCurrency}`,
-      currency: sourceCurrency,
-      amount: monthlyOriginal,
-      converted: false,
-      state: 'paid',
-    }
-  }
+  if (!Number.isFinite(sourceRate) || sourceRate <= 0 || !Number.isFinite(targetRate) || targetRate <= 0)
+    return null
 
-  const converted = monthlyOriginal / sourceRate * targetRate
-  return {
-    text: `${COMPACT_CURRENCY_SYMBOLS[targetCurrency]}${formatCompactMoney(converted)}`,
-    exactText: `${formatExactMoney(converted)} ${targetCurrency}`,
-    currency: targetCurrency,
-    amount: converted,
-    converted: true,
-    state: 'paid',
-  }
+  const converted = sourceAmount / sourceRate * targetRate
+  return `${COMPACT_CURRENCY_SYMBOLS[targetCurrency]}${formatExactMoney(converted)} ${targetCurrency}`
 }
 
 function formatCompactMoney(amount: number): string {

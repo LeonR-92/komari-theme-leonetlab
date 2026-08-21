@@ -53,6 +53,7 @@ const containerRef = ref<HTMLDivElement>()
 const canvasRef = ref<HTMLCanvasElement>()
 const dragging = ref(false)
 const themeTransitioning = ref(false)
+const rafAnimating = ref(false)
 const { width: containerWidth, height: containerHeight } = useElementSize(containerRef)
 
 const documentVisibility = useDocumentVisibility()
@@ -64,8 +65,11 @@ const shouldRender = computed(() => documentVisibility.value === 'visible'
 // Emerald exposes five layout modes. Only `earth` rotates automatically;
 // `earth-stop` remains draggable but holds its orientation after release.
 // 系统开启"减少动态效果"时地球仪不自动旋转，但保留用户拖拽。
-const prefersReducedMotion = useMediaQuery('(prefers-reduced-motion: reduce)')
+const systemReducedMotion = useMediaQuery('(prefers-reduced-motion: reduce)')
+const prefersReducedMotion = computed(() => systemReducedMotion.value || appStore.disablePageAnimation)
 const hasFineHoverPointer = useMediaQuery('(hover: hover) and (pointer: fine)')
+const lowPowerProfile = computed(() => isMobileLike || !hasFineHoverPointer.value)
+const globeFpsLimit = computed(() => lowPowerProfile.value ? 30 : 45)
 const shouldAutoRotate = computed(() => !prefersReducedMotion.value
   && (props.motion === 'auto'
     || (props.motion === undefined && appStore.earthViewMode === 'earth')))
@@ -144,11 +148,20 @@ function shouldKeepStaticRedraw(): boolean {
   return now < staticRedrawUntil
 }
 
-// 减少高采样导致的性能问题；移动端 DPR 上限更激进以压低 WebGL 填充率
-function getCappedDpr(): number {
+const DESKTOP_PIXEL_BUDGET = 650_000
+const MOBILE_PIXEL_BUDGET = 220_000
+
+// COBE 的填充成本取决于画布物理像素而非 CSS 尺寸。按实际地球尺寸
+// 分配像素预算，并向下量化为 0.25 档，避免高 DPR 手机和笔记本持续满载。
+function getAdaptiveDpr(width: number, height: number): number {
   if (typeof window === 'undefined')
     return 1
-  return Math.min(window.devicePixelRatio || 1, isMobileLike ? 1.5 : 2)
+  const mobile = lowPowerProfile.value
+  const hardCap = mobile ? 1.25 : 1.75
+  const pixelBudget = mobile ? MOBILE_PIXEL_BUDGET : DESKTOP_PIXEL_BUDGET
+  const area = Math.max(1, width * height)
+  const raw = Math.max(1, Math.min(window.devicePixelRatio || 1, hardCap, Math.sqrt(pixelBudget / area)))
+  return Math.max(1, Math.floor(raw * 4) / 4)
 }
 
 interface RegionCluster {
@@ -236,6 +249,23 @@ let regionOpenTimer: ReturnType<typeof window.setTimeout> | null = null
 let regionCloseTimer: ReturnType<typeof window.setTimeout> | null = null
 const REGION_HOVER_OPEN_MS = 120
 const REGION_HOVER_CLOSE_MS = 220
+interface OverlayLayoutMetrics {
+  containerLeft: number
+  containerTop: number
+  viewportWidth: number
+  viewportHeight: number
+  readoutHeight: number
+}
+
+let overlayLayout: OverlayLayoutMetrics = {
+  containerLeft: 0,
+  containerTop: 0,
+  viewportWidth: typeof window === 'undefined' ? 320 : window.innerWidth,
+  viewportHeight: typeof window === 'undefined' ? 480 : window.innerHeight,
+  readoutHeight: 188,
+}
+let overlayMeasureFrame = 0
+let initialRedrawFrame = 0
 
 function coordToGlobePoint([lat, lon]: [number, number]): [number, number, number] {
   const latRad = lat * Math.PI / 180
@@ -256,11 +286,17 @@ function getRenderSize() {
 
 // iOS Safari 对 cobe 内部 marker anchor 的 DOM/style 行为不稳定，
 // overlay 改为组件内自行投影定位，避免回落到容器左上角。
-function syncClusterOverlayPosition(
-  cluster: RegionCluster,
-  el: HTMLElement,
-  rootStyle = getComputedStyle(document.documentElement),
-) {
+function setDatasetValue(el: HTMLElement, key: string, value: string) {
+  if (el.dataset[key] !== value)
+    el.dataset[key] = value
+}
+
+function setStyleValue(el: HTMLElement, property: string, value: string) {
+  if (el.style.getPropertyValue(property) !== value)
+    el.style.setProperty(property, value)
+}
+
+function syncClusterOverlayPosition(cluster: RegionCluster, el: HTMLElement) {
   const { width, height } = getRenderSize()
   if (width <= 0 || height <= 0) {
     el.dataset.front = 'false'
@@ -283,20 +319,9 @@ function syncClusterOverlayPosition(
   const screenY = sinPhi * sinTheta * x + cosTheta * y - cosPhi * sinTheta * z
   const cameraDepth = -sinPhi * cosTheta * x + sinTheta * y + cosPhi * cosTheta * z
   const isFrontFacing = cameraDepth > 0.04
-  const officialVisibilityValue = rootStyle.getPropertyValue(`--cobe-visible-${cluster.code}`).trim()
-  const officialVisibility = Number.parseFloat(officialVisibilityValue)
-  // COBE 2 exposes its own visibility signal. Some bundled/minified builds emit
-  // a non-numeric token, so retain the mathematically equivalent projection as
-  // a compatibility fallback instead of leaving every flag fully transparent.
-  const markerVisibility = Number.isFinite(officialVisibility)
-    ? Math.max(0, Math.min(1, officialVisibility))
-    : (isFrontFacing ? 1 : 0)
+  const markerVisibility = isFrontFacing ? 1 : 0
   const xPx = ((screenX / aspect) * GLOBE_SCALE + 1) * width / 2
   const yPx = ((-screenY) * GLOBE_SCALE + 1) * height / 2
-  const containerRect = containerRef.value?.getBoundingClientRect()
-  const readout = el.querySelector<HTMLElement>('.lnl-earth-readout')
-  const readoutWidth = Math.min(260, Math.max(220, window.innerWidth - 42))
-  const readoutHeight = readout?.offsetHeight || 188
   const previousSide = el.dataset.side
   // Keep a generous hysteresis band so a marker near the centre does not make
   // the readout flip sides every few frames while the globe is slowing down.
@@ -304,44 +329,86 @@ function syncClusterOverlayPosition(
     ? xPx > width * 0.54
     : xPx > width * 0.64
   const side = openToLeft ? 'left' : 'right'
-  const baseLeft = (containerRect?.left || 0) + xPx + (side === 'left' ? -25 - readoutWidth : 25)
-  const clampedLeft = Math.min(
-    Math.max(12, baseLeft),
-    Math.max(12, window.innerWidth - readoutWidth - 12),
-  )
-  const baseTop = (containerRect?.top || 0) + yPx - 44
-  const clampedTop = Math.min(
-    Math.max(12, baseTop),
-    Math.max(12, window.innerHeight - readoutHeight - 12),
-  )
 
   el.style.transform = `translate3d(${xPx}px, ${yPx}px, 0)`
-  el.style.setProperty('--lnl-cobe-visible', String(markerVisibility))
-  el.dataset.visibilitySource = Number.isFinite(officialVisibility) ? 'cobe' : 'projection-fallback'
-  el.dataset.front = isFrontFacing ? 'true' : 'false'
-  el.style.pointerEvents = interactive.value && isFrontFacing ? 'auto' : 'none'
-  el.tabIndex = interactive.value && isFrontFacing ? 0 : -1
-  el.setAttribute('aria-hidden', isFrontFacing ? 'false' : 'true')
-  el.dataset.side = side
-  el.style.setProperty('--lnl-readout-shift-x', `${clampedLeft - baseLeft}px`)
-  el.style.setProperty('--lnl-readout-shift-y', `${clampedTop - baseTop}px`)
+  setStyleValue(el, '--lnl-cobe-visible', String(markerVisibility))
+  setDatasetValue(el, 'visibilitySource', 'projection')
+  setDatasetValue(el, 'front', isFrontFacing ? 'true' : 'false')
+  const interactiveNow = interactive.value && isFrontFacing
+  const pointerEvents = interactiveNow ? 'auto' : 'none'
+  if (el.style.pointerEvents !== pointerEvents)
+    el.style.pointerEvents = pointerEvents
+  const tabIndex = interactiveNow ? 0 : -1
+  if (el.tabIndex !== tabIndex)
+    el.tabIndex = tabIndex
+  const ariaHidden = isFrontFacing ? 'false' : 'true'
+  if (el.getAttribute('aria-hidden') !== ariaHidden)
+    el.setAttribute('aria-hidden', ariaHidden)
+  setDatasetValue(el, 'side', side)
+
+  if (activeRegionCode.value === cluster.code) {
+    const readoutWidth = Math.min(260, Math.max(220, overlayLayout.viewportWidth - 42))
+    const baseLeft = overlayLayout.containerLeft + xPx + (side === 'left' ? -25 - readoutWidth : 25)
+    const clampedLeft = Math.min(
+      Math.max(12, baseLeft),
+      Math.max(12, overlayLayout.viewportWidth - readoutWidth - 12),
+    )
+    const baseTop = overlayLayout.containerTop + yPx - 44
+    const clampedTop = Math.min(
+      Math.max(12, baseTop),
+      Math.max(12, overlayLayout.viewportHeight - overlayLayout.readoutHeight - 12),
+    )
+    setStyleValue(el, '--lnl-readout-shift-x', `${clampedLeft - baseLeft}px`)
+    setStyleValue(el, '--lnl-readout-shift-y', `${clampedTop - baseTop}px`)
+  }
   if (!isFrontFacing && activeRegionCode.value === cluster.code)
     resetRegionInteraction()
 }
 
 function syncClusterOverlayPositions() {
-  const rootStyle = getComputedStyle(document.documentElement)
   for (const cluster of regionClusters.value) {
     const el = clusterOverlayEls.get(cluster.code)
     if (!el)
       continue
-    syncClusterOverlayPosition(cluster, el, rootStyle)
+    syncClusterOverlayPosition(cluster, el)
   }
+}
+
+function measureOverlayLayout() {
+  overlayMeasureFrame = 0
+  const container = containerRef.value
+  if (!container)
+    return
+  const containerRect = container.getBoundingClientRect()
+  const activeElement = activeRegionCode.value ? clusterOverlayEls.get(activeRegionCode.value) : undefined
+  const readout = activeElement?.querySelector<HTMLElement>('.lnl-earth-readout')
+  overlayLayout = {
+    containerLeft: containerRect.left,
+    containerTop: containerRect.top,
+    viewportWidth: window.innerWidth,
+    viewportHeight: window.innerHeight,
+    readoutHeight: readout?.getBoundingClientRect().height || 188,
+  }
+  syncClusterOverlayPositions()
+}
+
+function scheduleOverlayLayoutMeasurement() {
+  if (overlayMeasureFrame)
+    return
+  overlayMeasureFrame = window.requestAnimationFrame(measureOverlayLayout)
+}
+
+function handleViewportResize() {
+  scheduleOverlayLayoutMeasurement()
+}
+
+function handleViewportScroll() {
+  if (activeRegionCode.value)
+    scheduleOverlayLayoutMeasurement()
 }
 
 function setClusterOverlayEl(code: string, el: Element | ComponentPublicInstance | null) {
   if (el instanceof HTMLElement) {
-    el.style.willChange = 'transform, opacity'
     el.style.setProperty('--lnl-cobe-visible', '0')
     clusterOverlayEls.set(code, el)
 
@@ -352,6 +419,7 @@ function setClusterOverlayEl(code: string, el: Element | ComponentPublicInstance
     else {
       el.dataset.front = 'false'
     }
+    scheduleOverlayLayoutMeasurement()
     return
   }
 
@@ -425,16 +493,16 @@ const themeColors = computed(() => {
 function buildInitialOptions(): COBEOptions {
   const colors = themeColors.value
   const { width, height } = getRenderSize()
+  const devicePixelRatio = getAdaptiveDpr(width, height)
   return {
-    devicePixelRatio: getCappedDpr(),
+    devicePixelRatio,
     width,
     height,
     phi,
     theta,
     dark: colors.dark,
     diffuse: 1.2,
-    // 移动端降低 cobe 点阵采样数，削减每帧 WebGL 绘制成本
-    mapSamples: props.variant === 'intro' ? (isMobileLike ? 5600 : 7200) : (isMobileLike ? 6000 : 10000),
+    mapSamples: lowPowerProfile.value ? 4200 : 7200,
     mapBrightness: colors.mapBrightness,
     mapBaseBrightness: colors.mapBaseBrightness,
     baseColor: colors.baseColor,
@@ -516,7 +584,7 @@ const { pause: pauseRaf, resume: resumeRaf } = useRafFn(
       throw error
     }
   },
-  { immediate: false, fpsLimit: isMobileLike ? 30 : null }, // 移动端帧率上限 30fps，降低常驻渲染负载
+  { immediate: false, fpsLimit: globeFpsLimit },
 )
 
 function syncRafState() {
@@ -526,10 +594,12 @@ function syncRafState() {
   const shouldAnimateRotation = shouldAutoRotate.value
     && (interactionRotationScale > INTERACTION_ROTATION_EPSILON || interactionRotationSettling())
   if ((documentVisibility.value === 'visible' && isPointerDown) || (shouldRender.value && shouldAnimateRotation)) {
+    rafAnimating.value = true
     resumeRaf()
     return
   }
 
+  rafAnimating.value = false
   pauseRaf()
   if (globeProbe) {
     globeProbe.lastPause = {
@@ -555,7 +625,9 @@ function startGlobe() {
   globe = createGlobe(canvasRef.value, buildInitialOptions())
   syncClusterOverlayPositions()
   // 静止地球没有自转帧，首帧需要在实际尺寸稳定后主动重绘一次。
-  requestAnimationFrame(() => {
+  window.cancelAnimationFrame(initialRedrawFrame)
+  initialRedrawFrame = window.requestAnimationFrame(() => {
+    initialRedrawFrame = 0
     updateGlobeFrame()
   })
   // documentVisibility 同步可读；useElementVisibility 需等 IntersectionObserver 首回调
@@ -565,6 +637,8 @@ function startGlobe() {
 
 // cobe 不会清理自己创建的 wrapper，这里手动收尾。
 function stopGlobe() {
+  window.cancelAnimationFrame(initialRedrawFrame)
+  initialRedrawFrame = 0
   pauseRaf()
   if (globeProbe) {
     (globeProbe as Record<string, unknown>)[props.variant === 'intro' ? 'introStoppedAt' : 'dashStoppedAt'] = {
@@ -590,7 +664,11 @@ onMounted(() => {
   document.addEventListener('pointerdown', handleDocumentPointerDown)
   document.addEventListener('keydown', handleDocumentKeydown)
   document.addEventListener('visibilitychange', handleDocumentVisibilityChange)
+  window.addEventListener('resize', handleViewportResize, { passive: true })
+  window.addEventListener('scroll', handleViewportScroll, { passive: true })
+  window.visualViewport?.addEventListener('resize', handleViewportResize)
   startGlobe()
+  scheduleOverlayLayoutMeasurement()
 })
 
 onBeforeUnmount(() => {
@@ -600,6 +678,11 @@ onBeforeUnmount(() => {
   document.removeEventListener('pointerdown', handleDocumentPointerDown)
   document.removeEventListener('keydown', handleDocumentKeydown)
   document.removeEventListener('visibilitychange', handleDocumentVisibilityChange)
+  window.removeEventListener('resize', handleViewportResize)
+  window.removeEventListener('scroll', handleViewportScroll)
+  window.visualViewport?.removeEventListener('resize', handleViewportResize)
+  window.cancelAnimationFrame(overlayMeasureFrame)
+  overlayMeasureFrame = 0
   finishPointerInteraction()
   clearRegionTimers()
   stopGlobe()
@@ -641,7 +724,9 @@ watch(
   ([width, height]) => {
     if (!globe || width <= 0 || height <= 0)
       return
-    updateGlobeFrame()
+    const devicePixelRatio = getAdaptiveDpr(width, height)
+    globe.update({ phi, theta, width, height, devicePixelRatio })
+    scheduleOverlayLayoutMeasurement()
   },
 )
 
@@ -680,7 +765,7 @@ watch(
       return
     globe.update({ markers: markers.value })
     await nextTick()
-    syncClusterOverlayPositions()
+    scheduleOverlayLayoutMeasurement()
     if (!shouldAutoRotate.value)
       triggerStaticRedrawWindow(600)
   },
@@ -725,23 +810,29 @@ function onPointerMove(e: PointerEvent) {
   lastPointerX = e.clientX
   lastPointerY = e.clientY
 
+  let startedDrag = false
   if (!pointerDragged) {
     const distance = Math.hypot(e.clientX - pointerStartX, e.clientY - pointerStartY)
     if (distance < POINTER_DRAG_THRESHOLD)
       return
     pointerDragged = true
     dragging.value = true
+    startedDrag = true
     resetRegionInteraction()
   }
 
   e.preventDefault()
   targetPhi += deltaX / 200
   targetTheta = clampTheta(targetTheta + deltaY / 300)
-  // Pointer input should remain responsive even when IntersectionObserver has
-  // not yet marked the globe visible. The RAF loop continues auto-rotation.
-  phi = targetPhi
-  theta = targetTheta
-  updateGlobeFrame()
+  if (startedDrag) {
+    phi = targetPhi
+    theta = targetTheta
+    updateGlobeFrame()
+  }
+  // Pointer input updates the target only; the same 30/45fps loop performs the
+  // following WebGL draws so high-frequency pointer events cannot bypass the
+  // GPU budget. The first accepted move is rendered immediately for feedback.
+  syncRafState()
 }
 function onPointerUp(e: PointerEvent) {
   if (!interactive.value || e.pointerId !== activePointerId)
@@ -834,7 +925,7 @@ function activateRegion(code: string) {
     return
   activeRegionCode.value = code
   syncRegionRotationState()
-  void nextTick(syncClusterOverlayPositions)
+  void nextTick(scheduleOverlayLayoutMeasurement)
 }
 
 function resetRegionInteraction() {
@@ -954,6 +1045,7 @@ const offlineServers = computed(() => totalServers.value - onlineServers.value)
     :class="[
       {
         'is-dragging': dragging,
+        'is-rendering': rafAnimating,
         'is-intro': variant === 'intro',
         'has-region-readout': activeRegionCode !== null,
       },
@@ -1007,7 +1099,7 @@ const offlineServers = computed(() => totalServers.value - onlineServers.value)
         class="lnl-earth-overlay absolute -top-3.5 left-0"
         :class="{ 'is-active': activeRegionCode === cluster.code }"
         :style="{ '--lnl-marker-index': clusterIndex }"
-        :aria-label="`${cluster.displayName}：${cluster.onlineServers}/${cluster.servers} 台在线，查看地区负载`"
+        :aria-label="`${cluster.code}${cluster.onlineServers}${cluster.servers > cluster.onlineServers ? cluster.servers - cluster.onlineServers : ''}，${cluster.displayName}：${cluster.onlineServers}/${cluster.servers} 台在线，查看地区负载`"
         :aria-expanded="activeRegionCode === cluster.code"
         @pointerenter="handleRegionPointerEnter($event, cluster.code)"
         @pointerleave="handleRegionPointerLeave($event, cluster.code)"
@@ -1112,7 +1204,6 @@ const offlineServers = computed(() => totalServers.value - onlineServers.value)
   inset: 0;
   border-radius: 50%;
   opacity: 0;
-  will-change: transform, opacity;
 }
 
 .lnl-dashboard-halo-aura {
@@ -1259,6 +1350,9 @@ const offlineServers = computed(() => totalServers.value - onlineServers.value)
   transition:
     opacity var(--lnl-motion-fast, 180ms) ease,
     visibility 0s linear var(--lnl-motion-fast, 180ms);
+}
+
+.node-earth-globe.is-rendering .lnl-earth-overlay {
   will-change: transform, opacity;
 }
 
@@ -1342,7 +1436,6 @@ const offlineServers = computed(() => totalServers.value - onlineServers.value)
 
 .node-earth-globe:not(.is-intro) .lnl-earth-overlay > :not(.lnl-earth-readout) {
   animation: dashboard-marker-in 520ms calc(90ms + var(--lnl-marker-index, 0) * 45ms) cubic-bezier(0.16, 1, 0.3, 1) both;
-  will-change: opacity, transform;
 }
 
 .lnl-earth-readout {

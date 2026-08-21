@@ -1,5 +1,33 @@
 # Changelog
 
+## 1.4.3-fix2 — 2026-08-21
+
+- Replaced the build-locked offline Service Worker with a network-only root worker that retires legacy theme caches without retaining HTML or hashed assets across Komari theme switches.
+- Removed the theme-owned install prompt, background update checks, offline shell, explicit worker unregistration and destructive cache-repair path; installation is now left to the browser/Komari PWA surface.
+- Removed the manifest's experimental `navigate-existing` launch handler and made installed-app launches replay the enabled intro deterministically, while manual reloads remain once-per-session.
+- Restored Komari's `price`, `billing_cycle` and `currency` fields as the authoritative node-card payment source: `119 USD / year` now remains `$119` instead of being promoted to an approximate CNY headline.
+- Derived monthly, quarterly and yearly views from recognized billing periods, preserved exact source amounts for matching periods, and limited day-based estimates to custom cycles.
+- Reframed the existing managed card currency as a tooltip-only reference conversion, added one-time-payment handling, and moved the billing chevron into a true right-edge slot by making the trigger fill its finance cell.
+- Kept runtime polling active after a transient startup request failure so node data can recover without reloading the page, while preserving private-site redirects.
+- Guarded appearance override storage so restricted PWA/WebView storage cannot break theme, palette, cursor or restore interactions.
+
+### Earlier 1.4.3-fix2b baseline (PWA behavior superseded above)
+
+- Removed the conflicting in-page cache-refresh control; Service Worker updates now remain silent and activate naturally on the next launch, while the boot failure screen retains an explicit bounded recovery action.
+- Fixed installed-app detection for standalone, minimal-UI and window-controls-overlay display modes, and discarded one-shot install prompts after every user choice.
+- Hardened shell installation and navigation fallbacks against mismatched builds and invalid content while continuing to exclude RPC, API, telemetry and user data from caching.
+- Closed long-running lifecycle gaps in request timeouts, post-unmount responses, animation-frame cleanup, hidden-page rendering and custom-background video playback.
+- Tightened optional metric compatibility/error isolation and repaired visible-label accessibility for node, billing, Ping and globe interactions.
+
+### Earlier 1.4.3-fix2a baseline (PWA behavior superseded above)
+
+- Removed the full-screen animated DataOcean canvas and secondary depth plane, retaining one palette-aware, visibility-paused CSS dot plane.
+- Capped the persistent COBE globe at 45 fps on desktops and 30 fps on mobile/coarse-pointer devices, with size-aware DPR pixel budgets and reduced map sampling.
+- Removed per-frame computed-style and layout reads from regional markers, batched viewport measurements, and limited layer hints to active animation windows.
+- Changed PWA updates to silent next-launch activation, made critical shell installation atomic, added a version-matched last-known-good shell and a built-in offline recovery page.
+- Reworked startup recovery so its automatic retry does not unregister the Service Worker or delete caches; destructive recovery now requires an explicit user action.
+- Added compact, standard and hidden managed homepage layouts, with compact spacing and type as the default.
+
 ## 1.4.3-fix1 — 2026-08-14
 
 - Corrected finance semantics so homepage and detail summaries use the payment amount entered in Komari instead of depreciating it into a misleading remaining value.

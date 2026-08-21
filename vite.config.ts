@@ -2,7 +2,7 @@ import type { Plugin } from 'vite'
 import { execSync } from 'node:child_process'
 import { existsSync } from 'node:fs'
 import { createRequire } from 'node:module'
-import { relative, resolve } from 'node:path'
+import { resolve } from 'node:path'
 import { fileURLToPath, URL } from 'node:url'
 import tailwindcss from '@tailwindcss/vite'
 import vue from '@vitejs/plugin-vue'
@@ -16,9 +16,6 @@ const archiver = require('archiver')
 const packageJson = require('./package.json')
 
 const themeVersion = packageJson.themeVersion ?? packageJson.version
-const PRECACHE_ASSET_PATTERN = /\.(?:css|js)$/
-const WINDOWS_PATH_SEPARATOR_PATTERN = /\\/g
-const SW_PRECACHE_PLACEHOLDER_PATTERN = /const PRECACHE_ASSETS = \/\* __LNL_PRECACHE_ASSETS__ \*\/ \[\]/
 
 function getCommitHash(): string {
   try {
@@ -55,28 +52,6 @@ function komariThemeZip(): Plugin {
       if (!existsSync(distDir)) {
         console.log('[komari-theme-zip] dist directory not found, skipping zip creation')
         return
-      }
-
-      const swPath = resolve(distDir, 'sw.js')
-      const assetRoot = resolve(distDir, 'assets')
-      if (existsSync(swPath) && existsSync(assetRoot)) {
-        const assetFiles: string[] = []
-        const collectAssets = (directory: string) => {
-          for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
-            const entryPath = resolve(directory, entry.name)
-            if (entry.isDirectory())
-              collectAssets(entryPath)
-            else if (PRECACHE_ASSET_PATTERN.test(entry.name))
-              assetFiles.push(`/${relative(distDir, entryPath).replace(WINDOWS_PATH_SEPARATOR_PATTERN, '/')}`)
-          }
-        }
-        collectAssets(assetRoot)
-        const swSource = fs.readFileSync(swPath, 'utf8')
-          .replace(
-            SW_PRECACHE_PLACEHOLDER_PATTERN,
-            `const PRECACHE_ASSETS = /* __LNL_PRECACHE_ASSETS__ */ ${JSON.stringify(assetFiles.sort())}`,
-          )
-        fs.writeFileSync(swPath, swSource)
       }
 
       const output = fs.createWriteStream(outputPath)

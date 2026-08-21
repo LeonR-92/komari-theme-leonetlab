@@ -1,20 +1,16 @@
 <script setup lang="ts">
 import type { ColorPalette, CursorStyle, ThemeMode } from '@/stores/app'
-import type { ThemeCacheRefreshPhase } from '@/utils/pwa'
 import { Icon } from '@iconify/vue'
 import { computed, inject, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { Button } from '@/components/ui/button'
 import { DataTooltip } from '@/components/ui/data-tooltip'
 import { useMotionPreference } from '@/composables/useMotionPreference'
-import { usePwaInstall } from '@/composables/usePwaInstall'
 import { PALETTE_ACCENT_COLORS, PALETTE_THEME_COLORS, useAppStore } from '@/stores/app'
-import { refreshThemeCache } from '@/utils/pwa'
 
 const router = useRouter()
 const appStore = useAppStore()
 const { motionReduced } = useMotionPreference()
-const { canPromptInstall, showIosInstructions, installAvailable, promptInstall } = usePwaInstall()
 const isScrolled = inject<ReturnType<typeof ref<boolean>>>('isScrolled', ref(false))
 interface ThemeOrigin {
   x: number
@@ -32,6 +28,12 @@ interface AppearanceTarget {
   mode: ThemeMode
   palette: ColorPalette
   resolvedMode: 'light' | 'dark'
+}
+
+interface HeaderAction {
+  title: string
+  icon: string
+  action: string
 }
 
 const themeTransition = ref<{
@@ -56,13 +58,6 @@ let queuedThemeOrigin: ThemeOrigin | null = null
 let activeViewTransition: ViewTransition | null = null
 let componentUnmounting = false
 const logoVisible = ref(true)
-const refreshingCache = ref(false)
-type CachePanelPhase = 'idle' | 'update-ready' | ThemeCacheRefreshPhase | 'reloading' | 'error'
-const cachePanelPhase = ref<CachePanelPhase>('idle')
-let cacheReloadTimer: number | null = null
-const pwaPanelOpen = ref(false)
-const pwaInstallBusy = ref(false)
-const pwaInstallResult = ref<'idle' | 'dismissed' | 'error'>('idle')
 const appearancePanelOpen = ref(false)
 const appearanceButton = ref<HTMLElement | null>(null)
 
@@ -82,41 +77,12 @@ const cursorOptions: Array<{ value: CursorStyle, label: string }> = [
   { value: 'halo', label: '光环指针' },
 ]
 
-const cachePanelCopy = computed(() => {
-  switch (cachePanelPhase.value) {
-    case 'update-ready':
-      return { step: 'NEW', title: '发现新的主题版本', detail: '确认后刷新缓存并载入新版本；当前页面不会自动重载。' }
-    case 'checking':
-      return { step: '01', title: '正在检查主题更新', detail: '正在与当前主题版本同步。' }
-    case 'clearing':
-      return { step: '02', title: '正在清理旧缓存', detail: '仅移除 Komari Observatory 的本地缓存。' }
-    case 'reloading':
-      return { step: '03', title: '缓存刷新完成', detail: '即将重新载入最新主题资源。' }
-    case 'error':
-      return { step: 'ERR', title: '缓存刷新失败', detail: '网络或浏览器缓存服务暂时不可用。' }
-    default:
-      return { step: '00', title: '', detail: '' }
-  }
-})
-
 const actionButtons = computed(() => {
-  const buttons = [{
+  const buttons: HeaderAction[] = [{
     title: '外观设置',
     icon: appStore.themeMode === 'system' ? 'icon-park-outline:dark-mode' : appStore.themeMode === 'light' ? 'icon-park-outline:sun-one' : 'icon-park-outline:moon',
     action: 'toggleAppearance',
   }]
-  buttons.push({
-    title: refreshingCache.value ? '正在刷新主题缓存' : '刷新主题缓存',
-    icon: 'tabler:refresh',
-    action: 'refreshThemeCache',
-  })
-  if (installAvailable.value) {
-    buttons.push({
-      title: '安装为应用',
-      icon: 'tabler:device-mobile-down',
-      action: 'installPwa',
-    })
-  }
   if (appStore.isLoggedIn || !appStore.hideAdminEntryWhenLoggedOut)
     buttons.push({ title: '管理后台', icon: 'icon-park-outline:setting', action: 'jumpToSetting' })
   return buttons
@@ -342,72 +308,13 @@ function handleVisibilityChange() {
     settleThemeTransitionImmediately()
 }
 
-async function handleThemeCacheRefresh() {
-  if (refreshingCache.value)
-    return
-  refreshingCache.value = true
-  cachePanelPhase.value = 'checking'
-  try {
-    await refreshThemeCache((phase) => {
-      cachePanelPhase.value = phase
-    })
-    cachePanelPhase.value = 'reloading'
-    cacheReloadTimer = window.setTimeout(() => location.reload(), motionReduced.value ? 120 : 560)
-  }
-  catch (error) {
-    console.error('[Header] Theme cache refresh failed:', error)
-    refreshingCache.value = false
-    cachePanelPhase.value = 'error'
-  }
-}
-
-function dismissCachePanel() {
-  if (refreshingCache.value)
-    return
-  cachePanelPhase.value = 'idle'
-}
-
-function handlePwaUpdateReady() {
-  if (!refreshingCache.value)
-    cachePanelPhase.value = 'update-ready'
-}
-
 onMounted(() => {
-  window.addEventListener('leonetlab:pwa-update-ready', handlePwaUpdateReady)
   document.addEventListener('visibilitychange', handleVisibilityChange)
   document.addEventListener('pointerdown', handleDocumentPointerDown)
   document.addEventListener('keydown', handleDocumentKeydown)
 })
 
 watch(motionReduced, reduced => reduced && settleThemeTransitionImmediately())
-
-async function handlePwaInstall() {
-  if (showIosInstructions.value) {
-    pwaPanelOpen.value = true
-    return
-  }
-  if (!canPromptInstall.value || pwaInstallBusy.value)
-    return
-  pwaInstallBusy.value = true
-  pwaInstallResult.value = 'idle'
-  try {
-    const outcome = await promptInstall()
-    if (outcome === 'dismissed') {
-      pwaInstallResult.value = 'dismissed'
-      pwaPanelOpen.value = true
-    }
-    else {
-      pwaPanelOpen.value = false
-    }
-  }
-  catch {
-    pwaInstallResult.value = 'error'
-    pwaPanelOpen.value = true
-  }
-  finally {
-    pwaInstallBusy.value = false
-  }
-}
 
 function jumpToSetting() {
   if (leavingForAdmin.value)
@@ -425,10 +332,6 @@ function jumpToSetting() {
 function handleButtonClick(action: string, event: MouseEvent) {
   if (action === 'toggleAppearance')
     toggleAppearancePanel(event.currentTarget instanceof Element ? event.currentTarget : null)
-  if (action === 'refreshThemeCache')
-    void handleThemeCacheRefresh()
-  if (action === 'installPwa')
-    void handlePwaInstall()
   if (action === 'jumpToSetting')
     jumpToSetting()
 }
@@ -437,14 +340,11 @@ onUnmounted(() => {
   componentUnmounting = true
   queuedAppearance = null
   queuedThemeOrigin = null
-  window.removeEventListener('leonetlab:pwa-update-ready', handlePwaUpdateReady)
   document.removeEventListener('visibilitychange', handleVisibilityChange)
   document.removeEventListener('pointerdown', handleDocumentPointerDown)
   document.removeEventListener('keydown', handleDocumentKeydown)
   transitionTimers.forEach(timer => window.clearTimeout(timer))
   transitionTimers.clear()
-  if (cacheReloadTimer !== null)
-    window.clearTimeout(cacheReloadTimer)
   settleThemeTransitionImmediately()
 })
 
@@ -484,11 +384,9 @@ function handleLogoError(event: Event) {
             size="icon-sm"
             class="lnl-header-action"
             :data-action="button.action"
-            :class="{ 'is-busy': button.action === 'refreshThemeCache' && refreshingCache }"
             :aria-label="button.title"
             :aria-expanded="button.action === 'toggleAppearance' ? appearancePanelOpen : undefined"
             :aria-controls="button.action === 'toggleAppearance' ? 'lnl-appearance-panel' : undefined"
-            :disabled="button.action === 'refreshThemeCache' && refreshingCache"
             @click="handleButtonClick(button.action, $event)"
           >
             <Transition name="lnl-action-icon" mode="out-in">
@@ -497,7 +395,6 @@ function handleLogoError(event: Event) {
                 :icon="button.icon"
                 :width="18"
                 :height="18"
-                :class="{ 'animate-spin': button.action === 'refreshThemeCache' && refreshingCache }"
               />
             </Transition>
           </Button>
@@ -572,90 +469,6 @@ function handleLogoError(event: Event) {
         <button class="lnl-appearance-reset" type="button" @click="restoreAppearance">
           <Icon icon="tabler:restore" :width="15" :height="15" />
           恢复站点默认
-        </button>
-      </section>
-    </Transition>
-    <Transition name="lnl-cache-panel">
-      <section
-        v-if="cachePanelPhase !== 'idle'"
-        class="lnl-cache-panel"
-        :class="{ 'is-error': cachePanelPhase === 'error' }"
-        :data-cache-phase="cachePanelPhase"
-        role="status"
-        aria-live="polite"
-      >
-        <div class="lnl-cache-panel-head">
-          <span>CACHE CONTROL / {{ cachePanelCopy.step }}</span>
-          <button
-            v-if="cachePanelPhase === 'error' || cachePanelPhase === 'update-ready'"
-            type="button"
-            aria-label="关闭缓存提示"
-            @click="dismissCachePanel"
-          >
-            <Icon icon="tabler:x" :width="15" :height="15" />
-          </button>
-        </div>
-        <div class="lnl-cache-panel-body">
-          <span class="lnl-cache-panel-icon" aria-hidden="true">
-            <Icon
-              :icon="cachePanelPhase === 'error' ? 'tabler:alert-triangle' : cachePanelPhase === 'update-ready' ? 'tabler:sparkles' : 'tabler:refresh'"
-              :width="19"
-              :height="19"
-            />
-          </span>
-          <div>
-            <strong>{{ cachePanelCopy.title }}</strong>
-            <p>{{ cachePanelCopy.detail }}</p>
-          </div>
-        </div>
-        <div class="lnl-cache-progress" aria-hidden="true">
-          <i :class="{ active: cachePanelPhase !== 'error' }" />
-          <i :class="{ active: cachePanelPhase === 'clearing' || cachePanelPhase === 'reloading' }" />
-          <i :class="{ active: cachePanelPhase === 'reloading' }" />
-        </div>
-        <button
-          v-if="cachePanelPhase === 'error' || cachePanelPhase === 'update-ready'"
-          class="lnl-cache-retry"
-          type="button"
-          @click="handleThemeCacheRefresh"
-        >
-          {{ cachePanelPhase === 'update-ready' ? '载入新版本' : '重新尝试' }}
-        </button>
-      </section>
-    </Transition>
-    <Transition name="lnl-cache-panel">
-      <section
-        v-if="pwaPanelOpen"
-        class="lnl-pwa-panel"
-        role="dialog"
-        aria-labelledby="lnl-pwa-title"
-      >
-        <div class="lnl-pwa-panel-head">
-          <span class="lnl-pwa-panel-icon"><Icon icon="tabler:device-mobile-down" :width="19" :height="19" /></span>
-          <div>
-            <strong id="lnl-pwa-title">安装为应用</strong>
-            <p v-if="showIosInstructions">
-              在 Safari 中点按“分享”，再选择“添加到主屏幕”。
-            </p>
-            <p v-else-if="pwaInstallResult === 'error'">
-              安装提示暂时不可用，请稍后重试。
-            </p>
-            <p v-else>
-              安装已取消；监控页面仍可正常使用。
-            </p>
-          </div>
-          <button type="button" aria-label="关闭安装提示" @click="pwaPanelOpen = false">
-            <Icon icon="tabler:x" :width="16" :height="16" />
-          </button>
-        </div>
-        <button
-          v-if="canPromptInstall"
-          class="lnl-pwa-install-button"
-          type="button"
-          :disabled="pwaInstallBusy"
-          @click="handlePwaInstall"
-        >
-          {{ pwaInstallBusy ? '正在打开安装提示…' : '再次安装' }}
         </button>
       </section>
     </Transition>
@@ -871,193 +684,6 @@ function handleLogoError(event: Event) {
   transform: rotate(24deg) scale(0.72);
 }
 
-.lnl-cache-panel {
-  position: fixed;
-  z-index: 130;
-  top: calc(env(safe-area-inset-top, 0px) + 76px);
-  right: max(18px, env(safe-area-inset-right, 0px));
-  width: min(360px, calc(100vw - 32px));
-  padding: 14px;
-  border: 1px solid color-mix(in srgb, var(--lnl-green) 44%, var(--border));
-  border-radius: var(--lnl-radius-card);
-  background: color-mix(in srgb, var(--background) 96%, var(--lnl-green) 4%);
-  box-shadow: 0 18px 50px color-mix(in srgb, #000 22%, transparent);
-  color: var(--foreground);
-  contain: layout paint;
-  overflow: hidden;
-}
-
-.lnl-pwa-panel {
-  position: fixed;
-  z-index: 130;
-  top: calc(env(safe-area-inset-top, 0px) + 76px);
-  right: max(18px, env(safe-area-inset-right, 0px));
-  width: min(380px, calc(100vw - 32px));
-  padding: 14px;
-  border: 1px solid color-mix(in srgb, var(--lnl-green) 32%, var(--border));
-  border-radius: var(--lnl-radius-card);
-  background: color-mix(in srgb, var(--background) 97%, var(--lnl-green) 3%);
-  box-shadow: var(--lnl-shadow-card-hover);
-  color: var(--foreground);
-}
-
-.lnl-pwa-panel-head {
-  display: grid;
-  grid-template-columns: 36px minmax(0, 1fr) 28px;
-  gap: 11px;
-  align-items: start;
-}
-
-.lnl-pwa-panel-icon {
-  display: grid;
-  place-items: center;
-  width: 36px;
-  height: 36px;
-  border-radius: var(--lnl-radius-control);
-  background: color-mix(in srgb, var(--lnl-green) 10%, transparent);
-  color: var(--lnl-green);
-}
-
-.lnl-pwa-panel strong {
-  display: block;
-  font: 650 14px/1.35 var(--font-sans);
-}
-
-.lnl-pwa-panel p {
-  margin: 4px 0 0;
-  color: var(--muted-foreground);
-  font: 12px/1.55 var(--font-sans);
-}
-
-.lnl-pwa-panel-head > button {
-  display: grid;
-  place-items: center;
-  width: 28px;
-  height: 28px;
-  border: 0;
-  border-radius: 999px;
-  background: transparent;
-  color: var(--muted-foreground);
-}
-
-.lnl-pwa-install-button {
-  width: 100%;
-  margin-top: 13px;
-  padding: 9px 12px;
-  border: 1px solid color-mix(in srgb, var(--lnl-green) 42%, var(--border));
-  border-radius: var(--lnl-radius-control);
-  background: color-mix(in srgb, var(--lnl-green) 10%, transparent);
-  color: var(--foreground);
-  font: 650 13px/1.2 var(--font-sans);
-}
-
-.lnl-cache-panel::before {
-  content: none;
-}
-
-.lnl-cache-panel.is-error {
-  border-color: color-mix(in srgb, #ef6b6b 52%, var(--border));
-}
-
-.lnl-cache-panel.is-error::before {
-  background: #ef6b6b;
-}
-
-.lnl-cache-panel-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  color: var(--muted-foreground);
-  font: 600 9px/1.2 var(--font-mono);
-  letter-spacing: 0.12em;
-}
-
-.lnl-cache-panel-head button,
-.lnl-cache-retry {
-  border: 0;
-  background: transparent;
-  color: inherit;
-}
-
-.lnl-cache-panel-head button {
-  display: grid;
-  place-items: center;
-  width: 24px;
-  height: 24px;
-  margin: -6px -6px -6px 0;
-}
-
-.lnl-cache-panel-body {
-  display: grid;
-  grid-template-columns: 34px minmax(0, 1fr);
-  gap: 11px;
-  align-items: center;
-  margin-top: 12px;
-}
-
-.lnl-cache-panel-icon {
-  display: grid;
-  place-items: center;
-  width: 34px;
-  height: 34px;
-  border: 1px solid color-mix(in srgb, var(--lnl-green) 30%, var(--border));
-  border-radius: var(--lnl-radius-control);
-  color: var(--lnl-green);
-}
-
-.lnl-cache-panel[data-cache-phase='checking'] .lnl-cache-panel-icon svg,
-.lnl-cache-panel[data-cache-phase='clearing'] .lnl-cache-panel-icon svg,
-.lnl-cache-panel[data-cache-phase='reloading'] .lnl-cache-panel-icon svg {
-  animation: lnl-cache-orbit 1.25s linear infinite;
-}
-
-.lnl-cache-panel.is-error .lnl-cache-panel-icon {
-  color: #ef6b6b;
-}
-
-.lnl-cache-panel-body strong {
-  display: block;
-  font: 600 14px/1.35 var(--font-sans);
-}
-
-.lnl-cache-panel-body p {
-  margin: 3px 0 0;
-  color: var(--muted-foreground);
-  font: 10px/1.55 var(--font-mono);
-}
-
-.lnl-cache-progress {
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 4px;
-  margin-top: 13px;
-}
-
-.lnl-cache-progress i {
-  height: 2px;
-  border-radius: 999px;
-  background: color-mix(in srgb, var(--muted-foreground) 18%, transparent);
-  transform: scaleX(0.22);
-  transform-origin: left;
-  transition:
-    background-color var(--lnl-motion-standard) ease,
-    transform var(--lnl-motion-standard) var(--lnl-ease-out);
-}
-
-.lnl-cache-progress i.active {
-  background: var(--lnl-green);
-  transform: scaleX(1);
-}
-
-.lnl-cache-retry {
-  margin-top: 12px;
-  padding: 6px 9px;
-  border: 1px solid color-mix(in srgb, #ef6b6b 38%, var(--border));
-  border-radius: var(--lnl-radius-control);
-  color: var(--foreground);
-  font: 600 10px/1 var(--font-mono);
-}
-
 .lnl-cache-panel-enter-active,
 .lnl-cache-panel-leave-active {
   transition:
@@ -1069,12 +695,6 @@ function handleLogoError(event: Event) {
 .lnl-cache-panel-leave-to {
   opacity: 0;
   transform: translate3d(0, -10px, 0) scale(0.985);
-}
-
-@keyframes lnl-cache-orbit {
-  to {
-    transform: rotate(1turn);
-  }
 }
 
 .lnl-theme-wipe {
@@ -1313,13 +933,8 @@ function handleLogoError(event: Event) {
   }
 
   .lnl-cache-panel-enter-active,
-  .lnl-cache-panel-leave-active,
-  .lnl-cache-progress i {
+  .lnl-cache-panel-leave-active {
     transition: none;
-  }
-
-  .lnl-cache-panel-icon svg {
-    animation: none !important;
   }
 
   .lnl-theme-wipe,
@@ -1328,22 +943,6 @@ function handleLogoError(event: Event) {
   .lnl-route-core img,
   .lnl-route-track i {
     animation: none;
-  }
-}
-
-@media (max-width: 640px) {
-  .lnl-cache-panel {
-    top: calc(env(safe-area-inset-top, 0px) + 66px);
-    right: max(10px, env(safe-area-inset-right, 0px));
-    left: max(10px, env(safe-area-inset-left, 0px));
-    width: auto;
-  }
-
-  .lnl-pwa-panel {
-    top: calc(env(safe-area-inset-top, 0px) + 66px);
-    right: max(10px, env(safe-area-inset-right, 0px));
-    left: max(10px, env(safe-area-inset-left, 0px));
-    width: auto;
   }
 }
 </style>

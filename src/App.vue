@@ -21,6 +21,7 @@ const { motionReduced } = useMotionPreference()
 // 1.2.8 重构为单 cobe 实例交接（Teleport 迁移同一 DOM，WebGL 上下文不重建），
 // 让老用户重放重构后的 intro。
 const INTRO_SESSION_KEY = `komari-observatory:intro:${__BUILD_VERSION__}`
+const INSTALLED_APP_DISPLAY_MODES = ['standalone', 'minimal-ui', 'window-controls-overlay'] as const
 // Public settings normally arrive immediately. A broken proxy or cold PWA must
 // never leave #app empty for the API client's full timeout, so mount the safe
 // default shell after a bounded decision window. Late settings still hydrate
@@ -38,6 +39,16 @@ const INTRO_HANDOFF_TARGET_WAIT_MS = 1500
 function shouldPlayIntro(): boolean {
   if (motionReduced.value)
     return false
+  // Installed Chromium/Edge apps may restore a closed window's sessionStorage
+  // or create a fresh browsing context depending on process lifetime. Treat a
+  // real app navigation/restore as a new launch, while a manual reload remains
+  // once-per-session. This removes launch parity from the browser's reuse choice.
+  const installedApp = INSTALLED_APP_DISPLAY_MODES.some(mode => window.matchMedia(`(display-mode: ${mode})`).matches)
+    || ('standalone' in navigator && (navigator as Navigator & { standalone?: boolean }).standalone === true)
+  if (installedApp) {
+    const navigation = performance.getEntriesByType('navigation')[0] as PerformanceNavigationTiming | undefined
+    return navigation?.type !== 'reload'
+  }
   try {
     return sessionStorage.getItem(INTRO_SESSION_KEY) !== 'seen'
   }
@@ -64,13 +75,41 @@ let introFinalizeTimer: ReturnType<typeof window.setTimeout> | null = null
 let introRevealTimer: ReturnType<typeof window.setTimeout> | null = null
 let ambientStartTimer: ReturnType<typeof window.setTimeout> | null = null
 let handoffResizeRaf = 0
+let componentUnmounting = false
+const pendingFrameResolvers = new Map<number, () => void>()
+const pendingWaitResolvers = new Map<number, () => void>()
 let initialShellPromise: Promise<void> | null = null
 let resolveInitialShellDecision: (() => void) | null = null
 const initialShellDecision = new Promise<void>((resolve) => {
   resolveInitialShellDecision = resolve
 })
-const wait = (duration: number) => new Promise(resolve => window.setTimeout(resolve, duration))
-const nextFrame = () => new Promise<void>(resolve => window.requestAnimationFrame(() => resolve()))
+function wait(duration: number): Promise<void> {
+  return new Promise<void>((resolve) => {
+    if (componentUnmounting) {
+      resolve()
+      return
+    }
+    const timer = window.setTimeout(() => {
+      pendingWaitResolvers.delete(timer)
+      resolve()
+    }, duration)
+    pendingWaitResolvers.set(timer, resolve)
+  })
+}
+
+function nextFrame(): Promise<void> {
+  return new Promise<void>((resolve) => {
+    if (componentUnmounting) {
+      resolve()
+      return
+    }
+    const frame = window.requestAnimationFrame(() => {
+      pendingFrameResolvers.delete(frame)
+      resolve()
+    })
+    pendingFrameResolvers.set(frame, resolve)
+  })
+}
 
 type DashboardPulseOrigin = 'landing' | 'route'
 const dashboardPulseId = ref(0)
@@ -79,7 +118,7 @@ let dashboardPulseScheduled = false
 let dashboardPulseIssued = false
 
 async function requestDashboardPulse(preferredOrigin: DashboardPulseOrigin) {
-  if (dashboardPulseScheduled || motionReduced.value || !isEarthMode())
+  if (componentUnmounting || dashboardPulseScheduled || motionReduced.value || !isEarthMode())
     return
 
   dashboardPulseScheduled = true
@@ -87,6 +126,8 @@ async function requestDashboardPulse(preferredOrigin: DashboardPulseOrigin) {
   const deadline = performance.now() + 1600
   try {
     while (performance.now() < deadline) {
+      if (componentUnmounting)
+        return
       await nextTick()
       const slot = document.querySelector<HTMLElement>('#lnl-globe-dashboard-slot')
       const canvas = slot?.querySelector<HTMLCanvasElement>('canvas')
@@ -162,6 +203,8 @@ async function mountIntroGlobeStage(): Promise<boolean> {
   const deadline = performance.now() + 800
   let source: DOMRect | null = null
   while (!source && performance.now() < deadline) {
+    if (componentUnmounting)
+      return false
     const sourceEl = document.querySelector('.lnl-intro-globe')
     const candidate = sourceEl?.getBoundingClientRect()
     if (candidate && candidate.width > 0 && candidate.height > 0) {
@@ -170,7 +213,7 @@ async function mountIntroGlobeStage(): Promise<boolean> {
     }
     await nextFrame()
   }
-  if (!source)
+  if (componentUnmounting || !source)
     return false
 
   flightSourceRect = toFlightRect(source)
@@ -199,6 +242,8 @@ function flightTransform(source: FlightRect, target: FlightRect): string {
 // 引擎 DOM 已随 Teleport 进入飞行壳后，两帧再写入终点 transform，
 // 保证过渡从源矩形干净起步。
 async function startGlobeFlight(source: FlightRect, target: FlightRect) {
+  if (componentUnmounting)
+    return
   flightSourceRect = source
   flightTargetRect = target
   flightShellStyle.value = {
@@ -215,7 +260,7 @@ async function startGlobeFlight(source: FlightRect, target: FlightRect) {
   // the compositor without restoring the old synchronous layout flush.
   await nextFrame()
   await nextFrame()
-  if (globePhase.value !== 'flight' || !flightSourceRect || !flightTargetRect)
+  if (componentUnmounting || globePhase.value !== 'flight' || !flightSourceRect || !flightTargetRect)
     return
   flightShellStyle.value = {
     ...flightShellStyle.value,
@@ -292,7 +337,7 @@ const pageTransitionProps = computed(() => appStore.disablePageAnimation
     })
 
 async function prepareInitialShell() {
-  if (appShellMounted.value)
+  if (componentUnmounting || appShellMounted.value)
     return
 
   const playIntro = introSessionEligible && appStore.introAnimationEnabled && !motionReduced.value
@@ -307,6 +352,8 @@ async function prepareInitialShell() {
   appStore.introActive = true
   launchStartedAt = performance.now()
   await nextTick()
+  if (componentUnmounting)
+    return
   const stageMounted = await mountIntroGlobeStage()
   if (!stageMounted)
     globePhase.value = 'none'
@@ -333,11 +380,15 @@ onMounted(async () => {
       initialShellDecision,
       wait(INITIAL_SHELL_DECISION_TIMEOUT_MS).then(() => ensureInitialShell()),
     ])
+    if (componentUnmounting)
+      return
 
     if (introWillPlay.value) {
       // Intro follows its own visual timeline. Node/status data may arrive at any
       // point and updates the telemetry in place; it never extends the cover.
       await wait(Math.max(0, INTRO_VISUAL_DURATION_MS - (performance.now() - launchStartedAt)))
+      if (componentUnmounting)
+        return
       await finishIntro()
       void initialization
       return
@@ -347,13 +398,15 @@ onMounted(async () => {
     void initialization
   }
   catch (error) {
+    if (componentUnmounting)
+      return
     console.error('[App] Initialization failed:', error)
     await revealDashboardWithoutIntro()
   }
 })
 
 async function finishIntro() {
-  if (introPhase.value !== 'cover')
+  if (componentUnmounting || introPhase.value !== 'cover')
     return
   introPhase.value = 'finishing'
   try {
@@ -373,12 +426,14 @@ async function finishIntro() {
   if (isEarthMode()) {
     const waitDeadline = performance.now() + INTRO_HANDOFF_TARGET_WAIT_MS
     while (!rects && performance.now() < waitDeadline) {
+      if (componentUnmounting)
+        return
       rects = measureGlobeRects()
       if (!rects)
         await nextFrame()
     }
   }
-  if (introPhase.value !== 'finishing')
+  if (componentUnmounting || introPhase.value !== 'finishing')
     return
   // Keep the cover and globe instance alive until the persistent stage lands.
   // The ripple and the FLIP transform start together with no empty wait.
@@ -397,6 +452,8 @@ async function finishIntro() {
 }
 
 function scheduleDashboardReveal() {
+  if (componentUnmounting)
+    return
   introRevealActive.value = true
   if (introRevealTimer !== null)
     window.clearTimeout(introRevealTimer)
@@ -407,13 +464,16 @@ function scheduleDashboardReveal() {
   if (ambientStartTimer !== null)
     window.clearTimeout(ambientStartTimer)
   ambientStartTimer = window.setTimeout(() => {
-    window.requestAnimationFrame(() => {
-      ambientAnimationReady.value = true
+    void nextFrame().then(() => {
+      if (!componentUnmounting)
+        ambientAnimationReady.value = true
     })
   }, 260)
 }
 
 async function revealDashboardWithoutIntro() {
+  if (componentUnmounting)
+    return
   introPhase.value = 'settled'
   introHandoffReady.value = false
   appStore.introActive = false
@@ -421,11 +481,13 @@ async function revealDashboardWithoutIntro() {
   flightShellVisible.value = false
   appShellMounted.value = true
   await nextTick()
+  if (componentUnmounting)
+    return
   scheduleDashboardReveal()
 }
 
 function handleIntroAfterLeave() {
-  if (introPhase.value !== 'finishing')
+  if (componentUnmounting || introPhase.value !== 'finishing')
     return
   stopHandoffResizeWatch()
   window.removeEventListener('transitionend', handleHandoffTransitionEnd)
@@ -459,11 +521,13 @@ function handleIntroAfterLeave() {
 // 非首访 / 减少动态 / intro 回退后的路由返回：无飞行过程，地球引擎直接在
 // dashboard 槽位挂载。槽位随 HomeView 渲染，慢服务器上按 rAF 轮询等待。
 watch([appShellMounted, globePhase], async ([shell, phase]) => {
-  if (phase !== 'none' || !shell || introWillPlay.value || showLaunch.value || !isEarthMode())
+  if (componentUnmounting || phase !== 'none' || !shell || introWillPlay.value || showLaunch.value || !isEarthMode())
     return
   await nextTick()
   const deadline = performance.now() + 2000
   while (globePhase.value === 'none' && performance.now() < deadline) {
+    if (componentUnmounting)
+      return
     if (document.querySelector('#lnl-globe-dashboard-slot')) {
       globePhase.value = 'slot'
       void requestDashboardPulse('landing')
@@ -488,6 +552,17 @@ watch(motionReduced, (reduced) => {
 })
 
 onUnmounted(() => {
+  componentUnmounting = true
+  pendingFrameResolvers.forEach((resolve, frame) => {
+    window.cancelAnimationFrame(frame)
+    resolve()
+  })
+  pendingFrameResolvers.clear()
+  pendingWaitResolvers.forEach((resolve, timer) => {
+    window.clearTimeout(timer)
+    resolve()
+  })
+  pendingWaitResolvers.clear()
   appStore.introActive = false
   stopHandoffResizeWatch()
   window.removeEventListener('transitionend', handleHandoffTransitionEnd)
@@ -561,6 +636,10 @@ onUnmounted(() => {
   z-index: 110;
   pointer-events: none;
   transform-origin: top left;
+}
+
+#lnl-globe-flight-shell.is-intro-stage,
+#lnl-globe-flight-shell.is-flight {
   will-change: transform;
 }
 

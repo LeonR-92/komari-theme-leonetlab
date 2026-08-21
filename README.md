@@ -6,9 +6,9 @@
   </a>
 </p>
 
-A responsive observatory theme for [Komari](https://github.com/komari-monitor/komari), derived from [Komari Emerald](https://github.com/Tokinx/komari-theme-emerald). It combines live node telemetry, a draggable COBE globe, Ping analytics, adaptive card and list views, light/dark modes, and installable PWA support.
+A responsive observatory theme for [Komari](https://github.com/komari-monitor/komari), derived from [Komari Emerald](https://github.com/Tokinx/komari-theme-emerald). It combines live node telemetry, a draggable COBE globe, Ping analytics, adaptive card and list views, light/dark modes, and browser-managed PWA installation.
 
-Latest release: `1.4.3-fix1` · Primary target: Komari `1.4.3`
+Latest release: `1.4.3-fix2` · Primary target: Komari `1.4.3`
 
 ## Features
 
@@ -16,7 +16,7 @@ Latest release: `1.4.3-fix1` · Primary target: Komari `1.4.3`
 - Draggable COBE globe, regional telemetry, detailed charts, and optional GPU/process/network metrics
 - First-visit globe handoff, visitor scan, search reordering, and circular appearance transitions
 - Four light/dark color palettes, selectable native/halo cursor, and persistent monthly/quarterly/yearly billing display
-- Managed branding and display settings, keyboard/touch support, reduced motion, and installable PWA
+- Managed branding and display settings, keyboard/touch support, reduced motion, and conflict-free PWA manifest/icon integration
 - Legacy `Client[]` and modern UUID-keyed node response compatibility
 
 ## Installation
@@ -27,13 +27,13 @@ In **Komari → Settings → Theme management**, add this repository:
 https://github.com/LeonR-92/komari-theme-leonetlab
 ```
 
-Komari resolves the latest GitHub Release automatically. You can also upload `komari-theme-leonetlab-build-v1.4.3-fix1.zip` manually, then select **Komari Observatory**.
+Komari resolves the latest GitHub Release automatically. You can also upload `komari-theme-leonetlab-build-v1.4.3-fix2.zip` manually, then select **Komari Observatory**.
 
 ## Configuration and privacy
 
 All options are available through Komari managed theme settings. Blank branding fields inherit the Komari site configuration.
 
-Theme settings are public. Never place passwords, API keys, node tokens, private endpoints, or personal data in them. The optional visitor panel uses public IP-geolocation providers; disable it when that lookup is not appropriate. The Service Worker does not cache RPC, API, WebSocket, visitor, exchange-rate, Ping-history, or user data.
+Theme settings are public. Never place passwords, API keys, node tokens, private endpoints, or personal data in them. The optional visitor panel uses public IP-geolocation providers; disable it when that lookup is not appropriate. The network-only Service Worker does not cache pages, static assets, RPC, API, WebSocket, visitor, exchange-rate, Ping-history, telemetry, or user data; install prompts remain browser-controlled.
 
 ## Compatibility
 
@@ -59,7 +59,7 @@ npm audit --audit-level=high
 npm audit --omit=dev --audit-level=high
 ```
 
-The release build creates `komari-theme-leonetlab-build-v1.4.3-fix1.zip` with only the root manifest, root preview, and compiled `dist/` tree.
+The production build creates `komari-theme-leonetlab-build-v1.4.3-fix2.zip` with only the root manifest, root preview, and compiled `dist/` tree.
 
 ## Theme Market
 

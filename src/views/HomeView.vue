@@ -374,8 +374,12 @@ function clearLeavingNodeRect(element: Element) {
 
 <template>
   <div class="home-view">
-    <section class="lnl-dashboard-head" aria-labelledby="overview-title">
-      <div>
+    <section
+      class="lnl-dashboard-head"
+      :class="`is-${appStore.homeHeroLayout}`"
+      :aria-labelledby="appStore.homeHeroLayout === 'hidden' ? undefined : 'overview-title'"
+    >
+      <div v-if="appStore.homeHeroLayout !== 'hidden'" class="lnl-dashboard-copy">
         <span class="lnl-kicker">{{ appStore.brandHeroKicker }}</span>
         <h1 id="overview-title">
           {{ appStore.brandHeroTitle }}

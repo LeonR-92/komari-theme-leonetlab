@@ -11,7 +11,7 @@ import { ProgressThin } from '@/components/ui/progress-thin'
 import { useBackgroundSurface } from '@/composables/useBackgroundSurface'
 import { useFinanceRates } from '@/composables/useFinanceRates'
 import { useAppStore } from '@/stores/app'
-import { BILLING_PERIOD_LABELS, formatNodeRecurringCost, resolveCurrency } from '@/utils/financeHelper'
+import { formatNodeRecurringCost, formatRecurringCostTooltip, resolveCurrency } from '@/utils/financeHelper'
 import { formatBytesPerSecondWithConfig, formatBytesWithConfig, formatDateTime, formatUptimeWithFormat, getStatus } from '@/utils/helper'
 import { isMobileLike, MOBILE_NO_MOVE_CLASS } from '@/utils/mobilePerf'
 import { getOSImage, getOSName } from '@/utils/osImageHelper'
@@ -246,14 +246,7 @@ function getRecurringCost(node: NodeData) {
 
 function getFinanceTooltip(node: NodeData): string {
   const recurring = getRecurringCost(node)
-  if (recurring.state === 'free')
-    return '该节点标记为免费'
-  if (recurring.state === 'missing')
-    return '请在 Komari 后台填写价格与计费周期'
-  if (recurring.state === 'invalid')
-    return `计费周期无效，无法折算${BILLING_PERIOD_LABELS[appStore.billingDisplayPeriod]}`
-  const source = resolveCurrency(node.currency) ?? String(node.currency || '未知币种').trim()
-  return `${BILLING_PERIOD_LABELS[appStore.billingDisplayPeriod]} ${recurring.exactText} · 后台付款 ${source} ${Number(node.price).toFixed(2)} / ${node.billing_cycle} 天`
+  return formatRecurringCostTooltip(recurring, appStore.billingDisplayPeriod)
 }
 
 const needsCurrencyConversion = computed(() => props.nodes.some(node => (
@@ -375,6 +368,7 @@ function getCustomTags(node: NodeData): Array<string> {
                   variant="list"
                   :text="getRecurringCost(node).text"
                   :tooltip="getFinanceTooltip(node)"
+                  :disabled="getRecurringCost(node).oneTime"
                 />
               </div>
 

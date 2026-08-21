@@ -1,6 +1,6 @@
 import { expect, test } from '@playwright/test'
 
-const introSessionKey = 'komari-observatory:intro:1.4.3-fix1'
+const introSessionKey = 'komari-observatory:intro:1.4.3-fix2'
 
 test.beforeEach(async ({ page }, testInfo) => {
   if (testInfo.title.includes('applies the managed palette to the intro'))
@@ -13,6 +13,20 @@ test.beforeEach(async ({ page }, testInfo) => {
 test('recovers once when the desktop entry asset is replaced by stale HTML', async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== 'chromium-desktop', 'One deterministic desktop engine covers pre-mount recovery.')
   let entryRequests = 0
+
+  await page.addInitScript(() => {
+    const increment = (key: string) => sessionStorage.setItem(key, String(Number(sessionStorage.getItem(key) || 0) + 1))
+    const originalDelete = CacheStorage.prototype.delete
+    CacheStorage.prototype.delete = function (...args) {
+      increment('__lnl_boot_cache_deletes')
+      return originalDelete.apply(this, args)
+    }
+    const originalUnregister = ServiceWorkerRegistration.prototype.unregister
+    ServiceWorkerRegistration.prototype.unregister = function (...args) {
+      increment('__lnl_boot_unregisters')
+      return originalUnregister.apply(this, args)
+    }
+  })
 
   await page.route('**/assets/index-*.js', async (route) => {
     if (route.request().resourceType() !== 'script') {
@@ -36,9 +50,41 @@ test('recovers once when the desktop entry asset is replaced by stale HTML', asy
   expect(entryRequests).toBeGreaterThanOrEqual(2)
   await expect(page.locator('#lnl-boot-fallback')).toHaveCount(0)
   await expect.poll(() => page.evaluate(() => ({
-    attempt: sessionStorage.getItem('komari-observatory:boot-recovery'),
+    attempt: sessionStorage.getItem('komari-observatory:boot-recovery:1.4.3-fix2'),
+    cacheDeletes: Number(sessionStorage.getItem('__lnl_boot_cache_deletes') || 0),
     recoveryQuery: new URL(location.href).searchParams.has('__komari_boot_recovery'),
-  }))).toEqual({ attempt: null, recoveryQuery: false })
+    unregisters: Number(sessionStorage.getItem('__lnl_boot_unregisters') || 0),
+  }))).toEqual({ attempt: null, cacheDeletes: 0, recoveryQuery: false, unregisters: 0 })
+})
+
+test('applies compact, standard and hidden managed homepage layouts', async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== 'chromium-desktop', 'One desktop engine covers the managed hero layout contract.')
+  let layout: 'compact' | 'standard' | 'hidden' = 'compact'
+  await page.route('**/api/public', async (route) => {
+    const response = await route.fetch()
+    const payload = await response.json() as { data?: { theme_settings?: Record<string, unknown> } }
+    if (payload.data?.theme_settings)
+      payload.data.theme_settings.homeHeroLayout = layout
+    await route.fulfill({ response, json: payload })
+  })
+
+  await page.goto('/')
+  const hero = page.locator('.lnl-dashboard-head')
+  await expect(hero).toHaveClass(/is-compact/)
+  const compactSize = Number.parseFloat(await hero.locator('h1').evaluate(element => getComputedStyle(element).fontSize))
+  expect(compactSize).toBeLessThanOrEqual(52)
+
+  layout = 'standard'
+  await page.reload()
+  await expect(hero).toHaveClass(/is-standard/)
+  const standardSize = Number.parseFloat(await hero.locator('h1').evaluate(element => getComputedStyle(element).fontSize))
+  expect(standardSize).toBeGreaterThan(compactSize)
+
+  layout = 'hidden'
+  await page.reload()
+  await expect(hero).toHaveClass(/is-hidden/)
+  await expect(hero.locator('h1')).toHaveCount(0)
+  await expect(hero.locator('.lnl-dashboard-status')).toBeVisible()
 })
 
 test('renders the Komari 1.4.3 fixture without viewport overflow', async ({ page }, testInfo) => {
@@ -227,33 +273,47 @@ test('synchronizes and persists the billing display period', async ({ page }, te
   await page.goto('/')
   await expect(page.getByText('Tokyo Fixture', { exact: true })).toBeVisible()
   const triggers = page.locator('.lnl-billing-trigger')
+  const annualTrigger = page.locator('.node-card').filter({ hasText: 'Tokyo Fixture' }).locator('.lnl-billing-trigger')
   await expect(triggers.first()).toContainText('月付')
-  await triggers.first().click()
+  await expect(annualTrigger).toContainText('$9.92')
+  await annualTrigger.click()
   const menuItems = page.getByRole('menuitemradio')
   await expect(menuItems).toHaveText(['月付', '季付', '年付'])
   expect(await menuItems.evaluateAll(items => items.every(item => item.scrollWidth <= item.clientWidth + 1))).toBe(true)
   await expect(page.locator('.lnl-billing-menu')).not.toContainText('×')
   await page.getByRole('menuitemradio', { name: /季付/ }).click()
   await expect(triggers).toContainText(['季付', '季付', '季付', '季付'])
+  await expect(annualTrigger).toContainText('$29.75')
   expect(await page.evaluate(() => localStorage.getItem('komari-observatory:billing-period'))).toContain('quarterly')
   // The chevron rotates back from 180deg while the menu closes; measuring bounds
   // mid-transition reads the inflated rotated box and flakes on CI. Wait for the
   // rotation to settle before asserting static trigger geometry.
-  await expect(triggers.first().locator('.lnl-billing-chevron')).toHaveCSS('transform', 'none')
+  await expect(annualTrigger.locator('.lnl-billing-chevron')).toHaveCSS('transform', 'none')
   const triggerGeometry = await triggers.evaluateAll(elements => elements.map((element) => {
     const triggerRect = element.getBoundingClientRect()
+    const financeRect = element.parentElement?.getBoundingClientRect()
     const value = element.querySelector('strong')
     const visibleChildren = [...element.children].filter(child => getComputedStyle(child).display !== 'none')
+    const chevronRect = element.querySelector('.lnl-billing-chevron')?.getBoundingClientRect()
     return {
       text: element.textContent?.replace(/\s+/g, ' ').trim(),
       valueFits: Boolean(value && value.scrollWidth <= value.clientWidth + 1),
+      fillsFinanceCell: Boolean(financeRect && triggerRect.width >= financeRect.width - 20),
+      chevronRightInset: chevronRect ? triggerRect.right - chevronRect.right : null,
       childrenContained: visibleChildren.every((child) => {
         const rect = child.getBoundingClientRect()
         return rect.left >= triggerRect.left - 0.5 && rect.right <= triggerRect.right + 0.5
       }),
     }
   }))
-  expect(triggerGeometry.every(item => item.valueFits && item.childrenContained), JSON.stringify(triggerGeometry)).toBe(true)
+  expect(triggerGeometry.every(item => (
+    item.valueFits
+    && item.fillsFinanceCell
+    && item.childrenContained
+    && item.chevronRightInset !== null
+    && item.chevronRightInset >= -0.5
+    && item.chevronRightInset <= 1
+  )), JSON.stringify(triggerGeometry)).toBe(true)
   const chevronCenterError = await triggers.first().evaluate((element) => {
     const triggerRect = element.getBoundingClientRect()
     const chevronRect = element.querySelector('.lnl-billing-chevron')?.getBoundingClientRect()
@@ -262,9 +322,14 @@ test('synchronizes and persists the billing display period', async ({ page }, te
     return Math.abs((triggerRect.top + triggerRect.height / 2) - (chevronRect.top + chevronRect.height / 2))
   })
   expect(chevronCenterError).toBeLessThanOrEqual(1)
+  await annualTrigger.click()
+  await page.getByRole('menuitemradio', { name: /年付/ }).click()
+  await expect(annualTrigger).toContainText('$119')
   await page.reload()
   await expect(page.getByText('Tokyo Fixture', { exact: true })).toBeVisible()
-  await expect(page.locator('.lnl-billing-trigger').first()).toContainText('季付')
+  const reloadedAnnualTrigger = page.locator('.node-card').filter({ hasText: 'Tokyo Fixture' }).locator('.lnl-billing-trigger')
+  await expect(reloadedAnnualTrigger).toContainText('年付')
+  await expect(reloadedAnnualTrigger).toContainText('$119')
 })
 
 test('loads capability-gated GPU telemetry only after the tab is opened', async ({ page }) => {
@@ -414,30 +479,122 @@ test('discards stale GPU responses and treats empty series as unavailable data',
   await expect(workspace.getByText('该项历史采集未启用或暂无数据')).toBeVisible()
 })
 
-test.describe('Chromium PWA cache', () => {
-  test.skip(({ browserName, isMobile }) => browserName !== 'chromium' || isMobile, 'One desktop service-worker engine covers the deterministic cache contract.')
+test.describe('Chromium PWA handoff', () => {
+  test.skip(({ browserName, isMobile }) => browserName !== 'chromium' || isMobile, 'One desktop service-worker engine covers the root worker handoff.')
 
-  test('pre-caches every installed PWA icon without caching API data', async ({ page }) => {
+  test('does not expose a theme-owned install prompt', async ({ page }) => {
     await page.goto('/')
-    await page.evaluate(async () => {
-      await navigator.serviceWorker.ready
-      await new Promise(resolve => setTimeout(resolve, 500))
+    await expect(page.locator('.lnl-header')).toBeVisible()
+    await page.evaluate(() => {
+      const event = new Event('beforeinstallprompt', { cancelable: true })
+      Object.assign(event, {
+        prompt: async () => {},
+        userChoice: Promise.resolve({ outcome: 'accepted', platform: 'fixture' }),
+      })
+      window.dispatchEvent(event)
     })
+    await expect(page.locator('[data-action="installPwa"]')).toHaveCount(0)
+    await expect(page.locator('.lnl-pwa-panel')).toHaveCount(0)
+  })
 
-    const cacheAudit = await page.evaluate(async () => {
-      const manifest = await fetch('/manifest.webmanifest').then(response => response.json()) as { icons: Array<{ src: string }> }
-      const cached = await Promise.all(manifest.icons.map(async icon => Boolean(await caches.match(icon.src))))
-      const keys = await caches.keys()
-      const requests = (await Promise.all(keys.map(async key => (await caches.open(key)).keys()))).flat()
+  test('keeps the theme worker network-only and retires legacy caches', async ({ page }) => {
+    await page.goto('/')
+    await expect(page.getByText('Tokyo Fixture', { exact: true }).first()).toBeVisible()
+    await page.evaluate(async () => navigator.serviceWorker.ready)
+
+    const audit = await page.evaluate(async () => {
+      const workerSource = await fetch('/sw.js', { cache: 'no-store' }).then(response => response.text())
+      const cacheKeys = await caches.keys()
       return {
-        cached,
-        cachedPaths: requests.map(request => new URL(request.url).pathname),
+        controllerPath: navigator.serviceWorker.controller
+          ? new URL(navigator.serviceWorker.controller.scriptURL).pathname
+          : null,
+        cacheKeys,
+        workerSource,
       }
     })
 
-    expect(cacheAudit.cached.every(Boolean)).toBe(true)
-    expect(cacheAudit.cachedPaths.some(path => path.startsWith('/api/') || path === '/api/rpc2')).toBe(false)
+    expect(audit.controllerPath).toBe('/sw.js')
+    expect(audit.cacheKeys.filter(key => key.startsWith('komari-observatory-') || key.startsWith('leonetlab-observatory-'))).toEqual([])
+    expect(audit.workerSource).toContain('skipWaiting')
+    expect(audit.workerSource).toContain('clients.claim')
+    expect(audit.workerSource).not.toMatch(/caches\.(?:open|match)|cache\.(?:put|match)|WARM_THEME_ASSETS|SHELL_CACHE_KEY|OFFLINE_URL/)
   })
+
+  test('plays the intro on an installed app launch but not on a manual reload', async ({ page }) => {
+    await page.addInitScript(() => {
+      const nativeMatchMedia = window.matchMedia.bind(window)
+      window.matchMedia = ((query: string) => {
+        if (query === '(display-mode: standalone)') {
+          return {
+            matches: true,
+            media: query,
+            onchange: null,
+            addListener: () => {},
+            removeListener: () => {},
+            addEventListener: () => {},
+            removeEventListener: () => {},
+            dispatchEvent: () => true,
+          } as MediaQueryList
+        }
+        return nativeMatchMedia(query)
+      }) as typeof window.matchMedia
+    })
+    await page.route('**/api/public', async (route) => {
+      const response = await route.fetch()
+      const payload = await response.json() as { data?: { theme_settings?: Record<string, unknown> } }
+      if (payload.data?.theme_settings)
+        payload.data.theme_settings.introAnimationEnabled = true
+      await route.fulfill({ response, json: payload })
+    })
+
+    await page.goto('/')
+    await expect(page.locator('.lnl-intro')).toBeVisible()
+    await page.getByRole('button', { name: '跳过' }).click()
+    await expect(page.locator('.lnl-intro')).toHaveCount(0, { timeout: 6_000 })
+
+    await page.reload()
+    await expect(page.getByText('Tokyo Fixture', { exact: true }).first()).toBeVisible()
+    await expect(page.locator('.lnl-intro')).toHaveCount(0)
+  })
+})
+
+test('bounds steady globe rendering and removes the animated ocean canvas', async ({ page }, testInfo) => {
+  test.skip(!['chromium-desktop', 'chromium-mobile'].includes(testInfo.project.name), 'Chromium desktop/mobile cover deterministic WebGL counters.')
+  await page.addInitScript(() => {
+    const counters = { draws: 0 }
+    Object.defineProperty(window, '__lnlRenderCounters', { value: counters, configurable: true })
+    for (const prototype of [WebGLRenderingContext.prototype, WebGL2RenderingContext.prototype]) {
+      for (const method of ['drawArrays', 'drawElements'] as const) {
+        const original = prototype[method]
+        prototype[method] = function (...args: never[]) {
+          counters.draws += 1
+          return original.apply(this, args)
+        } as typeof original
+      }
+    }
+  })
+  await page.goto('/')
+  await expect(page.getByText('Tokyo Fixture', { exact: true }).first()).toBeVisible()
+  await page.evaluate(() => {
+    (window as unknown as { __lnlRenderCounters: { draws: number } }).__lnlRenderCounters.draws = 0
+  })
+  await page.waitForTimeout(5000)
+  const metrics = await page.evaluate(() => {
+    const canvas = document.querySelector<HTMLCanvasElement>('.node-earth-globe canvas')
+    return {
+      draws: (window as unknown as { __lnlRenderCounters: { draws: number } }).__lnlRenderCounters.draws,
+      dpr: canvas && canvas.clientWidth > 0 ? canvas.width / canvas.clientWidth : 0,
+      oceanCanvases: document.querySelectorAll('.lnl-data-ocean').length,
+      depthPlanes: document.querySelectorAll('.lnl-background-depth').length,
+    }
+  })
+  const mobile = testInfo.project.name === 'chromium-mobile'
+  expect(metrics.draws).toBeLessThanOrEqual(mobile ? 155 : 230)
+  expect(metrics.dpr).toBeGreaterThanOrEqual(0.98)
+  expect(metrics.dpr).toBeLessThanOrEqual((mobile ? 1.25 : 1.75) + 0.02)
+  expect(metrics.oceanCanvases).toBe(0)
+  expect(metrics.depthPlanes).toBe(0)
 })
 
 test('does not flash false empty node cards while initial nodes are loading', async ({ page }, testInfo) => {

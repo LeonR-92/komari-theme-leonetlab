@@ -384,7 +384,7 @@ export class RpcClient {
   /**
    * 调用 RPC 方法（HTTP POST）
    */
-  private async callHttp<T>(method: string, params?: Record<string, unknown> | unknown[]): Promise<T> {
+  private async callHttp<T>(method: string, params?: Record<string, unknown> | unknown[], timeoutMs = this.timeout): Promise<T> {
     const id = ++this.requestId
     const request: JsonRpcRequest = {
       jsonrpc: '2.0',
@@ -394,7 +394,7 @@ export class RpcClient {
     }
 
     const controller = new AbortController()
-    const timeoutId = setTimeout(() => controller.abort(), this.timeout)
+    const timeoutId = setTimeout(() => controller.abort(), timeoutMs)
 
     try {
       const response = await fetch(this.baseUrl, {
@@ -417,6 +417,8 @@ export class RpcClient {
       clearTimeout(timeoutId)
       if (error instanceof RpcError)
         throw error
+      if (error instanceof Error && error.name === 'AbortError')
+        throw new RpcError(-32001, `Request timeout after ${timeoutMs}ms`)
       throw new RpcError(-32000, `Network error: ${error instanceof Error ? error.message : String(error)}`)
     }
   }
@@ -624,11 +626,11 @@ export class RpcClient {
   /**
    * 调用 RPC 方法
    */
-  async call<T>(method: string, params?: Record<string, unknown> | unknown[]): Promise<T> {
+  async call<T>(method: string, params?: Record<string, unknown> | unknown[], timeoutMs = this.timeout): Promise<T> {
     if (this.useWebSocket) {
-      return this.callWebSocket<T>(method, params)
+      return this.callWebSocket<T>(method, params, timeoutMs)
     }
-    return this.callHttp<T>(method, params)
+    return this.callHttp<T>(method, params, timeoutMs)
   }
 
   /**
@@ -738,8 +740,8 @@ export class KomariRpc {
   /**
    * Ping 测试
    */
-  async ping(): Promise<string> {
-    return this.client.call<string>('rpc.ping')
+  async ping(timeoutMs?: number): Promise<string> {
+    return this.client.call<string>('rpc.ping', undefined, timeoutMs)
   }
 
   /**

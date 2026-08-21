@@ -1,14 +1,23 @@
 <script setup lang="ts">
-import { computed, onUnmounted, ref, watch } from 'vue'
-import DataOcean from '@/components/DataOcean.vue'
+import { useDocumentVisibility } from '@vueuse/core'
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
+import { useMotionPreference } from '@/composables/useMotionPreference'
 import { useAppStore } from '@/stores/app'
 
-withDefaults(defineProps<{ paused?: boolean }>(), { paused: false })
+interface NavigatorWithConnection extends Navigator {
+  connection?: { saveData?: boolean }
+}
+
+const props = withDefaults(defineProps<{ paused?: boolean }>(), { paused: false })
 
 const appStore = useAppStore()
+const { motionReduced } = useMotionPreference()
+const documentVisibility = useDocumentVisibility()
+const saveData = (navigator as NavigatorWithConnection).connection?.saveData === true
 
 const isLoaded = ref(false)
 const hasError = ref(false)
+const themeTransitioning = ref(false)
 
 const showBackground = computed(() => appStore.backgroundEnabled)
 const currentUrl = computed(() => showBackground.value ? appStore.currentBackgroundUrl : '')
@@ -52,6 +61,20 @@ const showMediaBackground = computed(() =>
 )
 
 const showDefaultBackground = computed(() => !hasCustomBackground.value)
+const defaultBackgroundPaused = computed(() => props.paused
+  || motionReduced.value
+  || saveData
+  || themeTransitioning.value
+  || documentVisibility.value !== 'visible')
+
+const shouldPlayVideo = computed(() => hasCustomBackground.value
+  && backgroundType.value === 'video'
+  && !hasError.value
+  && !props.paused
+  && !motionReduced.value
+  && !saveData
+  && !themeTransitioning.value
+  && documentVisibility.value === 'visible')
 
 const showLoadingBackground = computed(() =>
   hasCustomBackground.value && !isLoaded.value && !hasError.value,
@@ -107,10 +130,26 @@ function resetBackgroundState() {
 function handleVideoLoaded() {
   isLoaded.value = true
   hasError.value = false
+  syncVideoPlayback()
 }
 function handleVideoError() {
   isLoaded.value = false
   hasError.value = true
+}
+
+function syncVideoPlayback() {
+  const video = videoRef.value
+  if (!video)
+    return
+
+  if (!shouldPlayVideo.value) {
+    video.pause()
+    return
+  }
+
+  void video.play().catch(() => {
+    // Autoplay may be blocked by the browser. The poster/fallback surface stays visible.
+  })
 }
 
 watch([showBackground, currentUrl, backgroundType], ([enabled, url, type]) => {
@@ -129,7 +168,27 @@ watch([showBackground, currentUrl, backgroundType], ([enabled, url, type]) => {
   }
 }, { immediate: true })
 
+watch(shouldPlayVideo, async () => {
+  await nextTick()
+  syncVideoPlayback()
+}, { flush: 'post' })
+
+function handleThemeTransitionStart() {
+  themeTransitioning.value = true
+}
+
+function handleThemeTransitionEnd() {
+  themeTransitioning.value = false
+}
+
+onMounted(() => {
+  window.addEventListener('leonetlab:theme-transition-start', handleThemeTransitionStart)
+  window.addEventListener('leonetlab:theme-transition-end', handleThemeTransitionEnd)
+})
+
 onUnmounted(() => {
+  window.removeEventListener('leonetlab:theme-transition-start', handleThemeTransitionStart)
+  window.removeEventListener('leonetlab:theme-transition-end', handleThemeTransitionEnd)
   resetBackgroundState()
 })
 </script>
@@ -137,9 +196,12 @@ onUnmounted(() => {
 <template>
   <div class="background-container" :style="backgroundContainerStyle">
     <Transition name="fade">
-      <div v-if="showDefaultBackground" class="lnl-background" aria-hidden="true">
-        <div class="lnl-background-depth" />
-        <DataOcean :paused="paused" />
+      <div
+        v-if="showDefaultBackground"
+        class="lnl-background"
+        :class="{ 'is-paused': defaultBackgroundPaused }"
+        aria-hidden="true"
+      >
         <div class="lnl-background-ocean" />
       </div>
     </Transition>
@@ -161,10 +223,10 @@ onUnmounted(() => {
           ref="videoRef"
           class="background-video"
           :src="currentUrl ?? undefined"
-          autoplay
+          :autoplay="shouldPlayVideo"
           loop
           muted
-          preload="auto"
+          :preload="saveData ? 'none' : 'metadata'"
           playsinline
           @loadeddata="handleVideoLoaded"
           @canplay="handleVideoLoaded"
@@ -216,27 +278,13 @@ onUnmounted(() => {
   animation: ocean-drift 16s ease-in-out infinite alternate;
 }
 
-.lnl-background-depth {
-  position: absolute;
-  inset: 14% -12% auto;
-  height: 42%;
-  opacity: 0.2;
-  background-image: radial-gradient(circle, rgba(117, 201, 212, 0.52) 0 0.8px, transparent 1px);
-  background-size: 36px 30px;
-  mask-image: radial-gradient(ellipse at 70% 40%, #000 0 8%, transparent 70%);
-  transform: perspective(760px) rotateX(68deg) rotateZ(-2deg);
-  animation: depth-drift 22s linear infinite;
-}
-
 @keyframes ocean-drift {
   to {
     transform: perspective(680px) rotateX(64deg) translate3d(1.5%, -2.5%, 0);
   }
 }
-@keyframes depth-drift {
-  to {
-    background-position: 36px 30px;
-  }
+.lnl-background.is-paused .lnl-background-ocean {
+  animation-play-state: paused;
 }
 .background-loading {
   position: absolute;
@@ -282,7 +330,6 @@ onUnmounted(() => {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .lnl-background-depth,
   .lnl-background-ocean {
     animation: none;
   }

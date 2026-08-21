@@ -121,11 +121,6 @@ export const localIcons = {
     "width": 24,
     "height": 24
   },
-  "tabler:alert-triangle": {
-    "body": "<path fill=\"none\" stroke=\"currentColor\" stroke-linecap=\"round\" stroke-linejoin=\"round\" stroke-width=\"2\" d=\"M12 9v4m-1.637-9.409L2.257 17.125a1.914 1.914 0 0 0 1.636 2.871h16.214a1.914 1.914 0 0 0 1.636-2.87L13.637 3.59a1.914 1.914 0 0 0-3.274 0M12 16h.01\"/>",
-    "width": 24,
-    "height": 24
-  },
   "tabler:arrow-down-left": {
     "body": "<path fill=\"none\" stroke=\"currentColor\" stroke-linecap=\"round\" stroke-linejoin=\"round\" stroke-width=\"2\" d=\"M17 7L7 17m9 0H7V8\"/>",
     "width": 24,
@@ -201,11 +196,6 @@ export const localIcons = {
     "width": 24,
     "height": 24
   },
-  "tabler:device-mobile-down": {
-    "body": "<path fill=\"none\" stroke=\"currentColor\" stroke-linecap=\"round\" stroke-linejoin=\"round\" stroke-width=\"2\" d=\"M12.5 21H8a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v7m-7-8h2m-1 13v.01M19 16v6m3-3l-3 3l-3-3\"/>",
-    "width": 24,
-    "height": 24
-  },
   "tabler:device-sd-card": {
     "body": "<path fill=\"none\" stroke=\"currentColor\" stroke-linecap=\"round\" stroke-linejoin=\"round\" stroke-width=\"2\" d=\"M7 21h10a2 2 0 0 0 2-2V5a2 2 0 0 0-2-2h-6.172a2 2 0 0 0-1.414.586L5.586 7.414A2 2 0 0 0 5 8.828V19a2 2 0 0 0 2 2m6-15v2m3-2v2m-6-1v1\"/>",
     "width": 24,
@@ -231,11 +221,6 @@ export const localIcons = {
     "width": 24,
     "height": 24
   },
-  "tabler:refresh": {
-    "body": "<path fill=\"none\" stroke=\"currentColor\" stroke-linecap=\"round\" stroke-linejoin=\"round\" stroke-width=\"2\" d=\"M20 11A8.1 8.1 0 0 0 4.5 9M4 5v4h4m-4 4a8.1 8.1 0 0 0 15.5 2m.5 4v-4h-4\"/>",
-    "width": 24,
-    "height": 24
-  },
   "tabler:restore": {
     "body": "<g fill=\"none\" stroke=\"currentColor\" stroke-linecap=\"round\" stroke-linejoin=\"round\" stroke-width=\"2\"><path d=\"M3.06 13a9 9 0 1 0 .49-4.087\"/><path d=\"M3 4.001v5h5M11 12a1 1 0 1 0 2 0a1 1 0 1 0-2 0\"/></g>",
     "width": 24,
@@ -243,11 +228,6 @@ export const localIcons = {
   },
   "tabler:search": {
     "body": "<path fill=\"none\" stroke=\"currentColor\" stroke-linecap=\"round\" stroke-linejoin=\"round\" stroke-width=\"2\" d=\"M3 10a7 7 0 1 0 14 0a7 7 0 1 0-14 0m18 11l-6-6\"/>",
-    "width": 24,
-    "height": 24
-  },
-  "tabler:sparkles": {
-    "body": "<path fill=\"none\" stroke=\"currentColor\" stroke-linecap=\"round\" stroke-linejoin=\"round\" stroke-width=\"2\" d=\"M16 18a2 2 0 0 1 2 2a2 2 0 0 1 2-2a2 2 0 0 1-2-2a2 2 0 0 1-2 2m0-12a2 2 0 0 1 2 2a2 2 0 0 1 2-2a2 2 0 0 1-2-2a2 2 0 0 1-2 2M9 18a6 6 0 0 1 6-6a6 6 0 0 1-6-6a6 6 0 0 1-6 6a6 6 0 0 1 6 6\"/>",
     "width": 24,
     "height": 24
   },
