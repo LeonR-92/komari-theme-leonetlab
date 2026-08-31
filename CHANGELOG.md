@@ -1,5 +1,24 @@
 # Changelog
 
+## 1.4.3-fix3 — 2026-08-31
+
+- Completed runtime recovery after a transient initial node request failure so direct detail pages and the footer leave their loading gate as soon as metadata polling succeeds.
+- Honored a zero Ping-history retention setting without silently substituting 168 hours or issuing unnecessary history requests, and exposed short custom load-history windows below four hours.
+
+- Restored the formal chart-card surfaces and metric accent colors so the resource workspace keeps the established Observatory hierarchy in light and dark modes.
+- Rebuilt long-range history rendering around the server's detected rollup cadence: regular sparse samples form readable lines, true outages stay broken and isolated samples remain visible.
+- Anchored fixed history grids to the newest record and stopped empty grid slots from producing fabricated zero-value tooltips.
+
+- Stopped the custom theme from registering a root-scoped Service Worker while retaining its stable manifest and icons; the remaining migration worker waits for old clients to close, removes only legacy theme caches and unregisters itself.
+- Made the enabled intro deterministic on every installed-app load, including manual reloads, and prevented slow public settings from being mistaken for an explicit disabled value by using a bounded decision window and a non-sensitive last-known setting.
+- Removed per-frame canvas dimension writes from the COBE render loop, limited physical resize work to real geometry changes and made adaptive DPR changes a deferred, interaction-safe reconfiguration.
+- Batched regional-marker projection context and suppressed immaterial subpixel DOM writes without changing globe motion, telemetry or visual styling.
+- Replaced repeated node-array searches with one UUID index per update batch while preserving legacy response normalization and controlled Ping fallbacks.
+- Fixed sparse 7-day and 30-day resource history disappearing by keeping bounded time grids while rendering isolated rollup samples explicitly.
+- Normalized array and UUID-keyed load-history responses, rejected malformed timestamps, deduplicated repeated samples and added stale-response-safe short-lived history reuse.
+- Honored disabled or zero-retention history settings, enforced the documented five-second detail polling floor and reserved stable space for lazy chart workspaces.
+- Staggered visible ECharts initialization, tightened mobile chart geometry and linked active history controls and primary chart accents to the selected palette.
+
 ## 1.4.3-fix2 — 2026-08-21
 
 - Replaced the build-locked offline Service Worker with a network-only root worker that retires legacy theme caches without retaining HTML or hashed assets across Komari theme switches.

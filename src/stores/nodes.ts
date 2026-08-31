@@ -265,7 +265,7 @@ const useNodesStore = defineStore('nodes', () => {
   function initNodes(clients: Record<string, Client> | Client[], statuses: Record<string, NodeStatus>): void {
     const normalizedClients = normalizeUuidCollection(clients)
     const uuids = Object.keys(normalizedClients)
-    const existingUuids = new Set(nodes.value.map(n => n.uuid))
+    const indexByUuid = new Map(nodes.value.map((node, index) => [node.uuid, index]))
 
     // 更新现有节点或添加新节点
     uuids.forEach((uuid) => {
@@ -274,9 +274,9 @@ const useNodesStore = defineStore('nodes', () => {
         return
 
       const status = statuses[uuid]
-      const index = nodes.value.findIndex(n => n.uuid === uuid)
+      const index = indexByUuid.get(uuid)
 
-      if (existingUuids.has(uuid) && index !== -1) {
+      if (index !== undefined) {
         // 更新现有节点
         const baseNode = createNodeFromClient(client)
         nodes.value[index] = status
@@ -290,6 +290,7 @@ const useNodesStore = defineStore('nodes', () => {
           ? updateNodeStatus(newNode, extractStatusData(status))
           : newNode,
         )
+        indexByUuid.set(uuid, nodes.value.length - 1)
       }
     })
 
@@ -320,10 +321,11 @@ const useNodesStore = defineStore('nodes', () => {
    */
   function updateNodeStatuses(statuses: Record<string, NodeStatus>): void {
     let hasChanges = false
+    const indexByUuid = new Map(nodes.value.map((node, index) => [node.uuid, index]))
 
     Object.entries(statuses).forEach(([uuid, status]) => {
-      const index = nodes.value.findIndex(n => n.uuid === uuid)
-      if (index === -1)
+      const index = indexByUuid.get(uuid)
+      if (index === undefined)
         return
 
       const node = nodes.value[index]
@@ -343,12 +345,13 @@ const useNodesStore = defineStore('nodes', () => {
    */
   function updateNodeClients(clients: Record<string, Client>): void {
     const newUuids = new Set(Object.keys(clients))
+    const indexByUuid = new Map(nodes.value.map((node, index) => [node.uuid, index]))
 
     // 更新现有节点信息或添加新节点
     Object.entries(clients).forEach(([uuid, client]) => {
-      const index = nodes.value.findIndex(n => n.uuid === uuid)
+      const index = indexByUuid.get(uuid)
 
-      if (index !== -1) {
+      if (index !== undefined) {
         // 更新现有节点，保留状态信息
         const currentNode = nodes.value[index]
         if (!currentNode)
@@ -381,6 +384,7 @@ const useNodesStore = defineStore('nodes', () => {
       else {
         // 添加新节点（不带状态）
         nodes.value.push(createNodeFromClient(client))
+        indexByUuid.set(uuid, nodes.value.length - 1)
       }
     })
 
@@ -395,6 +399,9 @@ const useNodesStore = defineStore('nodes', () => {
     // 按 weight 升序排序（weight 越小越靠前，与官方前端一致）
     sortNodesByWeight()
     refreshEarthNodes(true)
+    // 初始节点请求失败后，运行期元数据轮询会通过本方法完成恢复。
+    // 此时必须同步解除详情页骨架和页脚门控，不能只更新节点数组。
+    initialized.value = true
   }
 
   /**

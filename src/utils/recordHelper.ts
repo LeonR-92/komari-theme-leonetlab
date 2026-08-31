@@ -43,6 +43,81 @@ export interface RecordFormat {
 
 type UnknownRecord = Record<string, unknown>
 
+/** Keep long-range chart density bounded without discarding server samples. */
+export function getHistoryDisplayIntervalSeconds(hours: number): number {
+  const normalizedHours = Number.isFinite(hours) ? Math.max(0, hours) : 0
+  const minute = 60
+  if (normalizedHours <= 4)
+    return minute
+  if (normalizedHours <= 24)
+    return minute * 5
+  if (normalizedHours <= 168)
+    return minute * 30
+  if (normalizedHours <= 720)
+    return minute * 120
+  return Math.max(minute * 120, Math.ceil(normalizedHours * 3600 / 600 / minute) * minute)
+}
+
+/**
+ * Adapt the display grid to Komari's actual rollup cadence.
+ *
+ * Older and storage-constrained deployments may return only hourly or daily
+ * rollups for a multi-day request. Expanding those records onto a much finer
+ * fixed grid turns every valid sample into an isolated point. Use the median
+ * positive interval when it is materially coarser than the normal display
+ * floor so consecutive rollups remain a line while genuinely longer gaps
+ * still receive empty slots.
+ */
+export function getAdaptiveHistoryDisplayIntervalSeconds(
+  records: Array<{ time?: string }>,
+  minimumIntervalSeconds: number,
+): number {
+  const minimum = Math.max(60, Math.floor(minimumIntervalSeconds))
+  const timestamps = records
+    .map(record => typeof record.time === 'string' ? Date.parse(record.time) : Number.NaN)
+    .filter(Number.isFinite)
+    .sort((left, right) => left - right)
+
+  const gaps: number[] = []
+  for (let index = 1; index < timestamps.length; index++) {
+    const previous = timestamps[index - 1]
+    const current = timestamps[index]
+    if (previous === undefined || current === undefined || current <= previous)
+      continue
+    gaps.push((current - previous) / 1000)
+  }
+  // A single gap cannot distinguish a true outage from a regular rollup
+  // cadence. Keep the conservative display floor until at least three valid
+  // samples establish a repeatable interval.
+  if (gaps.length < 2)
+    return minimum
+
+  gaps.sort((left, right) => left - right)
+  const medianGap = gaps[Math.floor(gaps.length / 2)] ?? minimum
+  if (medianGap < minimum * 2)
+    return minimum
+
+  const minute = 60
+  return Math.max(minimum, Math.round(medianGap / minute) * minute)
+}
+
+/**
+ * Return a marker size only when a finite sample has no finite neighbour.
+ * This keeps dense lines clean while making isolated rollup points visible.
+ */
+export function getSparsePointSymbolSize(
+  values: Array<number | null>,
+  dataIndex: number,
+  size = 5,
+): number {
+  const finite = (value: unknown): value is number => typeof value === 'number' && Number.isFinite(value)
+  if (!finite(values[dataIndex]))
+    return 0
+  const previousValid = dataIndex > 0 && finite(values[dataIndex - 1])
+  const nextValid = dataIndex < values.length - 1 && finite(values[dataIndex + 1])
+  return previousValid || nextValid ? 0 : size
+}
+
 function readRecordField(record: object | undefined, key: string): unknown {
   return record ? (record as UnknownRecord)[key] : undefined
 }
@@ -166,9 +241,12 @@ export function fillMissingTimePoints<T extends { time?: string, updated_at?: st
   const interval = intervalSec * 1000
 
   // 确定起始时间
+  // 固定窗口以最新记录为最后一个格点。旧算法从窗口起点正向累加，
+  // 当窗口不能被采样间隔整除时，最后一个格点会落在最新记录之前，
+  // 使末尾两条记录竞争同一格并丢失最新样本。
   const start
     = totalSeconds !== null && totalSeconds > 0
-      ? end - totalSeconds * 1000 + interval // 固定长度模式
+      ? end - Math.ceil(totalSeconds / intervalSec) * interval
       : firstItem.timeMs // 可变长度模式
 
   // 生成理想的时间点

@@ -944,6 +944,13 @@ a {
   content: none;
 }
 
+.lnl-detail-chart [data-slot='card'] {
+  border: 1px solid color-mix(in srgb, var(--lnl-line) 86%, transparent) !important;
+  border-radius: var(--lnl-radius-inner) !important;
+  background: color-mix(in srgb, var(--background) 91%, var(--lnl-surface)) !important;
+  box-shadow: var(--lnl-shadow-card) !important;
+}
+
 .dark .lnl-detail-metric,
 .dark .lnl-detail-panel {
   border-color: color-mix(in srgb, var(--lnl-line-strong) 76%, transparent) !important;

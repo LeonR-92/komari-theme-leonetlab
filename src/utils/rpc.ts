@@ -1,6 +1,6 @@
 import type { UuidCollection } from '@/utils/nodeResponse'
 import { normalizeUuidCollection } from '@/utils/nodeResponse'
-import { normalizeRecordCollection } from '@/utils/recordResponse'
+import { normalizeTimedRecordCollection } from '@/utils/recordResponse'
 
 /**
  * Komari RPC2 Client SDK
@@ -158,6 +158,13 @@ export interface PublicInfo {
   sitename: string
   theme: string
   theme_settings: Record<string, unknown>
+}
+
+export interface LoadRecordsResult {
+  records: StatusRecord[]
+  count: number
+  from?: string
+  to?: string
 }
 
 /** 版本信息 */
@@ -819,8 +826,13 @@ export class KomariRpc {
   /**
    * 获取负载记录
    */
-  async getLoadRecords(uuid?: string, hours?: number, loadType?: string, maxCount?: number): Promise<{ records: StatusRecord[] }> {
-    const result = await this.client.call<{ records?: StatusRecord[] | Record<string, StatusRecord[]> }>('common:getRecords', {
+  async getLoadRecords(uuid?: string, hours?: number, loadType?: string, maxCount?: number): Promise<LoadRecordsResult> {
+    const result = await this.client.call<{
+      records?: StatusRecord[] | Record<string, StatusRecord[]>
+      count?: unknown
+      from?: unknown
+      to?: unknown
+    }>('common:getRecords', {
       type: 'load',
       uuid,
       hours,
@@ -828,7 +840,17 @@ export class KomariRpc {
       maxCount,
     })
 
-    return { records: normalizeRecordCollection(result?.records, uuid) }
+    const records = normalizeTimedRecordCollection(result?.records, uuid)
+    const responseCount = typeof result?.count === 'number' && Number.isFinite(result.count)
+      ? Math.max(0, Math.floor(result.count))
+      : records.length
+
+    return {
+      records,
+      count: responseCount,
+      from: typeof result?.from === 'string' ? result.from : undefined,
+      to: typeof result?.to === 'string' ? result.to : undefined,
+    }
   }
 
   /**

@@ -4,6 +4,7 @@ import { useMediaQuery } from '@vueuse/core'
 import dayjs from 'dayjs'
 import { computed, onMounted, onUnmounted, ref, shallowRef, watch } from 'vue'
 import VChart from 'vue-echarts'
+import ChartViewport from '@/components/ChartViewport.vue'
 import { Button } from '@/components/ui/button'
 import { DataTooltip } from '@/components/ui/data-tooltip'
 import { Empty } from '@/components/ui/empty'
@@ -58,7 +59,13 @@ const chartColors = [
 ]
 
 // 从 publicSettings 获取记录保留时间
-const maxPingRecordPreserveTime = computed(() => appStore.publicSettings?.ping_record_preserve_time || 168)
+const maxPingRecordPreserveTime = computed(() => {
+  const value = appStore.publicSettings?.ping_record_preserve_time
+  return typeof value === 'number' && Number.isFinite(value)
+    ? Math.max(0, value)
+    : 168
+})
+const pingHistoryEnabled = computed(() => maxPingRecordPreserveTime.value > 0)
 
 // 视图选项
 const presetViews = [
@@ -71,6 +78,9 @@ const presetViews = [
 // 可用视图列表
 const availableViews = computed(() => {
   const views: { label: string, hours: number }[] = []
+  if (!pingHistoryEnabled.value)
+    return views
+
   const maxHours = maxPingRecordPreserveTime.value
 
   for (const v of presetViews) {
@@ -106,9 +116,10 @@ const selectedHours = computed(() => {
 // 初始化默认视图
 watch(availableViews, (views) => {
   const firstView = views[0]
-  if (firstView && !selectedView.value) {
-    selectedView.value = firstView.label
-  }
+  if (views.some(view => view.label === selectedView.value))
+    return
+
+  selectedView.value = firstView?.label ?? ''
 }, { immediate: true })
 
 // ==================== 类型定义 ====================
@@ -222,6 +233,20 @@ let refreshTimer: ReturnType<typeof window.setInterval> | null = null
 const PING_DIALOG_REFRESH_INTERVAL_MS = 15_000
 let pingTaskWeightCache = new Map<number, number>()
 let pingTaskWeightCacheExpiresAt = 0
+
+watch(pingHistoryEnabled, (enabled) => {
+  if (enabled)
+    return
+
+  fetchRequestId += 1
+  remoteData.value = []
+  remoteLossData.value = []
+  tasks.value = []
+  loading.value = false
+  fetching.value = false
+  backgroundRefreshing.value = false
+  error.value = null
+}, { immediate: true })
 
 // 任务选择
 const selectedTaskIds = ref<number[]>([])
@@ -404,7 +429,7 @@ async function fetchPublicPingTaskWeights(): Promise<Map<number, number>> {
 }
 
 async function fetchRecords(options: { background?: boolean } = {}) {
-  if (!props.uuid)
+  if (!props.uuid || !pingHistoryEnabled.value)
     return
   const background = options.background === true
   if (background && fetching.value)
@@ -913,7 +938,7 @@ watch(() => props.uuid, () => {
 })
 
 function refreshWhenVisible() {
-  if (document.visibilityState === 'visible')
+  if (pingHistoryEnabled.value && document.visibilityState === 'visible')
     void fetchRecords({ background: true })
 }
 
@@ -935,7 +960,7 @@ onUnmounted(() => {
     <div class="lnl-ping-toolbar">
       <div class="lnl-ping-window">
         <span>OBSERVATION WINDOW</span>
-        <Tabs v-model="selectedView" class="w-full items-center">
+        <Tabs v-if="pingHistoryEnabled" v-model="selectedView" class="w-full items-center">
           <div class="min-w-0 flex-1 overflow-x-auto pointer-events-auto">
             <TabsList class="lnl-ping-window-tabs w-max h-8 rounded-xl bg-transparent">
               <TabsTrigger
@@ -948,7 +973,7 @@ onUnmounted(() => {
           </div>
         </Tabs>
       </div>
-      <div class="lnl-ping-selection">
+      <div v-if="pingHistoryEnabled" class="lnl-ping-selection">
         <span>PROBES {{ selectedTaskIds.length }} / {{ tasks.length }}</span>
         <Button
           variant="ghost" size="xs" class="h-7 rounded-lg border border-emerald-600/15"
@@ -967,7 +992,10 @@ onUnmounted(() => {
       </div>
     </div>
 
-    <Spinner :show="loading" content-class="lnl-ping-content">
+    <div v-if="!pingHistoryEnabled" class="py-8">
+      <Empty description="后台未启用 Ping 历史记录" />
+    </div>
+    <Spinner v-else :show="loading" content-class="lnl-ping-content">
       <div v-if="error" class="text-red-500 py-8 text-center">
         {{ error }}
       </div>
@@ -1060,7 +1088,9 @@ onUnmounted(() => {
               </div>
             </div>
             <div class="lnl-ping-chart">
-              <VChart :option="pingChartOption" autoresize />
+              <ChartViewport class="!h-full !min-h-full">
+                <VChart :option="pingChartOption" autoresize />
+              </ChartViewport>
             </div>
           </section>
         </div>

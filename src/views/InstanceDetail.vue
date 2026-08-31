@@ -1,8 +1,9 @@
 <script setup lang="ts">
 import type { CurrencyCode } from '@/utils/financeHelper'
 import { Icon } from '@iconify/vue'
-import { computed, defineAsyncComponent, onMounted, ref } from 'vue'
+import { computed, defineAsyncComponent, onBeforeMount, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import DetailChartSkeleton from '@/components/DetailChartSkeleton.vue'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { CardX } from '@/components/ui/card-x'
@@ -16,8 +17,16 @@ import { getOSImage, getOSName } from '@/utils/osImageHelper'
 import { getRegionDisplayName, getRegionFlagUrl } from '@/utils/regionHelper'
 import { getBillingCycleText, getExpireText, getExpireTextClass } from '@/utils/tagHelper'
 
-const LoadChart = defineAsyncComponent(() => import('@/components/LoadChart.vue'))
-const PingChart = defineAsyncComponent(() => import('@/components/PingChart.vue'))
+const LoadChart = defineAsyncComponent({
+  loader: () => import('@/components/LoadChart.vue'),
+  loadingComponent: DetailChartSkeleton,
+  delay: 0,
+})
+const PingChart = defineAsyncComponent({
+  loader: () => import('@/components/PingChart.vue'),
+  loadingComponent: DetailChartSkeleton,
+  delay: 0,
+})
 
 const route = useRoute()
 const router = useRouter()
@@ -28,8 +37,12 @@ const nodesStore = useNodesStore()
 const exchangeRates = ref(financeHelper.DEFAULT_EXCHANGE_RATES)
 const financeBaseCurrency = ref<CurrencyCode>('CNY')
 
+onBeforeMount(() => {
+  if (window.scrollY !== 0)
+    window.scrollTo({ top: 0, behavior: 'instant' })
+})
+
 onMounted(async () => {
-  window.scrollTo({ top: 0, behavior: 'instant' })
   financeBaseCurrency.value = financeHelper.getStoredFinanceCurrency()
 
   const { rates } = await financeHelper.getDailyExchangeRates()
@@ -40,7 +53,11 @@ const formatBytes = (bytes: number) => formatBytesWithConfig(bytes, appStore.byt
 const formatBytesPerSecond = (bytes: number) => formatBytesPerSecondWithConfig(bytes, appStore.byteDecimals)
 const formatUptime = (seconds: number) => formatUptimeWithFormat(seconds, 'minute')
 
-const data = computed(() => nodesStore.nodes.find(node => node.uuid === route.params.id))
+const nodeUuid = computed(() => {
+  const id = route.params.id
+  return Array.isArray(id) ? (id[0] ?? '') : (id ?? '')
+})
+const data = computed(() => nodesStore.nodesByUuid.get(nodeUuid.value))
 
 interface InfoItem {
   label: string
@@ -242,8 +259,14 @@ const trafficProgressStyle = computed(() => ({
 </script>
 
 <template>
-  <div class="instance-detail lnl-detail space-y-5" :class="{ 'is-motion-reduced': appStore.disablePageAnimation }">
-    <div v-if="!data" class="p-4">
+  <div class="instance-detail lnl-detail min-h-[calc(100svh-73px)] space-y-5" :class="{ 'is-motion-reduced': appStore.disablePageAnimation }">
+    <div v-if="!nodesStore.initialized" class="lnl-detail-node-loading px-4" role="status" aria-label="节点详情正在加载">
+      <span aria-hidden="true" />
+      <span aria-hidden="true" />
+      <span aria-hidden="true" />
+    </div>
+
+    <div v-else-if="!data" class="p-4">
       <CardX
         class="lnl-panel-motion border-none rounded-md"
         :class="pickSurfaceClass('bg-background/60 hover:bg-background', 'bg-background/50 hover:bg-background backdrop-blur-xs')"
@@ -423,7 +446,7 @@ const trafficProgressStyle = computed(() => ({
             <p>CPU、内存、磁盘、网络与进程历史</p>
           </div>
         </header>
-        <LoadChart :uuid="data.uuid" class="lnl-detail-chart" />
+        <LoadChart :uuid="data.uuid" class="lnl-detail-chart" data-kind="resource" />
       </section>
       <section class="lnl-detail-chart-section mx-4" aria-labelledby="network-history-title">
         <header class="lnl-detail-chart-heading">
@@ -435,8 +458,31 @@ const trafficProgressStyle = computed(() => ({
             <p>探测延迟、抖动与丢包趋势</p>
           </div>
         </header>
-        <PingChart :uuid="data.uuid" class="lnl-detail-chart" />
+        <PingChart :uuid="data.uuid" class="lnl-detail-chart" data-kind="ping" />
       </section>
     </template>
   </div>
 </template>
+
+<style scoped>
+.lnl-detail-node-loading {
+  display: grid;
+  min-height: calc(100svh - 73px);
+  grid-template-rows: 88px 180px minmax(420px, 1fr);
+  gap: 1.25rem;
+}
+
+.lnl-detail-node-loading span {
+  border: 1px solid color-mix(in srgb, var(--lnl-line) 82%, transparent);
+  border-radius: var(--lnl-radius-card);
+  background: color-mix(in srgb, var(--background) 94%, var(--lnl-surface));
+}
+
+@media (max-width: 640px) {
+  .lnl-detail-node-loading {
+    min-height: calc(100dvh - 64px);
+    grid-template-rows: 72px 220px minmax(360px, 1fr);
+    gap: 0.75rem;
+  }
+}
+</style>

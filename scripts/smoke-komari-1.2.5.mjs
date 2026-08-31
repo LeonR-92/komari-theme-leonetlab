@@ -1747,7 +1747,7 @@ const slowPublicSettingsShellAuditExpression = `new Promise((resolve) => {
 })`
 
 const visitorFixtureInitScript = `(() => {
-  sessionStorage.setItem('komari-observatory:intro:1.4.3-fix2', 'seen');
+  sessionStorage.setItem('komari-observatory:intro:1.4.3-fix3', 'seen');
   sessionStorage.removeItem('komari-observatory:visitor-presentation:1.4.3');
   const nativeFetch = window.fetch.bind(window);
   window.fetch = (input, init) => {
@@ -1766,7 +1766,7 @@ const visitorFixtureInitScript = `(() => {
 })()`
 
 async function capturePingDialogScreenshot(name, width, height) {
-  const result = await runInteractivePage(name, width, height, pingDialogOpenExpression, name, `sessionStorage.setItem('komari-observatory:intro:1.4.3-fix2', 'seen');`)
+  const result = await runInteractivePage(name, width, height, pingDialogOpenExpression, name, `sessionStorage.setItem('komari-observatory:intro:1.4.3-fix3', 'seen');`)
   assert.equal(result?.state, 'opened')
   assert.ok(result?.left >= -0.5 && result?.right <= result?.viewportWidth + 0.5, `Ping dialog escaped viewport: ${JSON.stringify(result)}`)
   assert.ok(result?.centerError <= 1, `Ping dialog is not centered: ${JSON.stringify(result)}`)
@@ -1774,7 +1774,7 @@ async function capturePingDialogScreenshot(name, width, height) {
 
 async function auditMobileFinanceOverflow(width) {
   const screenshotName = process.env.SMOKE_SCREENSHOT_DIR && width === 390 ? 'mobile-finance-open' : undefined
-  const result = await runInteractivePage(`mobile-finance-audit-${width}`, width, 844, financeOverflowAuditExpression, screenshotName, `sessionStorage.setItem('komari-observatory:intro:1.4.3-fix2', 'seen');`)
+  const result = await runInteractivePage(`mobile-finance-audit-${width}`, width, 844, financeOverflowAuditExpression, screenshotName, `sessionStorage.setItem('komari-observatory:intro:1.4.3-fix3', 'seen');`)
   assert.equal(result?.state, 'opened')
   assert.doesNotMatch(result?.triggerText ?? '', financeDetailsLabelPattern)
   assert.equal(result?.assistiveHintHidden, true, `Finance assistive hint became visible: ${JSON.stringify(result)}`)
@@ -1788,7 +1788,7 @@ async function auditMobileFinanceOverflow(width) {
 }
 
 async function auditNodeFinanceStates(width) {
-  const initScript = `sessionStorage.setItem('komari-observatory:intro:1.4.3-fix2', 'seen');`
+  const initScript = `sessionStorage.setItem('komari-observatory:intro:1.4.3-fix3', 'seen');`
   const defaultResult = await runInteractivePage(
     `node-finance-states-default-${width}`,
     width,
@@ -1834,7 +1834,7 @@ async function auditPingBarGeometry() {
     900,
     pingBarGeometryAuditExpression,
     undefined,
-    `sessionStorage.setItem('komari-observatory:intro:1.4.3-fix2', 'seen');`,
+    `sessionStorage.setItem('komari-observatory:intro:1.4.3-fix3', 'seen');`,
   )
   reportBrowserAudit('node-ping-bar-geometry', result)
   assert.equal(result?.length, 2, `Expected latency and loss panels: ${JSON.stringify(result)}`)
@@ -1874,7 +1874,7 @@ async function auditGlobeFlagsAcrossThemeChange() {
     780,
     globeFlagThemeAuditExpression,
     undefined,
-    `sessionStorage.setItem('komari-observatory:intro:1.4.3-fix2', 'seen'); localStorage.setItem('appearance', 'light'); localStorage.setItem('leonetlab:appearance:user-override', '1');`,
+    `sessionStorage.setItem('komari-observatory:intro:1.4.3-fix3', 'seen'); localStorage.setItem('appearance', 'light'); localStorage.setItem('leonetlab:appearance:user-override', '1');`,
   )
   reportBrowserAudit('globe-flags-theme-change', result)
   assert.equal(result?.initialCount, 4, `Expected four globe flag overlays: ${JSON.stringify(result)}`)
@@ -1901,7 +1901,7 @@ async function auditGlobeRegionInteraction() {
     780,
     globeRegionInteractionAuditExpression,
     undefined,
-    `window.__lnlGlobeProbe = {}; sessionStorage.setItem('komari-observatory:intro:1.4.3-fix2', 'seen');`,
+    `window.__lnlGlobeProbe = {}; sessionStorage.setItem('komari-observatory:intro:1.4.3-fix3', 'seen');`,
   )
   reportBrowserAudit('globe-region-interaction', result)
   assert.equal(result?.openedTooEarly, false, `Region preview skipped hover intent delay: ${JSON.stringify(result)}`)
@@ -1922,7 +1922,7 @@ async function auditGlobeRouteRipple() {
     780,
     globeRouteRippleAuditExpression,
     undefined,
-    `sessionStorage.setItem('komari-observatory:intro:1.4.3-fix2', 'seen');`,
+    `sessionStorage.setItem('komari-observatory:intro:1.4.3-fix3', 'seen');`,
   )
   reportBrowserAudit('globe-route-ripple', result)
   assert.equal(result?.routeRipple, true, `Returning home did not trigger the route ripple: ${JSON.stringify(result)}`)
@@ -1938,7 +1938,7 @@ async function auditPingDialogCloseAnimation() {
     780,
     pingDialogCloseAuditExpression,
     undefined,
-    `sessionStorage.setItem('komari-observatory:intro:1.4.3-fix2', 'seen');`,
+    `sessionStorage.setItem('komari-observatory:intro:1.4.3-fix3', 'seen');`,
   )
   reportBrowserAudit('ping-dialog-close-animation', result)
   assert.equal(result?.closedSeen, true, `Ping dialog skipped its closed state: ${JSON.stringify(result)}`)
@@ -2009,7 +2009,7 @@ async function auditMetricStoreFallback() {
       780,
       pingDialogOpenExpression,
       undefined,
-      `sessionStorage.setItem('komari-observatory:intro:1.4.3-fix2', 'seen');`,
+      `sessionStorage.setItem('komari-observatory:intro:1.4.3-fix3', 'seen');`,
     )
     reportBrowserAudit('metric-store-fallback', result)
     assert.equal(result?.state, 'opened', `Ping dialog did not open behind an uninitialized metric store: ${JSON.stringify(result)}`)
@@ -2034,7 +2034,7 @@ async function auditGlobeMotionMode(mode, expectedMoved) {
       780,
       globeMotionAuditExpression.replace('__EARTH_MODE__', mode),
       undefined,
-      `sessionStorage.setItem('komari-observatory:intro:1.4.3-fix2', 'seen');`,
+      `sessionStorage.setItem('komari-observatory:intro:1.4.3-fix3', 'seen');`,
     )
     reportBrowserAudit(`globe-motion-${mode}`, result)
     assert.equal(result?.moved, expectedMoved, `Unexpected ${mode} globe motion: ${JSON.stringify(result)}`)
@@ -2051,7 +2051,7 @@ async function auditPingContentMotion() {
     780,
     pingContentMotionAuditExpression,
     undefined,
-    `sessionStorage.setItem('komari-observatory:intro:1.4.3-fix2', 'seen');`,
+    `sessionStorage.setItem('komari-observatory:intro:1.4.3-fix3', 'seen');`,
   )
   reportBrowserAudit('ping-content-motion', result)
   assert.match(result?.toolbarAnimation || '', pingSectionInPattern, `Ping toolbar has no entrance transition: ${JSON.stringify(result)}`)
@@ -2134,7 +2134,7 @@ async function auditSearchGeometry(width) {
     width <= 760 ? 844 : 900,
     searchGeometryAuditExpression,
     undefined,
-    `sessionStorage.setItem('komari-observatory:intro:1.4.3-fix2', 'seen');`,
+    `sessionStorage.setItem('komari-observatory:intro:1.4.3-fix3', 'seen');`,
   )
   reportBrowserAudit(`search-geometry-${width}`, result)
   assert.equal(result?.drawerContained, true, `Search drawer escaped its viewport: ${JSON.stringify(result)}`)
@@ -2166,7 +2166,7 @@ async function auditSlowPublicSettingsShell() {
 async function auditMobileChromeLayout() {
   visitorInfoEnabledFixture = true
   try {
-    const initScript = `${visitorFixtureInitScript}\nsessionStorage.setItem('komari-observatory:intro:1.4.3-fix2', 'seen');`
+    const initScript = `${visitorFixtureInitScript}\nsessionStorage.setItem('komari-observatory:intro:1.4.3-fix3', 'seen');`
     const result = await runInteractivePage('mobile-chrome-layout', 390, 844, mobileChromeLayoutAuditExpression, undefined, initScript)
     reportBrowserAudit('mobile-chrome-layout', result)
     assert.ok(Math.abs(result?.logoWidth - result?.logoHeight) < 0.5, `Mobile logo frame is not square: ${JSON.stringify(result)}`)
@@ -2194,7 +2194,7 @@ async function auditMobileIntroTypography() {
     844,
     mobileIntroTypographyAuditExpression,
     undefined,
-    `sessionStorage.removeItem('komari-observatory:intro:1.4.3-fix2');`,
+    `sessionStorage.removeItem('komari-observatory:intro:1.4.3-fix3');`,
   )
   reportBrowserAudit('mobile-intro-typography', result)
   assert.ok(result?.left >= -0.5 && result?.right <= result?.viewportWidth + 0.5, `Mobile intro title escaped viewport: ${JSON.stringify(result)}`)
@@ -2224,7 +2224,7 @@ async function auditMobileSearchMove() {
     844,
     mobileSearchMoveAuditExpression,
     undefined,
-    `sessionStorage.setItem('komari-observatory:intro:1.4.3-fix2', 'seen');`,
+    `sessionStorage.setItem('komari-observatory:intro:1.4.3-fix3', 'seen');`,
   )
   reportBrowserAudit('mobile-search-move', result)
   assert.ok(result?.after < result?.before - 100, `Filtered card did not move to the first slot: ${JSON.stringify(result)}`)

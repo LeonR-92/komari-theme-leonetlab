@@ -2,7 +2,7 @@
 import type { RecordFormat } from '@/utils/recordHelper'
 import type { MetricSeries, StatusRecord } from '@/utils/rpc'
 import { Icon } from '@iconify/vue'
-import { useDocumentVisibility, useIntervalFn } from '@vueuse/core'
+import { useDocumentVisibility, useIntervalFn, useMediaQuery } from '@vueuse/core'
 import dayjs from 'dayjs'
 import { computed, onMounted, onUnmounted, ref, shallowRef, watch } from 'vue'
 import VChart from 'vue-echarts'
@@ -18,8 +18,7 @@ import { useNodesStore } from '@/stores/nodes'
 import { formatBytes, formatBytesSplit } from '@/utils/helper'
 import { isMetricCapabilityUnavailable, listAvailableMetricDefinitions } from '@/utils/metricCapabilities'
 import { isMobileLike } from '@/utils/mobilePerf'
-import { fillMissingTimePoints } from '@/utils/recordHelper'
-import { normalizeRecordCollection } from '@/utils/recordResponse'
+import { fillMissingTimePoints, getAdaptiveHistoryDisplayIntervalSeconds, getHistoryDisplayIntervalSeconds, getSparsePointSymbolSize } from '@/utils/recordHelper'
 import { getSharedRpc } from '@/utils/rpc'
 import '@/utils/echarts' // 共享 ECharts 配置
 
@@ -32,36 +31,38 @@ const { pickSurfaceClass } = useBackgroundSurface()
 const { motionReduced } = useMotionPreference()
 const nodesStore = useNodesStore()
 const documentVisibility = useDocumentVisibility()
+const compactCharts = useMediaQuery('(max-width: 640px)')
 
-// 从 publicSettings 获取记录保留时间
-const maxRecordPreserveTime = computed(() => appStore.publicSettings?.record_preserve_time || 720)
+// 未加载设置时沿用内置保留期；后台明确关闭或设为 0 时必须原样保留。
+const maxRecordPreserveTime = computed(() => {
+  const value = appStore.publicSettings?.record_preserve_time
+  return typeof value === 'number' && Number.isFinite(value)
+    ? Math.max(0, value)
+    : 720
+})
+const historyRecordsEnabled = computed(() => appStore.publicSettings?.record_enabled !== false
+  && maxRecordPreserveTime.value > 0)
 
-// 从 publicSettings.theme_settings 获取数据更新间隔（秒），默认 3 秒
+// 与主题清单及全局节点轮询共用 5 秒下限，避免详情页额外放大 RPC 压力。
 const dataUpdateInterval = computed(() => {
   const settings = appStore.publicSettings?.theme_settings
   const interval = settings?.dataUpdateInterval
-  // 确保值在合理范围内（1-60秒）
-  if (typeof interval === 'number' && interval >= 1 && interval <= 60) {
-    return interval * 1000 // 转换为毫秒
-  }
-  return 3000 // 默认 3 秒
+  if (typeof interval === 'number' && Number.isFinite(interval))
+    return Math.min(60, Math.max(5, interval)) * 1000
+  return 5000
 })
 
 // 使用 store 中的 isDark computed
 const isDark = computed(() => appStore.isDark)
 
-// 优化后的图表配色方案（基于 Material Design 色彩）
+// 恢复正式版的指标辨识色；主题色继续用于页签、焦点和交互状态。
 const chartColors = {
-  // 主色调 - 珊瑚红
   primary: '#FF6B6B',
-  primaryArea: 'rgba(255, 107, 107, 0.15)',
-  // 次要色 - 琥珀黄
+  primaryAreaStrong: 'rgba(255, 107, 107, 0.25)',
+  primaryAreaFaint: 'rgba(255, 107, 107, 0.02)',
   secondary: '#FFB347',
-  // 第三色 - 青绿色
   tertiary: '#4ECDC4',
-  // 第四色 - 紫罗兰
   quaternary: '#A78BFA',
-  // 第五色 - 天蓝色
   quinary: '#60A5FA',
 }
 
@@ -80,7 +81,7 @@ const chartThemeColors = computed(() => ({
 // 通用 Tooltip 配置
 const baseTooltipConfig = computed(() => ({
   trigger: 'axis' as const,
-  confine: false,
+  confine: compactCharts.value,
   backgroundColor: chartThemeColors.value.tooltipBg,
   borderColor: 'transparent',
   borderWidth: 0,
@@ -107,9 +108,12 @@ const baseTooltipConfig = computed(() => ({
   },
 }))
 
-// 图表边距配置
-const chartMargin = { top: 30, right: 24, bottom: 32, left: 56 }
-const chartMarginWithLegend = { top: 30, right: 24, bottom: 52, left: 56 }
+const chartMargin = computed(() => compactCharts.value
+  ? { top: 28, right: 10, bottom: 30, left: 44 }
+  : { top: 30, right: 24, bottom: 32, left: 56 })
+const chartMarginWithLegend = computed(() => compactCharts.value
+  ? { top: 28, right: 10, bottom: 50, left: 44 }
+  : { top: 30, right: 24, bottom: 52, left: 56 })
 // ECharts 动画在移动端关闭：图表动画是持续 GPU/CPU 负载，移动端直接呈现最终帧。
 const chartAnimationConfig = computed(() => ({
   animation: !motionReduced.value && !isMobileLike,
@@ -130,6 +134,9 @@ const presetViews = [
 // 可用视图列表
 const availableViews = computed(() => {
   const views: { label: string, hours?: number }[] = [{ label: '实时' }]
+  if (!historyRecordsEnabled.value)
+    return views
+
   const maxHours = maxRecordPreserveTime.value
 
   for (const v of presetViews) {
@@ -138,14 +145,7 @@ const availableViews = computed(() => {
     }
   }
 
-  const maxPreset = presetViews.at(-1)
-  if (maxPreset && maxHours > maxPreset.hours) {
-    const label = maxHours % 24 === 0
-      ? `${Math.floor(maxHours / 24)} 天`
-      : `${maxHours} 小时`
-    views.push({ label, hours: maxHours })
-  }
-  else if (maxHours > 4 && !presetViews.some(v => v.hours === maxHours)) {
+  if (maxHours > 0 && !presetViews.some(v => v.hours === maxHours)) {
     const label = maxHours % 24 === 0
       ? `${Math.floor(maxHours / 24)} 天`
       : `${maxHours} 小时`
@@ -171,14 +171,55 @@ const error = ref<string | null>(null)
 /** 单调递增请求序号：过期响应直接丢弃，防止慢历史响应覆盖新数据 */
 let fetchRequestId = 0
 
+interface HistoryCacheEntry {
+  fetchedAt: number
+  records: StatusRecord[]
+}
+
+const HISTORY_CACHE_TTL_MS = 60_000
+const HISTORY_CACHE_MAX_ENTRIES = 8
+const historyCache = new Map<string, HistoryCacheEntry>()
+const historyRequests = new Map<string, Promise<StatusRecord[]>>()
+
 // 节点信息
 const nodeInfo = computed(() => nodesStore.nodesByUuid.get(props.uuid))
 
 // RPC 客户端
 const rpc = getSharedRpc()
 
-interface LoadRecordsResponse {
-  records?: StatusRecord[] | Record<string, StatusRecord[]>
+function historyCacheKey(uuid: string, hours: number): string {
+  return `${uuid}|${hours}`
+}
+
+function rememberHistory(key: string, records: StatusRecord[]): void {
+  historyCache.delete(key)
+  historyCache.set(key, { fetchedAt: Date.now(), records })
+  while (historyCache.size > HISTORY_CACHE_MAX_ENTRIES) {
+    const oldestKey = historyCache.keys().next().value
+    if (typeof oldestKey !== 'string')
+      break
+    historyCache.delete(oldestKey)
+  }
+}
+
+async function loadHistoryRecords(uuid: string, hours: number): Promise<StatusRecord[]> {
+  const key = historyCacheKey(uuid, hours)
+  const cached = historyCache.get(key)
+  if (cached && Date.now() - cached.fetchedAt <= HISTORY_CACHE_TTL_MS)
+    return cached.records
+
+  const pending = historyRequests.get(key)
+  if (pending)
+    return pending
+
+  const request = rpc.getLoadRecords(uuid, hours, 'all', 4000)
+    .then(({ records }) => {
+      rememberHistory(key, records)
+      return records
+    })
+    .finally(() => historyRequests.delete(key))
+  historyRequests.set(key, request)
+  return request
 }
 
 // ==================== 数据获取 ====================
@@ -245,31 +286,19 @@ async function fetchRecentData() {
 }
 
 async function fetchHistoryData() {
-  if (!props.uuid)
+  const hours = selectedHours.value
+  if (!props.uuid || !historyRecordsEnabled.value || hours === undefined)
     return
 
   const requestId = ++fetchRequestId
-  const hours = selectedHours.value || 4
 
   loading.value = true
   error.value = null
 
   try {
-    const result = await rpc.getClient().call<LoadRecordsResponse>('common:getRecords', {
-      type: 'load',
-      uuid: props.uuid,
-      hours,
-      maxCount: 4000,
-    })
+    const records = await loadHistoryRecords(props.uuid, hours)
     if (requestId !== fetchRequestId)
       return
-    const records = normalizeRecordCollection(result?.records, props.uuid)
-
-    // 按时间排序
-    records.sort((a: StatusRecord, b: StatusRecord) =>
-      dayjs(a.time).valueOf() - dayjs(b.time).valueOf(),
-    )
-
     remoteData.value = records
   }
   catch (err) {
@@ -296,6 +325,15 @@ async function fetchData() {
 
 // ==================== 数据处理 ====================
 
+const historyDisplayIntervalSeconds = computed(() => {
+  if (isRealtime.value)
+    return 0
+  const hours = selectedHours.value || 4
+  const minimumIntervalSec = getHistoryDisplayIntervalSeconds(hours)
+  const data = statusToRecordFormat(remoteData.value)
+  return getAdaptiveHistoryDisplayIntervalSeconds(data, minimumIntervalSec)
+})
+
 const chartData = computed(() => {
   const data = statusToRecordFormat(remoteData.value)
   if (!data.length)
@@ -306,33 +344,54 @@ const chartData = computed(() => {
   }
 
   const hours = selectedHours.value || 4
-  const minute = 60
-  const hour = minute * 60
-  let intervalSec: number
-  let maxGap: number
+  const intervalSec = historyDisplayIntervalSeconds.value
 
-  if (hours <= 4) {
-    intervalSec = minute
-    maxGap = minute * 2
-  }
-  else if (hours > 120) {
-    intervalSec = hour
-    maxGap = hour * 2
-  }
-  else {
-    intervalSec = minute * 15
-    maxGap = minute * 30
-  }
-
-  return fillMissingTimePoints(data, intervalSec, hours * 3600, maxGap)
+  // 圆整到最近时间格时，任意合法采样与格点的距离最多为半个间隔。
+  // 稍加余量可容纳服务端聚合时间的秒级偏移，但不会复制同一采样。
+  return fillMissingTimePoints(data, intervalSec, hours * 3600, intervalSec * 0.6)
 })
 
+function isFiniteValue(value: unknown): value is number {
+  return typeof value === 'number' && Number.isFinite(value)
+}
+
+interface ChartTooltipParam {
+  dataIndex: number
+  seriesName: string
+  value: unknown
+  color: string
+}
+
+function renderableTooltipParams(params: unknown): ChartTooltipParam[] {
+  if (!Array.isArray(params))
+    return []
+  return (params as ChartTooltipParam[]).filter(item => isFiniteValue(item.value))
+}
+
+/**
+ * Long-range rollups can legitimately contain isolated samples. A line with
+ * showSymbol=false renders those samples invisibly, so reveal only isolated
+ * points while leaving continuous lines visually unchanged.
+ */
 const latestStatus = computed(() => {
   const data = remoteData.value
   if (!data.length)
     return null
   return data.at(-1) ?? null
 })
+
+const hasRenderableBaseData = computed(() => remoteData.value.some(record => [
+  record.cpu,
+  record.load,
+  record.ram,
+  record.swap,
+  record.disk,
+  record.net_in,
+  record.net_out,
+  record.process,
+  record.connections,
+  record.connections_udp,
+].some(isFiniteValue)))
 
 // ==================== 工具函数 ====================
 
@@ -388,6 +447,17 @@ const baseYAxisConfig = computed(() => ({
   },
 }))
 
+const cpuValues = computed(() => chartData.value.map(r => r.cpu))
+const loadValues = computed(() => chartData.value.map(r => r.load))
+const ramValues = computed(() => chartData.value.map(r => r.ram))
+const swapValues = computed(() => chartData.value.map(r => r.swap))
+const diskValues = computed(() => chartData.value.map(r => r.disk))
+const networkInValues = computed(() => chartData.value.map(r => r.net_in))
+const networkOutValues = computed(() => chartData.value.map(r => r.net_out))
+const connectionValues = computed(() => chartData.value.map(r => r.connections))
+const udpConnectionValues = computed(() => chartData.value.map(r => r.connections_udp))
+const processValues = computed(() => chartData.value.map(r => r.process))
+
 // ==================== 图表配置 ====================
 
 // CPU 图表
@@ -398,7 +468,7 @@ const cpuChartOption = computed(() => ({
   tooltip: {
     ...baseTooltipConfig.value,
     formatter: (params: unknown) => {
-      const p = params as Array<{ dataIndex: number, seriesName: string, value: number, color: string }>
+      const p = renderableTooltipParams(params)
       if (!p.length)
         return ''
       const firstParam = p[0]
@@ -415,17 +485,17 @@ const cpuChartOption = computed(() => ({
       for (const item of p) {
         const colorDot = `<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${item.color};margin-right:8px;flex-shrink:0"></span>`
         if (item.seriesName === 'CPU') {
-          html += `<div style="display:flex;align-items:center">${colorDot}<span>CPU</span><span style="margin-left:auto;font-weight:600;margin-left:16px">${item.value?.toFixed(1) ?? '-'}%</span></div>`
+          html += `<div style="display:flex;align-items:center">${colorDot}<span>CPU</span><span style="margin-left:auto;font-weight:600;margin-left:16px">${Number(item.value).toFixed(1)}%</span></div>`
         }
         else if (item.seriesName === '负载') {
-          html += `<div style="display:flex;align-items:center">${colorDot}<span>系统负载</span><span style="margin-left:auto;font-weight:600;margin-left:16px">${item.value?.toFixed(2) ?? '-'}</span></div>`
+          html += `<div style="display:flex;align-items:center">${colorDot}<span>系统负载</span><span style="margin-left:auto;font-weight:600;margin-left:16px">${Number(item.value).toFixed(2)}</span></div>`
         }
       }
       html += '</div>'
       return html
     },
   },
-  grid: chartMargin,
+  grid: chartMargin.value,
   xAxis: baseXAxisConfig.value,
   yAxis: [
     {
@@ -448,11 +518,12 @@ const cpuChartOption = computed(() => ({
     {
       name: 'CPU',
       type: 'line',
-      data: chartData.value.map(r => r.cpu),
+      data: cpuValues.value,
       smooth: 0.24,
       smoothMonotone: 'x' as const,
       connectNulls: false,
-      showSymbol: false,
+      showSymbol: true,
+      symbolSize: (_value: unknown, params: { dataIndex: number }) => getSparsePointSymbolSize(cpuValues.value, params.dataIndex),
       yAxisIndex: 0,
       lineStyle: { width: 1.5, color: chartColors.primary, cap: 'round' as const },
       areaStyle: {
@@ -463,8 +534,8 @@ const cpuChartOption = computed(() => ({
           x2: 0,
           y2: 1,
           colorStops: [
-            { offset: 0, color: 'rgba(255, 107, 107, 0.25)' },
-            { offset: 1, color: 'rgba(255, 107, 107, 0.02)' },
+            { offset: 0, color: chartColors.primaryAreaStrong },
+            { offset: 1, color: chartColors.primaryAreaFaint },
           ],
         },
       },
@@ -472,11 +543,12 @@ const cpuChartOption = computed(() => ({
     {
       name: '负载',
       type: 'line',
-      data: chartData.value.map(r => r.load),
+      data: loadValues.value,
       smooth: 0.24,
       smoothMonotone: 'x' as const,
       connectNulls: false,
-      showSymbol: false,
+      showSymbol: true,
+      symbolSize: (_value: unknown, params: { dataIndex: number }) => getSparsePointSymbolSize(loadValues.value, params.dataIndex),
       yAxisIndex: 1,
       lineStyle: { width: 1.5, color: chartColors.secondary, cap: 'round' as const },
     },
@@ -490,7 +562,7 @@ const memoryChartOption = computed(() => ({
   tooltip: {
     ...baseTooltipConfig.value,
     formatter: (params: unknown) => {
-      const p = params as Array<{ dataIndex: number, seriesName: string, value: number, color: string }>
+      const p = renderableTooltipParams(params)
       if (!p.length)
         return ''
       const firstParam = p[0]
@@ -500,12 +572,12 @@ const memoryChartOption = computed(() => ({
       if (!record)
         return ''
 
-      const ramUsed = record.ram ?? 0
+      const ramUsed = isFiniteValue(record.ram) ? record.ram : null
       const ramTotal = record.ram_total ?? nodeInfo.value?.mem_total ?? 0
-      const swapUsed = record.swap ?? 0
+      const swapUsed = isFiniteValue(record.swap) ? record.swap : null
       const swapTotal = record.swap_total ?? nodeInfo.value?.swap_total ?? 0
-      const ramPercent = ramTotal > 0 ? ((ramUsed / ramTotal) * 100).toFixed(1) : '0'
-      const swapPercent = swapTotal > 0 ? ((swapUsed / swapTotal) * 100).toFixed(1) : '0'
+      const ramPercent = ramUsed !== null && ramTotal > 0 ? `${((ramUsed / ramTotal) * 100).toFixed(1)}%` : '-'
+      const swapPercent = swapUsed !== null && swapTotal > 0 ? `${((swapUsed / swapTotal) * 100).toFixed(1)}%` : '-'
 
       const timeStr = formatTimeForTooltip(record.time, selectedHours.value || 1)
       let html = `<div style="font-weight:600;margin-bottom:6px;color:${chartThemeColors.value.textSecondary}">${timeStr}</div>`
@@ -513,18 +585,18 @@ const memoryChartOption = computed(() => ({
 
       for (const item of p) {
         const colorDot = `<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${item.color};margin-right:8px;flex-shrink:0"></span>`
-        if (item.seriesName === 'RAM') {
-          html += `<div style="display:flex;align-items:center">${colorDot}<span>RAM</span><span style="margin-left:auto;font-weight:600;margin-left:16px">${formatBytes(ramUsed)} (${ramPercent}%)</span></div>`
+        if (item.seriesName === 'RAM' && ramUsed !== null) {
+          html += `<div style="display:flex;align-items:center">${colorDot}<span>RAM</span><span style="margin-left:auto;font-weight:600;margin-left:16px">${formatBytes(ramUsed)} (${ramPercent})</span></div>`
         }
-        else if (item.seriesName === 'Swap') {
-          html += `<div style="display:flex;align-items:center">${colorDot}<span>Swap</span><span style="margin-left:auto;font-weight:600;margin-left:16px">${formatBytes(swapUsed)} (${swapPercent}%)</span></div>`
+        else if (item.seriesName === 'Swap' && swapUsed !== null) {
+          html += `<div style="display:flex;align-items:center">${colorDot}<span>Swap</span><span style="margin-left:auto;font-weight:600;margin-left:16px">${formatBytes(swapUsed)} (${swapPercent})</span></div>`
         }
       }
       html += '</div>'
       return html
     },
   },
-  grid: chartMargin,
+  grid: chartMargin.value,
   xAxis: baseXAxisConfig.value,
   yAxis: {
     ...baseYAxisConfig.value,
@@ -539,11 +611,12 @@ const memoryChartOption = computed(() => ({
     {
       name: 'RAM',
       type: 'line',
-      data: chartData.value.map(r => r.ram),
+      data: ramValues.value,
       smooth: 0.24,
       smoothMonotone: 'x' as const,
       connectNulls: false,
-      showSymbol: false,
+      showSymbol: true,
+      symbolSize: (_value: unknown, params: { dataIndex: number }) => getSparsePointSymbolSize(ramValues.value, params.dataIndex),
       lineStyle: { width: 1.5, color: chartColors.primary, cap: 'round' as const },
       areaStyle: {
         color: {
@@ -553,8 +626,8 @@ const memoryChartOption = computed(() => ({
           x2: 0,
           y2: 1,
           colorStops: [
-            { offset: 0, color: 'rgba(255, 107, 107, 0.25)' },
-            { offset: 1, color: 'rgba(255, 107, 107, 0.02)' },
+            { offset: 0, color: chartColors.primaryAreaStrong },
+            { offset: 1, color: chartColors.primaryAreaFaint },
           ],
         },
       },
@@ -562,11 +635,12 @@ const memoryChartOption = computed(() => ({
     {
       name: 'Swap',
       type: 'line',
-      data: chartData.value.map(r => r.swap),
+      data: swapValues.value,
       smooth: 0.24,
       smoothMonotone: 'x' as const,
       connectNulls: false,
-      showSymbol: false,
+      showSymbol: true,
+      symbolSize: (_value: unknown, params: { dataIndex: number }) => getSparsePointSymbolSize(swapValues.value, params.dataIndex),
       lineStyle: { width: 1.5, color: chartColors.secondary, cap: 'round' as const },
     },
   ],
@@ -579,7 +653,7 @@ const diskChartOption = computed(() => ({
   tooltip: {
     ...baseTooltipConfig.value,
     formatter: (params: unknown) => {
-      const p = params as Array<{ dataIndex: number, value: number, color: string }>
+      const p = renderableTooltipParams(params)
       if (!p.length)
         return ''
       const firstParam = p[0]
@@ -589,7 +663,9 @@ const diskChartOption = computed(() => ({
       if (!record)
         return ''
 
-      const diskUsed = record.disk ?? 0
+      const diskUsed = isFiniteValue(record.disk) ? record.disk : null
+      if (diskUsed === null)
+        return ''
       const diskTotal = record.disk_total ?? nodeInfo.value?.disk_total ?? 0
       const diskPercent = diskTotal > 0 ? ((diskUsed / diskTotal) * 100).toFixed(1) : '0'
 
@@ -603,7 +679,7 @@ const diskChartOption = computed(() => ({
       return html
     },
   },
-  grid: chartMargin,
+  grid: chartMargin.value,
   xAxis: baseXAxisConfig.value,
   yAxis: {
     ...baseYAxisConfig.value,
@@ -618,11 +694,12 @@ const diskChartOption = computed(() => ({
     {
       name: '磁盘已用',
       type: 'line',
-      data: chartData.value.map(r => r.disk),
+      data: diskValues.value,
       smooth: 0.24,
       smoothMonotone: 'x' as const,
       connectNulls: false,
-      showSymbol: false,
+      showSymbol: true,
+      symbolSize: (_value: unknown, params: { dataIndex: number }) => getSparsePointSymbolSize(diskValues.value, params.dataIndex),
       lineStyle: { width: 1.5, color: chartColors.tertiary, cap: 'round' as const },
       areaStyle: {
         color: {
@@ -648,7 +725,7 @@ const networkChartOption = computed(() => ({
   tooltip: {
     ...baseTooltipConfig.value,
     formatter: (params: unknown) => {
-      const p = params as Array<{ dataIndex: number, seriesName: string, value: number, color: string }>
+      const p = renderableTooltipParams(params)
       if (!p.length)
         return ''
       const firstParam = p[0]
@@ -665,7 +742,7 @@ const networkChartOption = computed(() => ({
       for (const item of p) {
         const colorDot = `<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${item.color};margin-right:8px;flex-shrink:0"></span>`
         const label = item.seriesName === '下载' ? '↓ 下载' : '↑ 上传'
-        html += `<div style="display:flex;align-items:center">${colorDot}<span>${label}</span><span style="margin-left:auto;font-weight:600;margin-left:16px">${formatBytes(item.value)}/s</span></div>`
+        html += `<div style="display:flex;align-items:center">${colorDot}<span>${label}</span><span style="margin-left:auto;font-weight:600;margin-left:16px">${formatBytes(Number(item.value))}/s</span></div>`
       }
       html += '</div>'
       return html
@@ -680,7 +757,7 @@ const networkChartOption = computed(() => ({
     icon: 'roundRect',
     textStyle: { fontSize: 11, color: chartThemeColors.value.textSecondary },
   },
-  grid: chartMarginWithLegend,
+  grid: chartMarginWithLegend.value,
   xAxis: baseXAxisConfig.value,
   yAxis: {
     ...baseYAxisConfig.value,
@@ -695,21 +772,23 @@ const networkChartOption = computed(() => ({
     {
       name: '下载',
       type: 'line',
-      data: chartData.value.map(r => r.net_in),
+      data: networkInValues.value,
       smooth: 0.24,
       smoothMonotone: 'x' as const,
       connectNulls: false,
-      showSymbol: false,
+      showSymbol: true,
+      symbolSize: (_value: unknown, params: { dataIndex: number }) => getSparsePointSymbolSize(networkInValues.value, params.dataIndex),
       lineStyle: { width: 1.5, color: chartColors.quinary, cap: 'round' as const },
     },
     {
       name: '上传',
       type: 'line',
-      data: chartData.value.map(r => r.net_out),
+      data: networkOutValues.value,
       smooth: 0.24,
       smoothMonotone: 'x' as const,
       connectNulls: false,
-      showSymbol: false,
+      showSymbol: true,
+      symbolSize: (_value: unknown, params: { dataIndex: number }) => getSparsePointSymbolSize(networkOutValues.value, params.dataIndex),
       lineStyle: { width: 1.5, color: chartColors.quaternary, cap: 'round' as const },
     },
   ],
@@ -722,7 +801,7 @@ const connectionsChartOption = computed(() => ({
   tooltip: {
     ...baseTooltipConfig.value,
     formatter: (params: unknown) => {
-      const p = params as Array<{ dataIndex: number, seriesName: string, value: number, color: string }>
+      const p = renderableTooltipParams(params)
       if (!p.length)
         return ''
       const firstParam = p[0]
@@ -738,7 +817,7 @@ const connectionsChartOption = computed(() => ({
 
       for (const item of p) {
         const colorDot = `<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${item.color};margin-right:8px;flex-shrink:0"></span>`
-        const displayValue = item.value != null ? Math.round(item.value) : '-'
+        const displayValue = Math.round(Number(item.value))
         html += `<div style="display:flex;align-items:center">${colorDot}<span>${item.seriesName}</span><span style="margin-left:auto;font-weight:600;margin-left:16px">${displayValue}</span></div>`
       }
       html += '</div>'
@@ -754,7 +833,7 @@ const connectionsChartOption = computed(() => ({
     icon: 'roundRect',
     textStyle: { fontSize: 11, color: chartThemeColors.value.textSecondary },
   },
-  grid: chartMarginWithLegend,
+  grid: chartMarginWithLegend.value,
   xAxis: baseXAxisConfig.value,
   yAxis: {
     ...baseYAxisConfig.value,
@@ -770,21 +849,23 @@ const connectionsChartOption = computed(() => ({
     {
       name: 'TCP',
       type: 'line',
-      data: chartData.value.map(r => r.connections),
+      data: connectionValues.value,
       smooth: 0.12,
       smoothMonotone: 'x' as const,
       connectNulls: false,
-      showSymbol: false,
+      showSymbol: true,
+      symbolSize: (_value: unknown, params: { dataIndex: number }) => getSparsePointSymbolSize(connectionValues.value, params.dataIndex),
       lineStyle: { width: 1.5, color: chartColors.primary, cap: 'round' as const },
     },
     {
       name: 'UDP',
       type: 'line',
-      data: chartData.value.map(r => r.connections_udp),
+      data: udpConnectionValues.value,
       smooth: 0.12,
       smoothMonotone: 'x' as const,
       connectNulls: false,
-      showSymbol: false,
+      showSymbol: true,
+      symbolSize: (_value: unknown, params: { dataIndex: number }) => getSparsePointSymbolSize(udpConnectionValues.value, params.dataIndex),
       lineStyle: { width: 1.5, color: chartColors.tertiary, cap: 'round' as const },
     },
   ],
@@ -797,7 +878,7 @@ const processChartOption = computed(() => ({
   tooltip: {
     ...baseTooltipConfig.value,
     formatter: (params: unknown) => {
-      const p = params as Array<{ dataIndex: number, value: number, color: string }>
+      const p = renderableTooltipParams(params)
       if (!p.length)
         return ''
       const firstParam = p[0]
@@ -809,7 +890,7 @@ const processChartOption = computed(() => ({
 
       const timeStr = formatTimeForTooltip(record.time, selectedHours.value || 1)
       const colorDot = `<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${firstParam.color};margin-right:8px;flex-shrink:0"></span>`
-      const displayValue = firstParam.value != null ? Math.round(firstParam.value) : '-'
+      const displayValue = Math.round(Number(firstParam.value))
 
       let html = `<div style="font-weight:600;margin-bottom:6px;color:${chartThemeColors.value.textSecondary}">${timeStr}</div>`
       html += '<div style="display:flex;flex-direction:column;gap:4px">'
@@ -818,7 +899,7 @@ const processChartOption = computed(() => ({
       return html
     },
   },
-  grid: chartMargin,
+  grid: chartMargin.value,
   xAxis: baseXAxisConfig.value,
   yAxis: {
     ...baseYAxisConfig.value,
@@ -834,11 +915,12 @@ const processChartOption = computed(() => ({
     {
       name: '进程数',
       type: 'line',
-      data: chartData.value.map(r => r.process),
+      data: processValues.value,
       smooth: 0.12,
       smoothMonotone: 'x' as const,
       connectNulls: false,
-      showSymbol: false,
+      showSymbol: true,
+      symbolSize: (_value: unknown, params: { dataIndex: number }) => getSparsePointSymbolSize(processValues.value, params.dataIndex),
       lineStyle: { width: 1.5, color: chartColors.quaternary, cap: 'round' as const },
       areaStyle: {
         color: {
@@ -941,7 +1023,7 @@ const optionalMetricChartOption = computed(() => ({
     itemHeight: 12,
     textStyle: { fontSize: 11, color: chartThemeColors.value.textSecondary },
   },
-  grid: chartMarginWithLegend,
+  grid: chartMarginWithLegend.value,
   xAxis: {
     ...baseXAxisConfig.value,
     data: optionalMetricSeries.value[0]?.points.map(point => formatTime(point.time, showDateInAxis.value)) ?? [],
@@ -956,20 +1038,24 @@ const optionalMetricChartOption = computed(() => ({
       formatter: (value: number) => extendedTelemetryTab.value === 'gpu-memory' ? formatBytes(value) : Math.round(value).toString(),
     },
   },
-  series: optionalMetricSeries.value.map((series, index) => ({
-    name: metricSeriesLabel(series, index),
-    type: 'line',
-    data: series.points.map(point => point.value),
-    smooth: 0.16,
-    smoothMonotone: 'x' as const,
-    connectNulls: false,
-    showSymbol: false,
-    lineStyle: {
-      width: 1.5,
-      cap: 'round' as const,
-      type: series.metric_key === 'gpu.memory.total' ? 'dashed' as const : 'solid' as const,
-    },
-  })),
+  series: optionalMetricSeries.value.map((series, index) => {
+    const values = series.points.map(point => point.value)
+    return {
+      name: metricSeriesLabel(series, index),
+      type: 'line',
+      data: values,
+      smooth: 0.16,
+      smoothMonotone: 'x' as const,
+      connectNulls: false,
+      showSymbol: true,
+      symbolSize: (_value: unknown, params: { dataIndex: number }) => getSparsePointSymbolSize(values, params.dataIndex),
+      lineStyle: {
+        width: 1.5,
+        cap: 'round' as const,
+        type: series.metric_key === 'gpu.memory.total' ? 'dashed' as const : 'solid' as const,
+      },
+    }
+  }),
 }))
 
 const extendedTelemetryOption = computed(() => {
@@ -1118,8 +1204,14 @@ watch(selectedView, () => {
   if (optionalTelemetryActive.value)
     void fetchOptionalMetrics()
   isInitialLoad.value = true // 切换视图时重置首次加载状态
-  fetchData()
+  void fetchData()
 })
+
+watch(availableViews, (views) => {
+  if (views.some(view => view.label === selectedView.value))
+    return
+  selectedView.value = '实时'
+}, { immediate: true })
 
 watch(extendedTelemetryTab, (tab) => {
   resetOptionalTelemetry()
@@ -1140,7 +1232,7 @@ watch(() => props.uuid, () => {
   availableMetricNames.value = new Set()
   extendedTelemetryTab.value = 'connections'
   isInitialLoad.value = true // 切换节点时重置首次加载状态
-  fetchData()
+  void fetchData()
 })
 
 watch([() => props.uuid, () => nodeInfo.value?.gpu_name, shouldDetectOptionalMetrics], () => {
@@ -1148,7 +1240,7 @@ watch([() => props.uuid, () => nodeInfo.value?.gpu_name, shouldDetectOptionalMet
 }, { flush: 'post', immediate: true })
 
 onMounted(() => {
-  fetchData()
+  void fetchData()
 })
 
 onUnmounted(() => {
@@ -1161,26 +1253,39 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <div class="flex flex-col gap-4" :class="{ 'is-motion-reduced': appStore.disablePageAnimation }">
+  <div
+    class="lnl-load-chart flex flex-col gap-4"
+    :class="{ 'is-motion-reduced': appStore.disablePageAnimation }"
+    :data-history-display-interval="isRealtime ? 'realtime' : historyDisplayIntervalSeconds"
+  >
     <!-- 时间选择器 -->
-    <Tabs v-model="selectedView" class="w-full items-center">
-      <TabsList :class="pickSurfaceClass('h-8 bg-background/60 pointer-events-auto rounded-md', 'h-8 bg-background/50 backdrop-blur-xl pointer-events-auto rounded-md')">
+    <Tabs v-model="selectedView" class="w-full min-w-0 items-center overflow-x-auto pb-0.5 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+      <TabsList :class="pickSurfaceClass('h-8 min-w-max bg-background/60 pointer-events-auto rounded-md', 'h-8 min-w-max bg-background/50 backdrop-blur-xl pointer-events-auto rounded-md')">
         <TabsTrigger
           v-for="view in availableViews" :key="view.label" :value="view.label"
-          class="h-6.5 text-xs border-none data-[state=active]:text-emerald-600 shadow-none rounded-sm"
+          class="lnl-history-tab h-6.5 text-xs border-none shadow-none rounded-sm"
         >
           {{ view.label }}
         </TabsTrigger>
       </TabsList>
     </Tabs>
 
+    <div
+      v-if="!historyRecordsEnabled"
+      class="lnl-history-notice px-1 text-[11px] text-muted-foreground flex items-center gap-1.5"
+      role="status"
+    >
+      <Icon icon="tabler:history-off" width="13" height="13" aria-hidden="true" />
+      <span>后台未启用历史记录，当前仅显示实时数据</span>
+    </div>
+
     <!-- 内容区域 -->
     <Spinner :show="loading">
       <div v-if="error" class="text-red-500 py-8 text-center">
         {{ error }}
       </div>
-      <div v-else-if="remoteData.length === 0 && !loading" class="py-8">
-        <Empty description="暂无负载数据" />
+      <div v-else-if="(!remoteData.length || !hasRenderableBaseData) && !loading" class="py-8">
+        <Empty description="暂无可用负载数据" />
       </div>
 
       <!-- 图表网格 -->
@@ -1215,7 +1320,7 @@ onUnmounted(() => {
           <template #header>
             <div class="flex items-center justify-between">
               <span class="text-base font-bold">内存</span>
-              <div class="text-xs flex gap-1 items-baseline">
+              <div class="min-w-28 justify-end text-xs flex gap-1 items-baseline">
                 <template v-if="latestStatus?.ram != null">
                   <span>{{ formatBytesSplit(latestStatus.ram).value }}</span>
                   <span>{{ formatBytesSplit(latestStatus.ram).unit }}</span>
@@ -1245,7 +1350,7 @@ onUnmounted(() => {
           <template #header>
             <div class="flex items-center justify-between">
               <span class="text-base font-bold">磁盘</span>
-              <div class="text-xs flex gap-1 items-baseline">
+              <div class="min-w-28 justify-end text-xs flex gap-1 items-baseline">
                 <template v-if="latestStatus?.disk != null">
                   <span>{{ formatBytesSplit(latestStatus.disk).value }}</span>
                   <span>{{ formatBytesSplit(latestStatus.disk).unit }}</span>
@@ -1342,3 +1447,14 @@ onUnmounted(() => {
     </Spinner>
   </div>
 </template>
+
+<style scoped>
+.lnl-history-tab[data-state='active'] {
+  color: var(--lnl-green);
+}
+
+.lnl-history-tab:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--lnl-green) 46%, transparent);
+  outline-offset: 1px;
+}
+</style>

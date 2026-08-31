@@ -19,8 +19,15 @@ import {
   getPingTaskIdsWithSamples,
   summarizePingSamples,
 } from '../src/utils/pingMetrics.ts'
-import { bridgeShortDisplayGaps, cutPeakValues, fillMissingTimePoints } from '../src/utils/recordHelper.ts'
-import { normalizeRecordCollection } from '../src/utils/recordResponse.ts'
+import {
+  bridgeShortDisplayGaps,
+  cutPeakValues,
+  fillMissingTimePoints,
+  getAdaptiveHistoryDisplayIntervalSeconds,
+  getHistoryDisplayIntervalSeconds,
+  getSparsePointSymbolSize,
+} from '../src/utils/recordHelper.ts'
+import { normalizeRecordCollection, normalizeTimedRecordCollection } from '../src/utils/recordResponse.ts'
 
 const nodeA = { uuid: 'node-a', name: 'Tokyo' }
 const nodeB = { uuid: 'node-b', name: 'Frankfurt' }
@@ -75,6 +82,73 @@ assert.deepEqual(normalizeRecordCollection({ 'node-a': [loadA], 'node-b': [loadB
 assert.deepEqual(normalizeRecordCollection([loadA], 'node-a'), [loadA])
 assert.deepEqual(normalizeRecordCollection(undefined, 'node-a'), [])
 
+const nanoRecord = { client: 'node-a', time: '2026-07-20T00:02:00.123456789Z', cpu: 22 }
+const duplicateRecord = { client: 'node-a', time: loadA.time, cpu: 13 }
+const offsetDuplicateRecord = { client: 'node-a', time: '2026-07-20T08:00:00+08:00', cpu: 14 }
+assert.deepEqual(normalizeTimedRecordCollection({ 'node-a': [nanoRecord, loadA, duplicateRecord] }, 'node-a'), [
+  duplicateRecord,
+  nanoRecord,
+])
+assert.deepEqual(normalizeTimedRecordCollection([loadA, offsetDuplicateRecord], 'node-a'), [offsetDuplicateRecord])
+assert.deepEqual(normalizeTimedRecordCollection([
+  { client: 'node-a', time: 'not-a-time', cpu: 1 },
+  nanoRecord,
+], 'node-a'), [nanoRecord])
+
+assert.equal(getHistoryDisplayIntervalSeconds(4), 60)
+assert.equal(getHistoryDisplayIntervalSeconds(24), 300)
+assert.equal(getHistoryDisplayIntervalSeconds(168), 1800)
+assert.equal(getHistoryDisplayIntervalSeconds(720), 7200)
+assert.ok(720 * 3600 / getHistoryDisplayIntervalSeconds(720) <= 600)
+assert.equal(getSparsePointSymbolSize([null, 20, null], 1), 5)
+assert.equal(getSparsePointSymbolSize([10, 20, null], 1), 0)
+assert.equal(getSparsePointSymbolSize([null, null, null], 1), 0)
+
+const sparseThirtyDayRecords = fillMissingTimePoints([
+  { time: '2026-07-01T00:00:00Z', cpu: 10 },
+  { time: '2026-07-08T00:00:00Z', cpu: 20 },
+  { time: '2026-07-15T00:00:00Z', cpu: 30 },
+  { time: '2026-07-22T00:00:00Z', cpu: 40 },
+  { time: '2026-07-29T00:00:00Z', cpu: 50 },
+], getHistoryDisplayIntervalSeconds(720), 720 * 3600, getHistoryDisplayIntervalSeconds(720) * 0.6)
+const sparseThirtyDayValues = sparseThirtyDayRecords.map(record => record.cpu)
+assert.equal(sparseThirtyDayRecords.length, 361)
+assert.equal(sparseThirtyDayValues.filter(value => value !== null).length, 5)
+assert.equal(
+  sparseThirtyDayValues.filter((value, index) => value !== null && getSparsePointSymbolSize(sparseThirtyDayValues, index) > 0).length,
+  5,
+)
+
+const elevenHourRollups = [
+  '2026-08-27T20:00:00Z',
+  '2026-08-28T07:00:00Z',
+  '2026-08-28T18:00:00Z',
+  '2026-08-29T05:00:00Z',
+  '2026-08-29T16:00:00Z',
+  '2026-08-30T03:00:00Z',
+  '2026-08-30T14:00:00Z',
+].map((time, index) => ({ time, cpu: 10 + index }))
+const adaptiveInterval = getAdaptiveHistoryDisplayIntervalSeconds(
+  elevenHourRollups,
+  getHistoryDisplayIntervalSeconds(72),
+)
+assert.equal(adaptiveInterval, 11 * 3600)
+const adaptiveRows = fillMissingTimePoints(elevenHourRollups, adaptiveInterval, 72 * 3600, adaptiveInterval * 0.6)
+const adaptiveValues = adaptiveRows.map(record => record.cpu)
+assert.equal(adaptiveValues.filter(value => value !== null).length, elevenHourRollups.length)
+assert.equal(adaptiveValues.slice(-elevenHourRollups.length).every(value => value !== null), true)
+assert.equal(adaptiveRows.at(-1)?.time, '2026-08-30T14:00:00.000Z')
+
+const ambiguousTwoPointInterval = getAdaptiveHistoryDisplayIntervalSeconds([
+  { time: '2026-08-30T00:00:00.000Z' },
+  { time: '2026-08-30T11:00:00.000Z' },
+], 30 * 60)
+assert.equal(ambiguousTwoPointInterval, 30 * 60, 'two distant samples must not be assumed to be a regular rollup cadence')
+
+const rollupsWithLongGap = elevenHourRollups.filter((_record, index) => index < 3 || index > 4)
+const longGapRows = fillMissingTimePoints(rollupsWithLongGap, adaptiveInterval, 72 * 3600, adaptiveInterval * 0.6)
+assert.equal(longGapRows.some(record => record.cpu === null), true)
+
 // Komari stores failed Ping samples as negative values. The status blocks must
 // exclude them from latency while counting them in the loss percentage.
 const mixedPingSummary = summarizePingSamples([100, 200, -1])
@@ -112,10 +186,10 @@ const filledRecords = fillMissingTimePoints([
   { time: '2026-07-20T00:00:00Z', cpu: 10 },
   { time: '2026-07-20T00:02:00Z', cpu: 30 },
 ], 60, 180, 120)
-assert.equal(filledRecords.length, 3)
+assert.equal(filledRecords.length, 4)
 assert.equal(filledRecords.filter(record => record.cpu === 10).length, 1)
 assert.equal(filledRecords.filter(record => record.cpu === 30).length, 1)
-assert.equal(filledRecords.filter(record => record.cpu === null).length, 1)
+assert.equal(filledRecords.filter(record => record.cpu === null).length, 2)
 
 // Visual smoothing must not manufacture samples across a missing-data gap.
 const smoothedRecords = cutPeakValues([

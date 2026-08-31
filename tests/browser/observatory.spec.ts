@@ -1,6 +1,29 @@
+import type { Page } from '@playwright/test'
 import { expect, test } from '@playwright/test'
 
-const introSessionKey = 'komari-observatory:intro:1.4.3-fix2'
+const introSessionKey = 'komari-observatory:intro:1.4.3-fix3'
+const introEnabledCacheKey = 'komari-observatory:intro-enabled:v1'
+
+async function emulateStandaloneDisplayMode(page: Page) {
+  await page.addInitScript(() => {
+    const nativeMatchMedia = window.matchMedia.bind(window)
+    window.matchMedia = ((query: string) => {
+      if (query === '(display-mode: standalone)') {
+        return {
+          matches: true,
+          media: query,
+          onchange: null,
+          addListener: () => {},
+          removeListener: () => {},
+          addEventListener: () => {},
+          removeEventListener: () => {},
+          dispatchEvent: () => true,
+        } as MediaQueryList
+      }
+      return nativeMatchMedia(query)
+    }) as typeof window.matchMedia
+  })
+}
 
 test.beforeEach(async ({ page }, testInfo) => {
   if (testInfo.title.includes('applies the managed palette to the intro'))
@@ -50,7 +73,7 @@ test('recovers once when the desktop entry asset is replaced by stale HTML', asy
   expect(entryRequests).toBeGreaterThanOrEqual(2)
   await expect(page.locator('#lnl-boot-fallback')).toHaveCount(0)
   await expect.poll(() => page.evaluate(() => ({
-    attempt: sessionStorage.getItem('komari-observatory:boot-recovery:1.4.3-fix2'),
+    attempt: sessionStorage.getItem('komari-observatory:boot-recovery:1.4.3-fix3'),
     cacheDeletes: Number(sessionStorage.getItem('__lnl_boot_cache_deletes') || 0),
     recoveryQuery: new URL(location.href).searchParams.has('__komari_boot_recovery'),
     unregisters: Number(sessionStorage.getItem('__lnl_boot_unregisters') || 0),
@@ -359,6 +382,123 @@ test('loads capability-gated GPU telemetry only after the tab is opened', async 
   await expect(page.locator('canvas').last()).toBeVisible()
 })
 
+test('keeps sparse long-range load history visible and deduplicates repeated ranges', async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== 'chromium-desktop', 'One deterministic engine covers load-history RPC semantics.')
+  const loadHours: number[] = []
+  const sparseRollups = Array.from({ length: 7 }, (_, index) => ({
+    client: 'fixture-node-a',
+    time: new Date(Date.parse('2026-07-20T08:00:00Z') - (6 - index) * 11 * 60 * 60_000).toISOString(),
+    cpu: 12 + index,
+    load: 0.08 + index * 0.01,
+    ram: 2_000_000_000 + index * 8_000_000,
+    ram_total: 4_000_000_000,
+    swap: 0,
+    swap_total: 0,
+    disk: 2_400_000_000 + index * 4_000_000,
+    disk_total: 20_000_000_000,
+    net_in: 2048 + index * 32,
+    net_out: 1024 + index * 24,
+    process: 70 + index,
+    connections: 40 + index,
+    connections_udp: index,
+  }))
+  await page.route('**/api/rpc2', async (route) => {
+    const request = route.request()
+    if (request.method() !== 'POST') {
+      await route.continue()
+      return
+    }
+    const body = request.postDataJSON() as { method?: string, params?: { type?: string, hours?: number } }
+    if (body.method !== 'common:getRecords' || body.params?.type !== 'load' || body.params.hours !== 168) {
+      await route.continue()
+      return
+    }
+    const response = await route.fetch()
+    const payload = await response.json() as { result?: unknown }
+    payload.result = {
+      count: sparseRollups.length,
+      records: { 'fixture-node-a': sparseRollups },
+      from: sparseRollups[0]?.time,
+      to: sparseRollups.at(-1)?.time,
+    }
+    await route.fulfill({ response, json: payload })
+  })
+  page.on('request', (request) => {
+    if (!request.url().endsWith('/api/rpc2') || request.method() !== 'POST')
+      return
+    const body = request.postDataJSON() as { method?: string, params?: { type?: string, hours?: number } }
+    if (body.method === 'common:getRecords' && body.params?.type === 'load' && typeof body.params.hours === 'number')
+      loadHours.push(body.params.hours)
+  })
+
+  await page.goto('/instance/fixture-node-a')
+  const resourceSection = page.getByRole('region', { name: '资源与系统记录' })
+  await resourceSection.getByRole('tab', { name: '1 天', exact: true }).click()
+  await expect.poll(() => loadHours.includes(24)).toBe(true)
+  await resourceSection.getByRole('tab', { name: '7 天', exact: true }).click()
+  await expect.poll(() => loadHours.includes(168)).toBe(true)
+  await expect(resourceSection.locator('.lnl-load-chart')).toHaveAttribute('data-history-display-interval', String(11 * 60 * 60))
+  await expect(resourceSection.getByText('暂无可用负载数据')).toHaveCount(0)
+  await resourceSection.getByText('网络', { exact: true }).scrollIntoViewIfNeeded()
+  await expect.poll(() => resourceSection.locator('canvas').count()).toBeGreaterThanOrEqual(4)
+  await page.waitForTimeout(700)
+  await resourceSection.getByRole('tab', { name: '30 天', exact: true }).click()
+  await expect.poll(() => loadHours.includes(720)).toBe(true)
+  await expect(resourceSection.locator('canvas').first()).toBeVisible()
+
+  await resourceSection.getByRole('tab', { name: '7 天', exact: true }).click()
+  await page.waitForTimeout(150)
+  expect(loadHours.filter(hours => hours === 168)).toHaveLength(1)
+})
+
+test('keeps realtime charts available when Komari history recording is disabled', async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== 'chromium-desktop', 'One deterministic engine covers managed history boundaries.')
+  await page.route('**/api/public', async (route) => {
+    const response = await route.fetch()
+    const payload = await response.json() as { data?: Record<string, unknown> }
+    if (payload.data) {
+      payload.data.record_enabled = false
+      payload.data.record_preserve_time = 0
+    }
+    await route.fulfill({ response, json: payload })
+  })
+
+  await page.goto('/instance/fixture-node-a')
+  const resourceSection = page.getByRole('region', { name: '资源与系统记录' })
+  await expect(resourceSection.getByRole('tab', { name: '实时', exact: true })).toBeVisible()
+  await expect(resourceSection.getByRole('tab', { name: '1 天', exact: true })).toHaveCount(0)
+  await expect(resourceSection.getByText('后台未启用历史记录，当前仅显示实时数据')).toBeVisible()
+  await expect(resourceSection.locator('canvas').first()).toBeVisible()
+})
+
+test('does not query Ping history when its backend retention is disabled', async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== 'chromium-desktop', 'One deterministic engine covers the Ping retention boundary.')
+  const pingHistoryCalls: string[] = []
+  await page.route('**/api/public', async (route) => {
+    const response = await route.fetch()
+    const payload = await response.json() as { data?: Record<string, unknown> }
+    if (payload.data)
+      payload.data.ping_record_preserve_time = 0
+    await route.fulfill({ response, json: payload })
+  })
+  page.on('request', (request) => {
+    if (!request.url().endsWith('/api/rpc2') || request.method() !== 'POST')
+      return
+    const body = request.postDataJSON() as { method?: string, params?: { type?: string, metric_keys?: string[] } }
+    const isModernPingHistory = body.method === 'public:getPingMetricStats'
+      || (body.method === 'public:queryMetrics' && body.params?.metric_keys?.some(key => key.startsWith('ping.')))
+    const isLegacyPingHistory = body.method === 'common:getRecords' && body.params?.type === 'ping'
+    if (isModernPingHistory || isLegacyPingHistory)
+      pingHistoryCalls.push(body.method ?? '')
+  })
+
+  await page.goto('/instance/fixture-node-a')
+  const pingPanel = page.locator('.lnl-ping-panel')
+  await expect(pingPanel.getByText('后台未启用 Ping 历史记录')).toBeVisible()
+  await page.waitForTimeout(250)
+  expect(pingHistoryCalls).toHaveLength(0)
+})
+
 test('honors backend-managed telemetry switches and lazily loads Komari 1.4.3 GPU metrics', async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== 'chromium-desktop', 'One deterministic engine covers managed telemetry selection.')
   const metricCalls: string[][] = []
@@ -497,49 +637,26 @@ test.describe('Chromium PWA handoff', () => {
     await expect(page.locator('.lnl-pwa-panel')).toHaveCount(0)
   })
 
-  test('keeps the theme worker network-only and retires legacy caches', async ({ page }) => {
+  test('does not register a root worker and serves only a migration worker', async ({ page }) => {
     await page.goto('/')
     await expect(page.getByText('Tokyo Fixture', { exact: true }).first()).toBeVisible()
-    await page.evaluate(async () => navigator.serviceWorker.ready)
 
     const audit = await page.evaluate(async () => {
       const workerSource = await fetch('/sw.js', { cache: 'no-store' }).then(response => response.text())
-      const cacheKeys = await caches.keys()
       return {
-        controllerPath: navigator.serviceWorker.controller
-          ? new URL(navigator.serviceWorker.controller.scriptURL).pathname
-          : null,
-        cacheKeys,
+        registrations: (await navigator.serviceWorker.getRegistrations()).length,
         workerSource,
       }
     })
 
-    expect(audit.controllerPath).toBe('/sw.js')
-    expect(audit.cacheKeys.filter(key => key.startsWith('komari-observatory-') || key.startsWith('leonetlab-observatory-'))).toEqual([])
-    expect(audit.workerSource).toContain('skipWaiting')
-    expect(audit.workerSource).toContain('clients.claim')
-    expect(audit.workerSource).not.toMatch(/caches\.(?:open|match)|cache\.(?:put|match)|WARM_THEME_ASSETS|SHELL_CACHE_KEY|OFFLINE_URL/)
+    expect(audit.registrations).toBe(0)
+    expect(audit.workerSource).toContain('LEGACY_THEME_CACHE_PREFIXES')
+    expect(audit.workerSource).toContain('registration.unregister')
+    expect(audit.workerSource).not.toMatch(/skipWaiting|clients\.claim|addEventListener\(['"]fetch|respondWith|caches\.(?:open|match)|cache\.(?:put|match)|WARM_THEME_ASSETS|SHELL_CACHE_KEY|OFFLINE_URL/)
   })
 
-  test('plays the intro on an installed app launch but not on a manual reload', async ({ page }) => {
-    await page.addInitScript(() => {
-      const nativeMatchMedia = window.matchMedia.bind(window)
-      window.matchMedia = ((query: string) => {
-        if (query === '(display-mode: standalone)') {
-          return {
-            matches: true,
-            media: query,
-            onchange: null,
-            addListener: () => {},
-            removeListener: () => {},
-            addEventListener: () => {},
-            removeEventListener: () => {},
-            dispatchEvent: () => true,
-          } as MediaQueryList
-        }
-        return nativeMatchMedia(query)
-      }) as typeof window.matchMedia
-    })
+  test('plays the intro on every installed app load including manual reload', async ({ page }) => {
+    await emulateStandaloneDisplayMode(page)
     await page.route('**/api/public', async (route) => {
       const response = await route.fetch()
       const payload = await response.json() as { data?: { theme_settings?: Record<string, unknown> } }
@@ -554,15 +671,44 @@ test.describe('Chromium PWA handoff', () => {
     await expect(page.locator('.lnl-intro')).toHaveCount(0, { timeout: 6_000 })
 
     await page.reload()
-    await expect(page.getByText('Tokyo Fixture', { exact: true }).first()).toBeVisible()
-    await expect(page.locator('.lnl-intro')).toHaveCount(0)
+    await expect(page.locator('.lnl-intro')).toBeVisible()
+    await page.getByRole('button', { name: '跳过' }).click()
+    await expect(page.locator('.lnl-intro')).toHaveCount(0, { timeout: 6_000 })
+  })
+
+  test('waits for a slow fresh intro setting before using the fallback decision', async ({ page }) => {
+    await emulateStandaloneDisplayMode(page)
+    await page.addInitScript(key => localStorage.removeItem(key), introEnabledCacheKey)
+    await page.route('**/api/public', async (route) => {
+      await new Promise(resolve => setTimeout(resolve, 800))
+      const response = await route.fetch()
+      const payload = await response.json() as { data?: { theme_settings?: Record<string, unknown> } }
+      if (payload.data?.theme_settings)
+        payload.data.theme_settings.introAnimationEnabled = true
+      await route.fulfill({ response, json: payload })
+    })
+
+    await page.goto('/')
+    await expect(page.locator('.lnl-intro')).toBeVisible({ timeout: 4_000 })
+  })
+
+  test('uses the last successful intro setting only after the bounded startup window', async ({ page }) => {
+    await emulateStandaloneDisplayMode(page)
+    await page.addInitScript(key => localStorage.setItem(key, '1'), introEnabledCacheKey)
+    await page.route('**/api/public', async (route) => {
+      await new Promise(resolve => setTimeout(resolve, 1_500))
+      await route.continue()
+    })
+
+    await page.goto('/')
+    await expect(page.locator('.lnl-intro')).toBeVisible({ timeout: 2_000 })
   })
 })
 
 test('bounds steady globe rendering and removes the animated ocean canvas', async ({ page }, testInfo) => {
   test.skip(!['chromium-desktop', 'chromium-mobile'].includes(testInfo.project.name), 'Chromium desktop/mobile cover deterministic WebGL counters.')
   await page.addInitScript(() => {
-    const counters = { draws: 0 }
+    const counters = { draws: 0, widthWrites: 0, heightWrites: 0 }
     Object.defineProperty(window, '__lnlRenderCounters', { value: counters, configurable: true })
     for (const prototype of [WebGLRenderingContext.prototype, WebGL2RenderingContext.prototype]) {
       for (const method of ['drawArrays', 'drawElements'] as const) {
@@ -573,17 +719,41 @@ test('bounds steady globe rendering and removes the animated ocean canvas', asyn
         } as typeof original
       }
     }
+    for (const property of ['width', 'height'] as const) {
+      const descriptor = Object.getOwnPropertyDescriptor(HTMLCanvasElement.prototype, property)
+      if (!descriptor?.set)
+        continue
+      Object.defineProperty(HTMLCanvasElement.prototype, property, {
+        configurable: descriptor.configurable,
+        enumerable: descriptor.enumerable,
+        get() {
+          return descriptor.get?.call(this)
+        },
+        set(value: number) {
+          if (property === 'width')
+            counters.widthWrites += 1
+          else
+            counters.heightWrites += 1
+          descriptor.set?.call(this, value)
+        },
+      })
+    }
   })
   await page.goto('/')
   await expect(page.getByText('Tokyo Fixture', { exact: true }).first()).toBeVisible()
   await page.evaluate(() => {
-    (window as unknown as { __lnlRenderCounters: { draws: number } }).__lnlRenderCounters.draws = 0
+    const counters = (window as unknown as { __lnlRenderCounters: { draws: number, widthWrites: number, heightWrites: number } }).__lnlRenderCounters
+    counters.draws = 0
+    counters.widthWrites = 0
+    counters.heightWrites = 0
   })
   await page.waitForTimeout(5000)
   const metrics = await page.evaluate(() => {
     const canvas = document.querySelector<HTMLCanvasElement>('.node-earth-globe canvas')
     return {
       draws: (window as unknown as { __lnlRenderCounters: { draws: number } }).__lnlRenderCounters.draws,
+      widthWrites: (window as unknown as { __lnlRenderCounters: { widthWrites: number } }).__lnlRenderCounters.widthWrites,
+      heightWrites: (window as unknown as { __lnlRenderCounters: { heightWrites: number } }).__lnlRenderCounters.heightWrites,
       dpr: canvas && canvas.clientWidth > 0 ? canvas.width / canvas.clientWidth : 0,
       oceanCanvases: document.querySelectorAll('.lnl-data-ocean').length,
       depthPlanes: document.querySelectorAll('.lnl-background-depth').length,
@@ -591,10 +761,30 @@ test('bounds steady globe rendering and removes the animated ocean canvas', asyn
   })
   const mobile = testInfo.project.name === 'chromium-mobile'
   expect(metrics.draws).toBeLessThanOrEqual(mobile ? 155 : 230)
+  expect(metrics.widthWrites).toBe(0)
+  expect(metrics.heightWrites).toBe(0)
   expect(metrics.dpr).toBeGreaterThanOrEqual(0.98)
   expect(metrics.dpr).toBeLessThanOrEqual((mobile ? 1.25 : 1.75) + 0.02)
   expect(metrics.oceanCanvases).toBe(0)
   expect(metrics.depthPlanes).toBe(0)
+
+  if (!mobile) {
+    await page.evaluate(() => {
+      const counters = (window as unknown as { __lnlRenderCounters: { widthWrites: number, heightWrites: number } }).__lnlRenderCounters
+      counters.widthWrites = 0
+      counters.heightWrites = 0
+    })
+    await page.setViewportSize({ width: 1360, height: 860 })
+    await page.waitForTimeout(500)
+    const resizeWrites = await page.evaluate(() => {
+      const counters = (window as unknown as { __lnlRenderCounters: { widthWrites: number, heightWrites: number } }).__lnlRenderCounters
+      return { width: counters.widthWrites, height: counters.heightWrites }
+    })
+    expect(resizeWrites.width).toBeGreaterThanOrEqual(1)
+    expect(resizeWrites.height).toBeGreaterThanOrEqual(1)
+    expect(resizeWrites.width).toBeLessThanOrEqual(2)
+    expect(resizeWrites.height).toBeLessThanOrEqual(2)
+  }
 })
 
 test('does not flash false empty node cards while initial nodes are loading', async ({ page }, testInfo) => {
@@ -616,6 +806,46 @@ test('does not flash false empty node cards while initial nodes are loading', as
   await expect(page.locator('.lnl-node-loading-indicator')).toBeVisible()
   await expect(page.getByText('Tokyo Fixture', { exact: true }).first()).toBeVisible()
   await expect(page.locator('.lnl-node-loading-indicator')).toHaveCount(0)
+})
+
+test('recovers a direct detail page after the initial node request fails', async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== 'chromium-desktop', 'One deterministic engine covers startup recovery state.')
+  let nodeAttempts = 0
+  await page.route('**/api/rpc2', async (route) => {
+    const request = route.request()
+    if (request.method() !== 'POST') {
+      await route.continue()
+      return
+    }
+
+    const body = request.postDataJSON() as { id?: number, method?: string }
+    if (body.method !== 'common:getNodes') {
+      await route.continue()
+      return
+    }
+
+    nodeAttempts += 1
+    if (nodeAttempts === 1) {
+      await route.fulfill({
+        contentType: 'application/json',
+        body: JSON.stringify({
+          jsonrpc: '2.0',
+          id: body.id,
+          error: { code: -32000, message: 'Fixture transient node failure' },
+        }),
+      })
+      return
+    }
+
+    await route.continue()
+  })
+
+  await page.goto('/instance/fixture-node-a')
+  await expect(page.locator('.lnl-detail-node-loading')).toBeVisible()
+  await expect.poll(() => nodeAttempts, { timeout: 12_000 }).toBeGreaterThanOrEqual(2)
+  await expect(page.getByText('Tokyo Fixture', { exact: true }).first()).toBeVisible({ timeout: 12_000 })
+  await expect(page.locator('.lnl-detail-node-loading')).toHaveCount(0)
+  await expect(page.locator('.lnl-footer')).toBeVisible()
 })
 
 test('supports keyboard search, FLIP reordering, and Ping details', async ({ page }) => {

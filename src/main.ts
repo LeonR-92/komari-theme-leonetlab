@@ -28,14 +28,3 @@ void router.isReady()
     // The fallback has already been replaced; keep cache recovery state bounded.
   })
   .then(() => window.dispatchEvent(new CustomEvent('komari-observatory:app-mounted')))
-
-if ('serviceWorker' in navigator) {
-  window.addEventListener('load', () => {
-    navigator.serviceWorker.register('/sw.js', {
-      scope: '/',
-      updateViaCache: 'none',
-    }).catch(() => {
-      // PWA support is progressive; monitoring remains usable if registration is blocked.
-    })
-  }, { once: true })
-}

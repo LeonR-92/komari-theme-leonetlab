@@ -5,6 +5,7 @@ import NodeEarthGlobe from '@/components/NodeEarthGlobe.vue'
 import { Toaster } from '@/components/ui/sonner'
 import { useMotionPreference } from '@/composables/useMotionPreference'
 import { useAppStore } from '@/stores/app'
+import { useNodesStore } from '@/stores/nodes'
 import { destroyInitManager, initApp } from '@/utils/init'
 import Background from './components/Background.vue'
 import Footer from './components/Footer.vue'
@@ -13,6 +14,7 @@ import LoadingCover from './components/LoadingCover.vue'
 import Provider from './components/Provider.vue'
 
 const appStore = useAppStore()
+const nodesStore = useNodesStore()
 const route = useRoute()
 const { motionReduced } = useMotionPreference()
 
@@ -21,12 +23,13 @@ const { motionReduced } = useMotionPreference()
 // 1.2.8 重构为单 cobe 实例交接（Teleport 迁移同一 DOM，WebGL 上下文不重建），
 // 让老用户重放重构后的 intro。
 const INTRO_SESSION_KEY = `komari-observatory:intro:${__BUILD_VERSION__}`
+const INTRO_ENABLED_CACHE_KEY = 'komari-observatory:intro-enabled:v1'
 const INSTALLED_APP_DISPLAY_MODES = ['standalone', 'minimal-ui', 'window-controls-overlay'] as const
 // Public settings normally arrive immediately. A broken proxy or cold PWA must
 // never leave #app empty for the API client's full timeout, so mount the safe
 // default shell after a bounded decision window. Late settings still hydrate
 // the dashboard, but cannot start an intro halfway through the user's session.
-const INITIAL_SHELL_DECISION_TIMEOUT_MS = 450
+const INITIAL_SHELL_DECISION_TIMEOUT_MS = 900
 // 飞行壳的 transform 过渡时长；交接收尾以 transitionend 为准，固定计时器只作
 // 兜底：主线程长任务会推迟 CSS 过渡起点，按点击时刻计时会提前撤壳闪跳。
 const INTRO_HANDOFF_DURATION_MS = 1080
@@ -36,19 +39,41 @@ const INTRO_FADE_FALLBACK_MS = 800
 // 慢服务器上 dashboard 可能在数据就绪后才完成挂载：飞行前最多等目标槽位
 // 1.5s，避免朝一个尚未挂载的目标交接（几何失准同样表现为闪跳）。
 const INTRO_HANDOFF_TARGET_WAIT_MS = 1500
+function detectInstalledApp(): boolean {
+  return INSTALLED_APP_DISPLAY_MODES.some(mode => window.matchMedia(`(display-mode: ${mode})`).matches)
+    || ('standalone' in navigator && (navigator as Navigator & { standalone?: boolean }).standalone === true)
+}
+
+function readCachedIntroSetting(): boolean | undefined {
+  try {
+    const value = localStorage.getItem(INTRO_ENABLED_CACHE_KEY)
+    return value === '1' ? true : value === '0' ? false : undefined
+  }
+  catch {
+    return undefined
+  }
+}
+
+function writeCachedIntroSetting(value: boolean) {
+  try {
+    localStorage.setItem(INTRO_ENABLED_CACHE_KEY, value ? '1' : '0')
+  }
+  catch {
+    // Storage can be blocked in private or hardened contexts; fresh settings
+    // remain authoritative and the dashboard still uses the built-in default.
+  }
+}
+
+const installedApp = detectInstalledApp()
+
 function shouldPlayIntro(): boolean {
   if (motionReduced.value)
     return false
-  // Installed Chromium/Edge apps may restore a closed window's sessionStorage
-  // or create a fresh browsing context depending on process lifetime. Treat a
-  // real app navigation/restore as a new launch, while a manual reload remains
-  // once-per-session. This removes launch parity from the browser's reuse choice.
-  const installedApp = INSTALLED_APP_DISPLAY_MODES.some(mode => window.matchMedia(`(display-mode: ${mode})`).matches)
-    || ('standalone' in navigator && (navigator as Navigator & { standalone?: boolean }).standalone === true)
-  if (installedApp) {
-    const navigation = performance.getEntriesByType('navigation')[0] as PerformanceNavigationTiming | undefined
-    return navigation?.type !== 'reload'
-  }
+  // Installed apps intentionally present the launch sequence on every top-level
+  // load, including manual reloads. Browsers cannot reliably distinguish a
+  // restored app window from a reload across all Windows process-lifetime paths.
+  if (installedApp)
+    return true
   try {
     return sessionStorage.getItem(INTRO_SESSION_KEY) !== 'seen'
   }
@@ -58,6 +83,14 @@ function shouldPlayIntro(): boolean {
 }
 
 const introSessionEligible = shouldPlayIntro()
+const managedIntroSetting = computed<boolean | undefined>(() => {
+  const value = appStore.publicSettings?.theme_settings?.introAnimationEnabled
+  return typeof value === 'boolean' ? value : undefined
+})
+watch(managedIntroSetting, (value) => {
+  if (typeof value === 'boolean')
+    writeCachedIntroSetting(value)
+}, { immediate: true })
 appStore.introActive = false
 type IntroPhase = 'idle' | 'cover' | 'finishing' | 'settled'
 const introPhase = ref<IntroPhase>('idle')
@@ -65,6 +98,10 @@ const introWillPlay = computed(() => introPhase.value === 'cover' || introPhase.
 const showLaunch = computed(() => introWillPlay.value)
 const introComplete = computed(() => introPhase.value === 'settled')
 const appShellMounted = ref(false)
+// Direct detail navigation starts before the node collection is hydrated.
+// Keep the footer out of the first layout until the detail body has its final
+// branch, otherwise the false empty state pushes a visible footer after mount.
+const footerReady = computed(() => route.name !== 'instance-detail' || nodesStore.initialized)
 const ambientAnimationReady = ref(false)
 const introRevealActive = ref(false)
 const introLeaving = computed(() => introPhase.value === 'finishing')
@@ -340,7 +377,14 @@ async function prepareInitialShell() {
   if (componentUnmounting || appShellMounted.value)
     return
 
-  const playIntro = introSessionEligible && appStore.introAnimationEnabled && !motionReduced.value
+  // A fresh managed setting always wins. If the public-settings request misses
+  // the bounded launch window, the last successful value prevents an installed
+  // PWA launch from randomly losing the enabled intro. Late settings only update
+  // the next launch and never overlay an already-visible dashboard.
+  const introEnabled = managedIntroSetting.value
+    ?? (installedApp ? readCachedIntroSetting() : undefined)
+    ?? false
+  const playIntro = introSessionEligible && introEnabled && !motionReduced.value
   appShellMounted.value = true
   resolveInitialShellDecision?.()
   resolveInitialShellDecision = null
@@ -623,7 +667,7 @@ onUnmounted(() => {
         </RouterView>
       </div>
     </main>
-    <Footer v-if="appShellMounted" :intro-complete="introComplete" :present-visitor="true" />
+    <Footer v-if="appShellMounted && footerReady" :intro-complete="introComplete" :present-visitor="true" />
     <Toaster rich-colors close-button position="top-center" />
   </Provider>
 </template>

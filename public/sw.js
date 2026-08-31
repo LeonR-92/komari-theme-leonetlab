@@ -1,12 +1,9 @@
-// Komari serves whichever theme is active from the origin root. A theme-owned
-// offline shell would therefore outlive theme switches and compete with the
-// official default theme's root-scoped PWA worker. Keep this worker deliberately
-// network-only: it preserves installability while retiring legacy theme caches.
+// Migration-only worker for installations that were previously controlled by
+// a Komari Observatory service worker. New theme pages no longer register a
+// worker: the manifest keeps the app installable without competing for Komari's
+// root scope. Existing clients stay on one controller until they close; only
+// then does this worker activate, remove theme-owned legacy caches and retire.
 const LEGACY_THEME_CACHE_PREFIXES = ['komari-observatory-', 'leonetlab-observatory-']
-
-globalThis.addEventListener('install', (event) => {
-  event.waitUntil(globalThis.skipWaiting())
-})
 
 globalThis.addEventListener('activate', (event) => {
   event.waitUntil(
@@ -14,16 +11,6 @@ globalThis.addEventListener('activate', (event) => {
       .then(keys => Promise.all(keys
         .filter(key => LEGACY_THEME_CACHE_PREFIXES.some(prefix => key.startsWith(prefix)))
         .map(key => caches.delete(key))))
-      .then(() => globalThis.clients.claim()),
+      .then(() => globalThis.registration.unregister()),
   )
-})
-
-globalThis.addEventListener('fetch', (event) => {
-  const request = event.request
-  if (request.method !== 'GET' || request.mode !== 'navigate')
-    return
-  const url = new URL(request.url)
-  if (url.origin !== globalThis.location.origin)
-    return
-  event.respondWith(fetch(request))
 })

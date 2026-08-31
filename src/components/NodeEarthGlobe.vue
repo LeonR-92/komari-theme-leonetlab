@@ -78,6 +78,11 @@ const showMarkers = computed(() => props.showMarkers ?? props.variant !== 'intro
 const showStatus = computed(() => props.showStatus ?? props.variant !== 'intro')
 
 let globe: Globe | null = null
+let activeGlobeDpr = 1
+let appliedGlobeWidth = 0
+let appliedGlobeHeight = 0
+let pendingGlobeDpr: number | null = null
+let dprReconfigureTimer: ReturnType<typeof window.setTimeout> | null = null
 const INITIAL_THETA = 0.22
 const MIN_THETA = -0.65
 const MAX_THETA = 0.65
@@ -257,6 +262,16 @@ interface OverlayLayoutMetrics {
   readoutHeight: number
 }
 
+interface OverlayProjectionContext {
+  width: number
+  height: number
+  aspect: number
+  cosTheta: number
+  sinTheta: number
+  cosPhi: number
+  sinPhi: number
+}
+
 let overlayLayout: OverlayLayoutMetrics = {
   containerLeft: 0,
   containerTop: 0,
@@ -266,6 +281,7 @@ let overlayLayout: OverlayLayoutMetrics = {
 }
 let overlayMeasureFrame = 0
 let initialRedrawFrame = 0
+const overlayPositionCache = new WeakMap<HTMLElement, { x: number, y: number }>()
 
 function coordToGlobePoint([lat, lon]: [number, number]): [number, number, number] {
   const latRad = lat * Math.PI / 180
@@ -296,8 +312,25 @@ function setStyleValue(el: HTMLElement, property: string, value: string) {
     el.style.setProperty(property, value)
 }
 
-function syncClusterOverlayPosition(cluster: RegionCluster, el: HTMLElement) {
+function createOverlayProjectionContext(): OverlayProjectionContext {
   const { width, height } = getRenderSize()
+  return {
+    width,
+    height,
+    aspect: height > 0 ? width / height : 1,
+    cosTheta: Math.cos(theta),
+    sinTheta: Math.sin(theta),
+    cosPhi: Math.cos(phi),
+    sinPhi: Math.sin(phi),
+  }
+}
+
+function syncClusterOverlayPosition(
+  cluster: RegionCluster,
+  el: HTMLElement,
+  projection: OverlayProjectionContext,
+) {
+  const { width, height, aspect, cosTheta, sinTheta, cosPhi, sinPhi } = projection
   if (width <= 0 || height <= 0) {
     el.dataset.front = 'false'
     el.style.pointerEvents = 'none'
@@ -305,11 +338,6 @@ function syncClusterOverlayPosition(cluster: RegionCluster, el: HTMLElement) {
     return
   }
 
-  const aspect = width / height
-  const cosTheta = Math.cos(theta)
-  const sinTheta = Math.sin(theta)
-  const cosPhi = Math.cos(phi)
-  const sinPhi = Math.sin(phi)
   const markerRadius = GLOBE_RADIUS + MARKER_ELEVATION
   const [baseX, baseY, baseZ] = coordToGlobePoint(cluster.coord)
   const x = baseX * markerRadius
@@ -330,7 +358,11 @@ function syncClusterOverlayPosition(cluster: RegionCluster, el: HTMLElement) {
     : xPx > width * 0.64
   const side = openToLeft ? 'left' : 'right'
 
-  el.style.transform = `translate3d(${xPx}px, ${yPx}px, 0)`
+  const previousPosition = overlayPositionCache.get(el)
+  if (!previousPosition || Math.abs(previousPosition.x - xPx) >= 0.25 || Math.abs(previousPosition.y - yPx) >= 0.25) {
+    el.style.transform = `translate3d(${xPx}px, ${yPx}px, 0)`
+    overlayPositionCache.set(el, { x: xPx, y: yPx })
+  }
   setStyleValue(el, '--lnl-cobe-visible', String(markerVisibility))
   setDatasetValue(el, 'visibilitySource', 'projection')
   setDatasetValue(el, 'front', isFrontFacing ? 'true' : 'false')
@@ -366,11 +398,12 @@ function syncClusterOverlayPosition(cluster: RegionCluster, el: HTMLElement) {
 }
 
 function syncClusterOverlayPositions() {
+  const projection = createOverlayProjectionContext()
   for (const cluster of regionClusters.value) {
     const el = clusterOverlayEls.get(cluster.code)
     if (!el)
       continue
-    syncClusterOverlayPosition(cluster, el)
+    syncClusterOverlayPosition(cluster, el, projection)
   }
 }
 
@@ -400,6 +433,8 @@ function scheduleOverlayLayoutMeasurement() {
 
 function handleViewportResize() {
   scheduleOverlayLayoutMeasurement()
+  const { width, height } = getRenderSize()
+  updateGlobeSurfaceSize(width, height)
 }
 
 function handleViewportScroll() {
@@ -414,7 +449,7 @@ function setClusterOverlayEl(code: string, el: Element | ComponentPublicInstance
 
     const cluster = regionClusters.value.find(item => item.code === code)
     if (cluster) {
-      syncClusterOverlayPosition(cluster, el)
+      syncClusterOverlayPosition(cluster, el, createOverlayProjectionContext())
     }
     else {
       el.dataset.front = 'false'
@@ -494,10 +529,13 @@ function buildInitialOptions(): COBEOptions {
   const colors = themeColors.value
   const { width, height } = getRenderSize()
   const devicePixelRatio = getAdaptiveDpr(width, height)
+  activeGlobeDpr = devicePixelRatio
+  appliedGlobeWidth = Math.max(1, Math.round(width))
+  appliedGlobeHeight = Math.max(1, Math.round(height))
   return {
     devicePixelRatio,
-    width,
-    height,
+    width: appliedGlobeWidth,
+    height: appliedGlobeHeight,
     phi,
     theta,
     dark: colors.dark,
@@ -526,9 +564,80 @@ function updateGlobeFrame() {
       shouldRender: shouldRender.value,
     }
   }
-  const { width, height } = getRenderSize()
-  globe.update({ phi, theta, width, height })
+  // COBE redraws when update() is called. Supplying width/height here also
+  // rewrites canvas.width/canvas.height, which resets the WebGL drawing buffer.
+  // Per-frame animation therefore updates orientation only; the resize watcher
+  // owns all physical surface changes.
+  globe.update({ phi, theta })
   syncClusterOverlayPositions()
+}
+
+function unwrapCobeCanvas() {
+  if (!canvasRef.value || !containerRef.value)
+    return
+  const cobeWrapper = canvasRef.value.parentElement
+  if (cobeWrapper && cobeWrapper !== containerRef.value) {
+    containerRef.value.appendChild(canvasRef.value)
+    cobeWrapper.remove()
+  }
+}
+
+function clearDprReconfigureTimer() {
+  if (dprReconfigureTimer !== null)
+    window.clearTimeout(dprReconfigureTimer)
+  dprReconfigureTimer = null
+}
+
+function canReconfigureGlobeDpr(): boolean {
+  return Boolean(
+    globe
+    && props.variant === 'dashboard'
+    && !props.handoffActive
+    && !isPointerDown
+    && !themeTransitioning.value
+    && shouldRender.value,
+  )
+}
+
+function recreateGlobeForPendingDpr() {
+  dprReconfigureTimer = null
+  if (pendingGlobeDpr === null || !canReconfigureGlobeDpr() || !canvasRef.value)
+    return
+
+  pauseRaf()
+  globe?.destroy()
+  globe = null
+  unwrapCobeCanvas()
+  globe = createGlobe(canvasRef.value, buildInitialOptions())
+  pendingGlobeDpr = null
+  syncClusterOverlayPositions()
+  syncRafState()
+}
+
+function scheduleGlobeDprReconfigure() {
+  if (pendingGlobeDpr === null || dprReconfigureTimer !== null || !canReconfigureGlobeDpr())
+    return
+  dprReconfigureTimer = window.setTimeout(recreateGlobeForPendingDpr, 180)
+}
+
+function updateGlobeSurfaceSize(width: number, height: number) {
+  if (!globe || width <= 0 || height <= 0)
+    return
+
+  const nextWidth = Math.max(1, Math.round(width))
+  const nextHeight = Math.max(1, Math.round(height))
+  const nextDpr = getAdaptiveDpr(nextWidth, nextHeight)
+  if (nextWidth !== appliedGlobeWidth || nextHeight !== appliedGlobeHeight) {
+    appliedGlobeWidth = nextWidth
+    appliedGlobeHeight = nextHeight
+    globe.update({ phi, theta, width: nextWidth, height: nextHeight })
+  }
+
+  pendingGlobeDpr = nextDpr !== activeGlobeDpr ? nextDpr : null
+  if (pendingGlobeDpr === null)
+    clearDprReconfigureTimer()
+  else
+    scheduleGlobeDprReconfigure()
 }
 
 // phi 收敛/静止时整帧跳过 globe.update，WebGL + overlay 位置更新双双归零
@@ -641,6 +750,8 @@ function stopGlobe() {
   window.cancelAnimationFrame(initialRedrawFrame)
   initialRedrawFrame = 0
   pauseRaf()
+  clearDprReconfigureTimer()
+  pendingGlobeDpr = null
   if (globeProbe) {
     (globeProbe as Record<string, unknown>)[props.variant === 'intro' ? 'introStoppedAt' : 'dashStoppedAt'] = {
       t: performance.now(),
@@ -649,13 +760,7 @@ function stopGlobe() {
   }
   globe?.destroy()
   globe = null
-  if (canvasRef.value && containerRef.value) {
-    const cobeWrapper = canvasRef.value.parentElement
-    if (cobeWrapper && cobeWrapper !== containerRef.value) {
-      containerRef.value.appendChild(canvasRef.value)
-      cobeWrapper.remove()
-    }
-  }
+  unwrapCobeCanvas()
 }
 
 onMounted(() => {
@@ -699,6 +804,7 @@ function handleThemeTransitionEnd() {
   triggerStaticRedrawWindow(900)
   updateGlobeFrame()
   syncRafState()
+  scheduleGlobeDprReconfigure()
 }
 
 // Theme changes must update the existing WebGL instance in place. Recreating
@@ -721,15 +827,20 @@ watch([() => appStore.isDark, () => appStore.colorPalette], () => {
 })
 
 watch(
-  [containerWidth, containerHeight],
+  [containerWidth, containerHeight, lowPowerProfile],
   ([width, height]) => {
-    if (!globe || width <= 0 || height <= 0)
-      return
-    const devicePixelRatio = getAdaptiveDpr(width, height)
-    globe.update({ phi, theta, width, height, devicePixelRatio })
+    updateGlobeSurfaceSize(width, height)
     scheduleOverlayLayoutMeasurement()
   },
 )
+
+watch([() => props.variant, () => props.handoffActive], () => {
+  if (!globe)
+    return
+  const { width, height } = getRenderSize()
+  updateGlobeSurfaceSize(width, height)
+  scheduleGlobeDprReconfigure()
+})
 
 watch(
   () => appStore.earthViewMode,
@@ -776,6 +887,7 @@ watch(shouldRender, () => {
   if (!globe)
     return
   syncRafState()
+  scheduleGlobeDprReconfigure()
 })
 
 // 槽位迁移（Teleport 移动 DOM）后容器尺寸变化由 useElementSize 的 watch
@@ -872,6 +984,7 @@ function finishPointerInteraction(
   dragging.value = false
   pointerDragged = false
   syncRafState()
+  scheduleGlobeDprReconfigure()
 }
 
 function onLostPointerCapture(e: PointerEvent) {

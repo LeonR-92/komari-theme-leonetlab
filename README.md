@@ -8,7 +8,7 @@
 
 A responsive observatory theme for [Komari](https://github.com/komari-monitor/komari), derived from [Komari Emerald](https://github.com/Tokinx/komari-theme-emerald). It combines live node telemetry, a draggable COBE globe, Ping analytics, adaptive card and list views, light/dark modes, and browser-managed PWA installation.
 
-Latest release: `1.4.3-fix2` · Primary target: Komari `1.4.3`
+Latest public release: `1.4.3-fix3` · Primary target: Komari `1.4.3`
 
 ## Features
 
@@ -27,13 +27,13 @@ In **Komari → Settings → Theme management**, add this repository:
 https://github.com/LeonR-92/komari-theme-leonetlab
 ```
 
-Komari resolves the latest GitHub Release automatically. You can also upload `komari-theme-leonetlab-build-v1.4.3-fix2.zip` manually, then select **Komari Observatory**.
+Komari resolves the latest public GitHub Release automatically. The release asset can also be uploaded directly as `komari-theme-leonetlab-build-v1.4.3-fix3.zip`, then selected as **Komari Observatory**.
 
 ## Configuration and privacy
 
 All options are available through Komari managed theme settings. Blank branding fields inherit the Komari site configuration.
 
-Theme settings are public. Never place passwords, API keys, node tokens, private endpoints, or personal data in them. The optional visitor panel uses public IP-geolocation providers; disable it when that lookup is not appropriate. The network-only Service Worker does not cache pages, static assets, RPC, API, WebSocket, visitor, exchange-rate, Ping-history, telemetry, or user data; install prompts remain browser-controlled.
+Theme settings are public. Never place passwords, API keys, node tokens, private endpoints, or personal data in them. The optional visitor panel uses public IP-geolocation providers; disable it when that lookup is not appropriate. Installation remains browser-controlled through the manifest. The theme does not register a Service Worker or cache pages, assets, RPC, API, WebSocket, visitor, exchange-rate, Ping-history, telemetry, or user data; the bundled migration worker only retires explicitly named legacy theme caches for existing installations.
 
 ## Compatibility
 
@@ -59,7 +59,7 @@ npm audit --audit-level=high
 npm audit --omit=dev --audit-level=high
 ```
 
-The production build creates `komari-theme-leonetlab-build-v1.4.3-fix2.zip` with only the root manifest, root preview, and compiled `dist/` tree.
+The production build creates `komari-theme-leonetlab-build-v1.4.3-fix3.zip` with only the root manifest, root preview, and compiled `dist/` tree.
 
 ## Theme Market
 
