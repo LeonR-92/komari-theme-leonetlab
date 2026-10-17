@@ -30,6 +30,23 @@ function Invoke-Captured {
   }
 }
 
+function Test-GeneratedTempWritable {
+  param([string]$Path)
+  $probePath = Join-Path $Path ".codex-write-probe-$PID.tmp"
+  try {
+    New-Item -ItemType Directory -Path $Path -Force | Out-Null
+    [System.IO.File]::WriteAllText($probePath, 'write-test')
+    Remove-Item -LiteralPath $probePath -Force
+    return $true
+  }
+  catch {
+    if (Test-Path -LiteralPath $probePath) {
+      Remove-Item -LiteralPath $probePath -Force -ErrorAction SilentlyContinue
+    }
+    return $false
+  }
+}
+
 Set-Location -LiteralPath $projectRoot
 $versionProbeScript = @'
 const pkg = require('./package.json');
@@ -66,6 +83,24 @@ if ($Repair -and -not (Test-Path -LiteralPath (Join-Path $projectRoot 'node_modu
 
 $npmTree = Invoke-Captured 'npm.cmd' @('ls', '--depth=0', '--silent')
 Add-Check ($npmTree.ExitCode -eq 0) 'npm dependency tree' $($npmTree.Output | Select-Object -Last 1)
+
+$nodeModulesPath = [System.IO.Path]::GetFullPath((Join-Path $projectRoot 'node_modules'))
+$incrementalTempPath = [System.IO.Path]::GetFullPath((Join-Path $nodeModulesPath '.tmp'))
+$incrementalTempWritable = Test-GeneratedTempWritable $incrementalTempPath
+if ($Repair -and -not $incrementalTempWritable) {
+  $expectedPrefix = $nodeModulesPath.TrimEnd([System.IO.Path]::DirectorySeparatorChar) + [System.IO.Path]::DirectorySeparatorChar
+  if (-not $incrementalTempPath.StartsWith($expectedPrefix, [System.StringComparison]::OrdinalIgnoreCase) -or [System.IO.Path]::GetFileName($incrementalTempPath) -ne '.tmp') {
+    $failures.Add("refusing to repair unexpected incremental temp path: $incrementalTempPath")
+  }
+  else {
+    Write-Host '[prepare] Repairing generated TypeScript incremental temp directory...'
+    if (Test-Path -LiteralPath $incrementalTempPath) {
+      Remove-Item -LiteralPath $incrementalTempPath -Recurse -Force
+    }
+    $incrementalTempWritable = Test-GeneratedTempWritable $incrementalTempPath
+  }
+}
+Add-Check $incrementalTempWritable 'TypeScript incremental temp directory' $incrementalTempPath
 
 $browserProbeScript = @'
 const { chromium, firefox, webkit } = require('playwright');

@@ -1,5 +1,17 @@
 # Changelog
 
+## 1.6.0 — 2026-10-17
+
+- Aligned with Komari 1.6.0 and additive 1.5 GPU snapshots while retaining legacy node normalization and controlled Ping fallbacks.
+- Rebuilt Ping selection as compact two-line cards with two mobile columns, independent task identities, and full statistics in a scrollable popover.
+- Restored short mobile line transitions for explicit interactions; kept background refresh quiet and stopped active animation when hidden or reduced motion is enabled.
+- Preserved all/custom/cleared selection intent across refreshes and missing history, synchronized card/legend clearing, and restored charts after transient foreground errors.
+- Indexed Ping samples and loss markers, normalized unavailable statistics, and escaped dynamic tooltip names.
+- Improved appearance controls, focus/close behavior, short-screen scrolling, and rapid mode/palette/cursor requests without changing the 680ms reveal.
+- Fixed final-intent card/list switching and cleaned up cached-route work, deferred focus, Ping polling and visitor requests.
+- Kept HTTP deadlines active through response-body parsing and applied compatible dependency security updates without adding runtime dependencies.
+- Retained browser/Komari-owned PWA installation with no theme Worker registration, install prompt, cache refresh flow or offline shell.
+
 ## 1.4.3-fix3 — 2026-08-31
 
 - Completed runtime recovery after a transient initial node request failure so direct detail pages and the footer leave their loading gate as soon as metadata polling succeeds.

@@ -2,7 +2,8 @@
 import { Icon } from '@iconify/vue'
 import { useMediaQuery } from '@vueuse/core'
 import dayjs from 'dayjs'
-import { computed, onMounted, onUnmounted, ref, shallowRef, watch } from 'vue'
+import { PopoverClose, PopoverContent, PopoverPortal, PopoverRoot, PopoverTrigger } from 'reka-ui'
+import { computed, onActivated, onDeactivated, onMounted, onUnmounted, ref, shallowRef, watch } from 'vue'
 import VChart from 'vue-echarts'
 import ChartViewport from '@/components/ChartViewport.vue'
 import { Button } from '@/components/ui/button'
@@ -14,7 +15,6 @@ import { useBackgroundSurface } from '@/composables/useBackgroundSurface'
 import { useMotionPreference } from '@/composables/useMotionPreference'
 import { useAppStore } from '@/stores/app'
 import { isMetricCapabilityUnavailable } from '@/utils/metricCompatibility'
-import { isMobileLike } from '@/utils/mobilePerf'
 import { bridgeShortDisplayGaps, cutPeakValues } from '@/utils/recordHelper'
 import { getSharedRpc, RpcError } from '@/utils/rpc'
 import '@/utils/echarts' // 共享 ECharts 配置
@@ -28,9 +28,13 @@ const { pickSurfaceClass } = useBackgroundSurface()
 const { motionReduced } = useMotionPreference()
 const isDark = computed(() => appStore.isDark)
 const motionEnabled = computed(() => !motionReduced.value)
-// ECharts 动画在移动端关闭：图表动画是持续 GPU/CPU 负载，移动端只保留 CSS 入场。
-const chartMotionEnabled = computed(() => motionEnabled.value && !isMobileLike)
 const narrowViewport = useMediaQuery('(max-width: 640px)')
+const chartRef = ref<InstanceType<typeof VChart> | null>(null)
+const pageVisible = ref(document.visibilityState === 'visible')
+const componentActive = ref(true)
+const interactiveChartUpdate = ref(true)
+const chartMotionEnabled = computed(() => motionEnabled.value && pageVisible.value && componentActive.value && interactiveChartUpdate.value)
+const chartAnimationDuration = computed(() => narrowViewport.value ? 360 : 560)
 // 使用共享的 RPC 实例，避免重复创建连接
 const rpc = getSharedRpc()
 
@@ -143,7 +147,7 @@ interface TaskInfo {
   weight?: number
   name: string
   interval: number
-  loss: number
+  loss?: number
   lossApproximate?: boolean
   p99?: number
   p50?: number
@@ -249,12 +253,17 @@ watch(pingHistoryEnabled, (enabled) => {
 }, { immediate: true })
 
 // 任务选择
-const selectedTaskIds = ref<number[]>([])
-/** 用户手动清空选择标记：置位后 30 秒后台轮询不再自动恢复全选 */
-const userClearedSelection = ref(false)
+const taskSelectionMode = ref<'all' | 'custom' | 'none'>('all')
+// Keep visitor intent independent of the tasks available in a particular range.
+const requestedTaskIds = ref<number[]>([])
+const requestedTaskIdSet = computed(() => new Set(requestedTaskIds.value))
+const selectedTaskIds = computed(() => tasks.value
+  .filter(task => taskSelectionMode.value === 'all' || (taskSelectionMode.value === 'custom' && requestedTaskIdSet.value.has(task.id)))
+  .map(task => task.id))
 const cutPeak = ref(false)
 const showDelay = ref(true)
 const showLoss = ref(true)
+const probeDetailsOpen = ref(false)
 const chartMargin = computed(() => narrowViewport.value
   ? { top: 22, right: 10, bottom: 42, left: 40 }
   : { top: 30, right: 24, bottom: 52, left: 56 })
@@ -301,6 +310,46 @@ function getMetricTaskId(series: MetricSeries, point: MetricPoint): number | nul
   return Number.isInteger(taskId) ? taskId : null
 }
 
+function isValidPingTime(value: unknown): value is string {
+  return typeof value === 'string' && Number.isFinite(dayjs(value).valueOf())
+}
+
+function normalizePingRecords(value: unknown, fallbackClient: string): PingRecord[] {
+  if (!Array.isArray(value))
+    return []
+
+  return value.flatMap((candidate) => {
+    if (!candidate || typeof candidate !== 'object')
+      return []
+    const record = candidate as Partial<PingRecord>
+    const taskId = Number(record.task_id)
+    if (!Number.isInteger(taskId) || !isValidPingTime(record.time) || typeof record.value !== 'number' || !Number.isFinite(record.value))
+      return []
+    return [{
+      client: typeof record.client === 'string' ? record.client : fallbackClient,
+      task_id: taskId,
+      time: record.time,
+      value: record.value,
+    }]
+  })
+}
+
+function validStatistic(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : undefined
+}
+
+function normalizeTaskStatistics(task: TaskInfo): TaskInfo {
+  return {
+    ...task,
+    loss: validStatistic(task.loss),
+    latest: validStatistic(task.latest),
+    avg: validStatistic(task.avg),
+    min: validStatistic(task.min),
+    max: validStatistic(task.max),
+    p99_p50_ratio: validStatistic(task.p99_p50_ratio),
+  }
+}
+
 async function fetchMetricRecords(uuid: string, hours: number): Promise<PingChartData> {
   const [metricResult, statsResult, taskWeights] = await Promise.all([
     rpc.getClient().call<MetricQueryResponse>('public:queryMetrics', {
@@ -330,11 +379,13 @@ async function fetchMetricRecords(uuid: string, hours: number): Promise<PingChar
   for (const series of metricSeries) {
     const points = Array.isArray(series?.points) ? series.points : []
     for (const point of points) {
+      if (!point || typeof point !== 'object')
+        continue
       const taskId = getMetricTaskId(series, point)
       if (taskId === null)
         continue
 
-      if (point.value === null)
+      if (!isValidPingTime(point.time) || typeof point.value !== 'number' || !Number.isFinite(point.value))
         continue
 
       if (series.metric_key === 'ping.loss') {
@@ -356,12 +407,12 @@ async function fetchMetricRecords(uuid: string, hours: number): Promise<PingChar
   }
 
   const metricStats = Array.isArray(statsResult?.stats) ? statsResult.stats : []
-  const metricTasks = metricStats.map(task => ({
+  const metricTasks = metricStats.filter(task => task && typeof task === 'object').map(task => normalizeTaskStatistics({
     id: Number(task.task_id),
     weight: taskWeights.get(Number(task.task_id)),
     name: task.name || `Ping ${task.task_id}`,
     interval: task.interval ?? 60,
-    loss: Number.isFinite(task.loss) ? task.loss : 0,
+    loss: task.loss,
     lossApproximate: task.loss_approximate === true,
     p99: task.p99,
     p50: task.p50,
@@ -388,7 +439,7 @@ async function fetchLegacyRecords(uuid: string, hours: number): Promise<PingChar
     fetchPublicPingTaskWeights(),
   ])
 
-  const records = Array.isArray(result?.records) ? result.records : []
+  const records = normalizePingRecords(result?.records, uuid)
   const legacyTasks = Array.isArray(result?.tasks) ? result.tasks : []
   return {
     records,
@@ -396,7 +447,8 @@ async function fetchLegacyRecords(uuid: string, hours: number): Promise<PingChar
       .filter(record => record.value < 0)
       .map(record => ({ task_id: record.task_id, time: record.time, loss: 1 })),
     tasks: legacyTasks
-      .map(task => ({ ...task, weight: task.weight ?? taskWeights.get(task.id) }))
+      .filter(task => task && typeof task === 'object' && Number.isInteger(task.id))
+      .map(task => normalizeTaskStatistics({ ...task, weight: task.weight ?? taskWeights.get(task.id) }))
       .sort(compareTasks),
   }
 }
@@ -429,7 +481,7 @@ async function fetchPublicPingTaskWeights(): Promise<Map<number, number>> {
 }
 
 async function fetchRecords(options: { background?: boolean } = {}) {
-  if (!props.uuid || !pingHistoryEnabled.value)
+  if (!props.uuid || !pingHistoryEnabled.value || !componentActive.value)
     return
   const background = options.background === true
   if (background && fetching.value)
@@ -479,16 +531,13 @@ async function fetchRecords(options: { background?: boolean } = {}) {
     const records = result.records
     records.sort((a, b) => dayjs(a.time).valueOf() - dayjs(b.time).valueOf())
 
+    interactiveChartUpdate.value = !background
     remoteData.value = records
     remoteLossData.value = result.lossPoints
     tasks.value = result.tasks
+    error.value = null
     refreshError.value = false
     lastUpdatedAt.value = Date.now()
-
-    // 仅在用户未手动清空时自动全选；后台轮询不得撤销「清空」操作
-    if (tasks.value.length > 0 && selectedTaskIds.value.length === 0 && !userClearedSelection.value) {
-      selectedTaskIds.value = tasks.value.map(t => t.id)
-    }
   }
   catch (err) {
     if (requestId !== fetchRequestId)
@@ -632,10 +681,17 @@ const showDateInAxis = computed(() => selectedHours.value >= 24)
 // ==================== 任务选择 ====================
 
 // 获取任务颜色（根据任务在完整列表中的索引）
+const taskColorMap = computed(() => new Map(tasks.value.map((task, index) => [task.id, chartColors[index % chartColors.length]!])))
+const taskById = computed(() => new Map(tasks.value.map(task => [task.id, task])))
+
 function getTaskColor(taskId: number): string {
-  const taskIndex = tasks.value.findIndex(t => t.id === taskId)
-  const safeIndex = Math.max(0, taskIndex % chartColors.length)
-  return chartColors[safeIndex]!
+  return taskColorMap.value.get(taskId) ?? chartColors[0]!
+}
+
+const TOOLTIP_ESCAPE_PATTERN = /[&<>"']/g
+const TOOLTIP_ESCAPES: Record<string, string> = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', '\'': '&#39;' }
+function escapeTooltipText(value: string): string {
+  return value.replace(TOOLTIP_ESCAPE_PATTERN, character => TOOLTIP_ESCAPES[character]!)
 }
 
 // 最新值统计（从服务端 tasks 获取，保持颜色顺序）
@@ -644,29 +700,47 @@ const latestValues = computed(() => {
     return []
 
   const latestMap = new Map<number, number | null>()
-  for (const task of tasks.value) {
-    for (let i = remoteData.value.length - 1; i >= 0; i--) {
-      const rec = remoteData.value[i]
-      if (rec && rec.task_id === task.id && rec.value >= 0) {
-        latestMap.set(task.id, rec.value)
-        break
-      }
-    }
+  for (let index = remoteData.value.length - 1; index >= 0; index--) {
+    const record = remoteData.value[index]
+    if (!record || record.value < 0 || latestMap.has(record.task_id))
+      continue
+    latestMap.set(record.task_id, record.value)
   }
 
   return tasks.value.map((task, idx) => {
     const safeIdx = Math.max(0, idx % chartColors.length)
     return {
       ...task,
-      latestValue: latestMap.get(task.id) ?? null,
+      latestValue: latestMap.get(task.id) ?? task.latest ?? null,
       color: chartColors[safeIdx]!,
     }
   })
 })
 
+const selectedTaskIdSet = computed(() => new Set(selectedTaskIds.value))
 const selectedTasks = computed(() => {
-  return tasks.value.filter(t => selectedTaskIds.value.includes(t.id))
+  return tasks.value.filter(task => selectedTaskIdSet.value.has(task.id))
 })
+
+function findNearestTimeIndex(sortedTimes: number[], target: number, tolerance: number): number {
+  let low = 0
+  let high = sortedTimes.length
+  while (low < high) {
+    const middle = Math.floor((low + high) / 2)
+    if ((sortedTimes[middle] ?? Number.POSITIVE_INFINITY) < target)
+      low = middle + 1
+    else
+      high = middle
+  }
+
+  const candidates = [low - 1, low]
+    .filter(index => index >= 0 && index < sortedTimes.length)
+    .sort((left, right) => Math.abs((sortedTimes[left] ?? 0) - target) - Math.abs((sortedTimes[right] ?? 0) - target))
+  const nearest = candidates[0]
+  return nearest !== undefined && Math.abs((sortedTimes[nearest] ?? 0) - target) <= tolerance
+    ? nearest
+    : -1
+}
 
 const packetLossMarkers = computed(() => {
   const data = mergedData.value
@@ -678,57 +752,65 @@ const packetLossMarkers = computed(() => {
   const chartTimes = data.map(item => dayjs(item.time as string).valueOf())
   const toleranceMs = mergeToleranceMs.value
 
-  for (const task of selectedTasks.value) {
-    const points = new Set<number>()
-    const taskLossRecords = remoteLossData.value.filter(rec => rec.task_id === task.id && rec.loss > 0)
-
-    for (const record of taskLossRecords) {
-      const lossTs = dayjs(record.time).valueOf()
-      let matchedIndex = -1
-
-      for (let i = 0; i < chartTimes.length; i++) {
-        const chartTs = chartTimes[i]
-        if (chartTs === undefined)
-          continue
-
-        if (Math.abs(chartTs - lossTs) <= toleranceMs) {
-          matchedIndex = i
-          break
-        }
-      }
-
-      if (matchedIndex >= 0) {
-        points.add(matchedIndex)
-      }
-    }
-
-    markers.set(task.id, Array.from(points).sort((a, b) => a - b))
+  const markerSets = new Map<number, Set<number>>()
+  for (const record of remoteLossData.value) {
+    if (record.loss <= 0 || !selectedTaskIdSet.value.has(record.task_id))
+      continue
+    const matchedIndex = findNearestTimeIndex(chartTimes, dayjs(record.time).valueOf(), toleranceMs)
+    if (matchedIndex < 0)
+      continue
+    const points = markerSets.get(record.task_id) ?? new Set<number>()
+    points.add(matchedIndex)
+    markerSets.set(record.task_id, points)
   }
+
+  for (const task of selectedTasks.value)
+    markers.set(task.id, Array.from(markerSets.get(task.id) ?? []).sort((a, b) => a - b))
 
   return markers
 })
 
+function formatProbeLatency(task: TaskInfo & { latestValue: number | null }): string {
+  const value = task.latestValue ?? task.avg
+  return typeof value === 'number' && Number.isFinite(value) ? Math.round(value).toString() : '—'
+}
+
+function formatProbeLoss(task: TaskInfo): string {
+  return task.loss !== undefined ? `${task.lossApproximate ? '≈' : ''}${task.loss.toFixed(2)}%` : '—'
+}
+
 // 切换任务选中状态
 function toggleTask(taskId: number) {
-  if (selectedTaskIds.value.includes(taskId)) {
-    selectedTaskIds.value = selectedTaskIds.value.filter(id => id !== taskId)
-  }
-  else {
-    // 重新勾选任意任务视为撤销「清空」意图
-    userClearedSelection.value = false
-    selectedTaskIds.value = [...selectedTaskIds.value, taskId]
-  }
+  interactiveChartUpdate.value = true
+  const ids = new Set(taskSelectionMode.value === 'custom' ? requestedTaskIds.value : selectedTaskIds.value)
+  if (ids.has(taskId))
+    ids.delete(taskId)
+  else
+    ids.add(taskId)
+  const hasVisibleSelection = tasks.value.some(task => ids.has(task.id))
+  requestedTaskIds.value = hasVisibleSelection ? [...ids] : []
+  taskSelectionMode.value = hasVisibleSelection ? 'custom' : 'none'
 }
 
 function showAllTasks() {
-  userClearedSelection.value = false
-  selectedTaskIds.value = tasks.value.map(t => t.id)
+  interactiveChartUpdate.value = true
+  taskSelectionMode.value = 'all'
+  requestedTaskIds.value = []
 }
 
 function hideAllTasks() {
-  // 记录用户手动清空意图，阻止后台轮询自动恢复全选
-  userClearedSelection.value = true
-  selectedTaskIds.value = []
+  interactiveChartUpdate.value = true
+  taskSelectionMode.value = 'none'
+  requestedTaskIds.value = []
+}
+
+function handleLegendSelection(event: { selected: Record<string, boolean> }) {
+  interactiveChartUpdate.value = true
+  const availableIds = new Set(tasks.value.map(task => task.id))
+  const unavailableIds = taskSelectionMode.value === 'custom' ? requestedTaskIds.value.filter(id => !availableIds.has(id)) : []
+  const visibleIds = tasks.value.filter(task => event.selected[String(task.id)] !== false).map(task => task.id)
+  requestedTaskIds.value = visibleIds.length ? [...unavailableIds, ...visibleIds] : []
+  taskSelectionMode.value = visibleIds.length ? 'custom' : 'none'
 }
 
 // ==================== 图表配置 ====================
@@ -764,7 +846,7 @@ const baseTooltipConfig = computed(() => ({
 }))
 
 const pingChartOption = computed(() => {
-  const taskList = selectedTasks.value
+  const taskList = tasks.value
   const data = chartData.value
   const hours = selectedHours.value
 
@@ -775,7 +857,9 @@ const pingChartOption = computed(() => {
     const rawValues = data.map(d => d[task.id] as number | null ?? null)
     const displayValues = bridgeShortDisplayGaps(rawValues, 2)
     return {
-      name: task.name,
+      id: `ping-task-${task.id}`,
+      // ECharts legends also key by name; IDs keep equal display names independent.
+      name: String(task.id),
       type: 'line' as const,
       // 只在绘制副本上桥接 1–2 个采样周期；统计、Tooltip 与状态色块继续读取原始值。
       data: displayValues,
@@ -814,8 +898,8 @@ const pingChartOption = computed(() => {
 
   return {
     animation: chartMotionEnabled.value,
-    animationDuration: 560,
-    animationDurationUpdate: 240,
+    animationDuration: chartAnimationDuration.value,
+    animationDurationUpdate: chartMotionEnabled.value ? 180 : 0,
     animationEasing: 'cubicOut' as const,
     animationEasingUpdate: 'cubicOut' as const,
     // 全局颜色设置（用于图例等）
@@ -826,7 +910,7 @@ const pingChartOption = computed(() => {
     tooltip: {
       ...baseTooltipConfig.value,
       formatter: (params: unknown) => {
-        const p = params as Array<{ seriesName: string, value: number | null, dataIndex: number }>
+        const p = params as Array<{ seriesId: string, value: number | null, dataIndex: number }>
         if (!p.length)
           return ''
         const firstParam = p[0]
@@ -844,7 +928,7 @@ const pingChartOption = computed(() => {
         // Tooltip 始终读取原始行，绝不展示绘制副本中的插值值。
         const rawItems = p
           .map((item) => {
-            const task = tasks.value.find(t => t.name === item.seriesName)
+            const task = taskById.value.get(Number(item.seriesId.replace('ping-task-', '')))
             const rawValue = task ? rowData[task.id] : null
             return {
               ...item,
@@ -858,7 +942,7 @@ const pingChartOption = computed(() => {
           if (item.rawValue !== null) {
             const color = item.task ? colorMap.get(item.task.id) || chartColors[0] : chartColors[0]
             const colorDot = `<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${color};margin-right:8px;flex-shrink:0"></span>`
-            html += `<div style="display:flex;align-items:center">${colorDot}<span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${item.seriesName}</span><span style="margin-left:auto;font-weight:600;margin-left:16px;font-variant-numeric:tabular-nums">${Math.round(item.rawValue)} ms</span></div>`
+            html += `<div style="display:flex;align-items:center">${colorDot}<span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escapeTooltipText(item.task?.name ?? '')}</span><span style="margin-left:16px;font-weight:600;font-variant-numeric:tabular-nums">${Math.round(item.rawValue)} ms</span></div>`
           }
         }
         html += '</div>'
@@ -873,7 +957,9 @@ const pingChartOption = computed(() => {
       itemGap: 16,
       icon: 'roundRect',
       textStyle: { fontSize: chartAxisFontSize.value, color: chartThemeColors.value.textSecondary },
-      data: taskList.map(t => t.name),
+      data: taskList.map(t => String(t.id)),
+      selected: Object.fromEntries(taskList.map(task => [String(task.id), selectedTaskIdSet.value.has(task.id)])),
+      formatter: (name: string) => taskById.value.get(Number(name))?.name ?? name,
     },
     grid: chartMargin.value,
     xAxis: {
@@ -921,9 +1007,7 @@ const pingChartOption = computed(() => {
 // ==================== 生命周期 ====================
 
 watch(selectedView, () => {
-  // 切换时间窗：清除手动清空标记并重新自动全选
-  userClearedSelection.value = false
-  selectedTaskIds.value = []
+  interactiveChartUpdate.value = true
   void fetchRecords()
 }, { immediate: true })
 
@@ -931,27 +1015,73 @@ watch(() => props.uuid, () => {
   remoteData.value = []
   remoteLossData.value = []
   tasks.value = []
-  // 切换节点：清除手动清空标记并重新自动全选
-  userClearedSelection.value = false
-  selectedTaskIds.value = []
+  taskSelectionMode.value = 'all'
+  requestedTaskIds.value = []
+  probeDetailsOpen.value = false
   void fetchRecords()
 })
 
+function stopChartAnimation() {
+  chartRef.value?.chart?.getZr().storage.traverse((element) => {
+    element.stopAnimation(undefined, true)
+    element.getClipPath()?.stopAnimation(undefined, true)
+    element.getTextContent()?.stopAnimation(undefined, true)
+  })
+}
+
+watch(motionReduced, (reduced) => {
+  if (reduced)
+    stopChartAnimation()
+})
+
+watch([cutPeak, showDelay, showLoss], () => {
+  interactiveChartUpdate.value = true
+}, { flush: 'sync' })
+
 function refreshWhenVisible() {
-  if (pingHistoryEnabled.value && document.visibilityState === 'visible')
+  if (pingHistoryEnabled.value && pageVisible.value && componentActive.value)
     void fetchRecords({ background: true })
+}
+
+function handleVisibilityChange() {
+  pageVisible.value = document.visibilityState === 'visible'
+  if (!pageVisible.value)
+    stopChartAnimation()
+  else
+    refreshWhenVisible()
 }
 
 onMounted(() => {
   refreshTimer = window.setInterval(refreshWhenVisible, PING_DIALOG_REFRESH_INTERVAL_MS)
-  document.addEventListener('visibilitychange', refreshWhenVisible)
+  document.addEventListener('visibilitychange', handleVisibilityChange)
+})
+
+onActivated(() => {
+  if (componentActive.value)
+    return
+  componentActive.value = true
+  refreshTimer = window.setInterval(refreshWhenVisible, PING_DIALOG_REFRESH_INTERVAL_MS)
+  refreshWhenVisible()
+})
+
+onDeactivated(() => {
+  componentActive.value = false
+  fetchRequestId += 1
+  fetching.value = false
+  loading.value = false
+  backgroundRefreshing.value = false
+  probeDetailsOpen.value = false
+  stopChartAnimation()
+  if (refreshTimer !== null)
+    window.clearInterval(refreshTimer)
+  refreshTimer = null
 })
 
 onUnmounted(() => {
   fetchRequestId += 1
   if (refreshTimer !== null)
     window.clearInterval(refreshTimer)
-  document.removeEventListener('visibilitychange', refreshWhenVisible)
+  document.removeEventListener('visibilitychange', handleVisibilityChange)
 })
 </script>
 
@@ -965,7 +1095,7 @@ onUnmounted(() => {
             <TabsList class="lnl-ping-window-tabs w-max h-8 rounded-xl bg-transparent">
               <TabsTrigger
                 v-for="view in availableViews" :key="view.label" :value="view.label"
-                class="h-7 flex-none shrink-0 rounded-lg border-none px-3 text-xs shadow-none data-[state=active]:bg-emerald-500/10 data-[state=active]:text-emerald-600"
+                class="lnl-ping-window-tab h-7 flex-none shrink-0 rounded-lg border-none px-3 text-xs shadow-none"
               >
                 {{ view.label }}
               </TabsTrigger>
@@ -976,15 +1106,15 @@ onUnmounted(() => {
       <div v-if="pingHistoryEnabled" class="lnl-ping-selection">
         <span>PROBES {{ selectedTaskIds.length }} / {{ tasks.length }}</span>
         <Button
-          variant="ghost" size="xs" class="h-7 rounded-lg border border-emerald-600/15"
-          :class="[selectedTaskIds.length === tasks.length && '!text-emerald-600']"
+          variant="ghost" size="xs" class="lnl-ping-select-action h-7 rounded-lg"
+          :class="{ 'is-active': selectedTaskIds.length === tasks.length }"
           @click="showAllTasks"
         >
           全选
         </Button>
         <Button
-          variant="ghost" size="xs" class="h-7 rounded-lg border border-emerald-600/15"
-          :class="[!selectedTaskIds.length && '!text-emerald-600']"
+          variant="ghost" size="xs" class="lnl-ping-select-action h-7 rounded-lg"
+          :class="{ 'is-active': !selectedTaskIds.length }"
           @click="hideAllTasks"
         >
           清空
@@ -1007,50 +1137,68 @@ onUnmounted(() => {
         <div class="lnl-ping-workspace">
           <aside v-if="latestValues.length > 0" class="lnl-ping-probes" aria-label="探测线路">
             <div class="lnl-ping-probes-head">
-              <span>探测线路</span>
-              <small>{{ selectedTaskIds.length }} ACTIVE</small>
+              <div>
+                <span>探测线路</span>
+                <small>{{ selectedTaskIds.length }} ACTIVE</small>
+              </div>
+              <PopoverRoot v-model:open="probeDetailsOpen">
+                <PopoverTrigger as-child>
+                  <Button variant="ghost" size="icon-xs" class="lnl-ping-probes-info" aria-label="查看探测线路统计说明">
+                    <Icon icon="carbon:information" :width="14" :height="14" />
+                  </Button>
+                </PopoverTrigger>
+                <PopoverPortal>
+                  <PopoverContent class="z-[160]" align="end" :side-offset="8" :collision-padding="8">
+                    <div class="lnl-ping-probe-details">
+                      <header>
+                        <strong>探测线路统计</strong>
+                        <PopoverClose as-child>
+                          <button type="button" aria-label="关闭探测线路统计">
+                            ×
+                          </button>
+                        </PopoverClose>
+                      </header>
+                      <p>卡片保留当前延迟与统计窗口丢包率；点击卡片可启停对应线路。</p>
+                      <div v-for="task in latestValues" :key="task.id" class="lnl-ping-probe-detail">
+                        <strong>{{ task.name }}</strong>
+                        <span>{{ task.type?.toUpperCase() || 'PING' }} · {{ task.interval || 60 }}s</span>
+                        <span>均值 {{ task.avg !== undefined ? `${Math.round(task.avg)}ms` : '—' }}</span>
+                        <span>范围 {{ task.min !== undefined && task.max !== undefined ? `${Math.round(task.min)}–${Math.round(task.max)}ms` : '—' }}</span>
+                        <span>JIT {{ task.p99_p50_ratio !== undefined ? task.p99_p50_ratio.toFixed(2) : '—' }}</span>
+                      </div>
+                      <p v-if="latestValues.some(task => task.lossApproximate)" class="text-muted-foreground">
+                        ≈ 表示丢包率由延迟缺失样本近似推算；真实丢包指标可用后会自动切换。
+                      </p>
+                    </div>
+                  </PopoverContent>
+                </PopoverPortal>
+              </PopoverRoot>
             </div>
             <div class="lnl-ping-probe-list">
-              <div
+              <button
                 v-for="(task, taskIndex) in latestValues" :key="task.id"
-                role="button" tabindex="0"
+                type="button"
                 class="lnl-ping-probe"
-                :class="{ 'is-disabled': !selectedTaskIds.includes(task.id) }"
-                :style="{ '--lnl-probe-index': taskIndex }"
+                :class="{ 'is-disabled': !selectedTaskIdSet.has(task.id) }"
+                :style="{ '--lnl-probe-index': Math.min(taskIndex, 5) }"
+                :aria-pressed="selectedTaskIdSet.has(task.id)"
+                :data-ping-task-id="task.id"
+                :aria-label="`${task.name}，延迟 ${formatProbeLatency(task)} 毫秒，丢包 ${formatProbeLoss(task)}`"
                 @click="toggleTask(task.id)"
-                @keydown.enter.prevent="toggleTask(task.id)"
-                @keydown.space.prevent="toggleTask(task.id)"
               >
-                <i :style="{ backgroundColor: task.color }" />
                 <div class="lnl-ping-probe-copy">
+                  <i :style="{ backgroundColor: task.color }" aria-hidden="true" />
                   <strong>{{ task.name }}</strong>
-                  <small>{{ task.type?.toUpperCase() || 'PING' }} · {{ task.interval || 60 }}s</small>
+                  <span class="lnl-ping-probe-check" aria-hidden="true">{{ selectedTaskIdSet.has(task.id) ? '✓' : '' }}</span>
                 </div>
                 <div class="lnl-ping-probe-value">
-                  <strong>{{ task.latestValue !== null ? Math.round(task.latestValue) : task.avg !== undefined ? Math.round(task.avg) : '-' }}</strong>
+                  <strong>{{ formatProbeLatency(task) }}</strong>
                   <small>ms</small>
                 </div>
                 <div class="lnl-ping-probe-meta">
-                  <span>LOSS{{ task.lossApproximate ? '≈' : '' }} {{ Number.isFinite(task.loss) ? task.loss.toFixed(2) : '0.00' }}%</span>
-                  <span>JIT {{ task.p99_p50_ratio !== undefined ? task.p99_p50_ratio.toFixed(2) : '—' }}</span>
+                  <span>丢包 {{ formatProbeLoss(task) }}</span>
                 </div>
-                <DataTooltip portal placement="top" content-class="!rounded-xl p-3 w-64">
-                  <Button variant="ghost" size="icon-xs" class="lnl-ping-probe-info" @click.stop>
-                    <Icon icon="carbon:information" :width="14" :height="14" />
-                  </Button>
-                  <template #content>
-                    <div class="space-y-1.5 text-xs leading-relaxed">
-                      <p>每条探测线路按任务周期上报时延与丢包；行内 LOSS 为统计窗口丢包率，JIT 为 P99/P50 抖动比值。</p>
-                      <p class="text-muted-foreground">
-                        数值随最近统计窗口滚动更新，点按该行可启停此线路。
-                      </p>
-                      <p v-if="task.lossApproximate" class="text-muted-foreground">
-                        当前丢包率由延迟缺失样本近似推算；真实丢包指标可用后会自动切换。
-                      </p>
-                    </div>
-                  </template>
-                </DataTooltip>
-              </div>
+              </button>
             </div>
           </aside>
 
@@ -1068,13 +1216,13 @@ onUnmounted(() => {
                 >
                   <i /> {{ refreshError ? '连接重试' : backgroundRefreshing ? '实时同步' : '实时' }}
                 </span>
-                <Button variant="ghost" size="xs" class="h-7 rounded-lg" :class="[showDelay && '!text-emerald-600']" @click="showDelay = !showDelay">
+                <Button variant="ghost" size="xs" class="lnl-ping-chart-action h-7 rounded-lg" :class="{ 'is-active': showDelay }" @click="showDelay = !showDelay">
                   延迟
                 </Button>
-                <Button variant="ghost" size="xs" class="h-7 rounded-lg" :class="[showLoss && '!text-emerald-600']" @click="showLoss = !showLoss">
+                <Button variant="ghost" size="xs" class="lnl-ping-chart-action h-7 rounded-lg" :class="{ 'is-active': showLoss }" @click="showLoss = !showLoss">
                   丢包
                 </Button>
-                <Button variant="ghost" size="xs" class="h-7 rounded-lg" :class="[cutPeak && '!text-emerald-600']" @click="cutPeak = !cutPeak">
+                <Button variant="ghost" size="xs" class="lnl-ping-chart-action h-7 rounded-lg" :class="{ 'is-active': cutPeak }" @click="cutPeak = !cutPeak">
                   平滑
                 </Button>
                 <DataTooltip portal placement="bottom" :width="272" :content-class="pickSurfaceClass('text-[11px] leading-relaxed', 'text-[11px] leading-relaxed backdrop-blur-xl')">
@@ -1089,7 +1237,7 @@ onUnmounted(() => {
             </div>
             <div class="lnl-ping-chart">
               <ChartViewport class="!h-full !min-h-full">
-                <VChart :option="pingChartOption" autoresize />
+                <VChart ref="chartRef" :option="pingChartOption" :update-options="{ notMerge: false, replaceMerge: ['series'] }" autoresize @legendselectchanged="handleLegendSelection" />
               </ChartViewport>
             </div>
           </section>
@@ -1184,6 +1332,17 @@ onUnmounted(() => {
 .lnl-ping-window-tabs {
   margin-top: 2px;
 }
+.lnl-ping-window-tab[data-state='active'] {
+  color: var(--lnl-green);
+  background: color-mix(in srgb, var(--lnl-green) 10%, transparent);
+}
+.lnl-ping-window-tab:focus-visible,
+.lnl-ping-select-action:focus-visible,
+.lnl-ping-chart-action:focus-visible,
+.lnl-ping-probes-info:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--lnl-green) 48%, transparent);
+  outline-offset: 1px;
+}
 .lnl-ping-selection {
   display: flex;
   align-items: center;
@@ -1194,6 +1353,17 @@ onUnmounted(() => {
   margin-right: 4px;
   color: var(--muted-foreground);
 }
+.lnl-ping-select-action {
+  border: 1px solid color-mix(in srgb, var(--lnl-green) 18%, var(--lnl-line));
+}
+.lnl-ping-select-action.is-active {
+  color: var(--lnl-green);
+  background: color-mix(in srgb, var(--lnl-green) 7%, transparent);
+}
+.lnl-ping-chart-action.is-active {
+  color: var(--lnl-green);
+  background: color-mix(in srgb, var(--lnl-green) 7%, transparent);
+}
 .lnl-ping-content {
   min-height: 390px;
 }
@@ -1203,121 +1373,191 @@ onUnmounted(() => {
   flex-direction: column;
 }
 .lnl-ping-probes {
-  display: grid;
-  grid-template-columns: 150px minmax(0, 1fr);
+  display: flex;
+  flex-direction: column;
   min-width: 0;
   border-bottom: 1px solid var(--lnl-line);
   padding: 8px;
   gap: 8px;
-  background: color-mix(in srgb, var(--lnl-surface-inner, var(--lnl-surface)) 74%, transparent);
-  border-radius: var(--lnl-radius-inner);
+  background: transparent;
 }
 .lnl-ping-probes-head {
   display: flex;
-  min-height: 88px;
-  align-items: flex-start;
-  justify-content: center;
-  flex-direction: column;
+  min-height: 44px;
+  align-items: center;
+  justify-content: space-between;
+  flex-direction: row;
   gap: 6px;
-  padding: 12px 14px;
-  border-right: 1px solid var(--lnl-line);
-  border-radius: var(--lnl-radius-inner);
-  background: color-mix(in srgb, var(--lnl-surface-raised, var(--card)) 88%, transparent);
+  padding: 0 4px;
   font-family: var(--font-display);
   font-size: 13px;
   font-weight: 650;
 }
-.lnl-ping-probes-head::before {
+.lnl-ping-probes-head > div:first-child::before {
+  display: none;
   color: var(--lnl-green);
   font: 8px/1.2 var(--font-mono);
   letter-spacing: 0.14em;
   content: 'PROBE MATRIX';
 }
 .lnl-ping-probes-head small {
+  display: inline-block;
+  margin-left: 8px;
   color: var(--lnl-green);
   font: 8px/1.3 var(--font-mono);
   letter-spacing: 0.1em;
 }
-.lnl-ping-probe-list {
+.lnl-ping-probes-info {
+  flex: none;
+  min-width: 44px;
+  min-height: 44px;
+  color: var(--muted-foreground);
+}
+.lnl-ping-probe-details {
+  z-index: 160;
+  width: min(320px, calc(100vw - 16px));
+  max-height: min(440px, calc(100dvh - 24px), var(--reka-popper-available-height, 440px));
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 12px;
+  border: 1px solid var(--lnl-line);
+  border-radius: var(--lnl-radius-inner);
+  background: var(--popover);
+  color: var(--foreground);
+  box-shadow: var(--lnl-shadow-soft);
+  font: 12px/1.6 var(--font-sans);
+}
+.lnl-ping-probe-details > header {
   display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.lnl-ping-probe-details > header button {
+  min-width: 44px;
+  min-height: 44px;
+  border-radius: var(--lnl-radius-control);
+  cursor: pointer;
+  font-size: 24px;
+}
+.lnl-ping-probe-details > header button:focus-visible {
+  outline: 2px solid var(--lnl-green);
+  outline-offset: -2px;
+}
+.lnl-ping-probe-details > p {
+  margin-bottom: 8px;
+  color: var(--muted-foreground);
+}
+.lnl-ping-probe-detail {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 2px 10px;
+  padding-top: 7px;
+  border-top: 1px solid var(--lnl-line);
+}
+.lnl-ping-probe-detail strong {
+  grid-column: 1 / -1;
+  overflow-wrap: anywhere;
+}
+.lnl-ping-probe-detail span {
+  color: var(--muted-foreground);
+}
+.lnl-ping-probe-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(160px, 100%), 1fr));
+  align-items: start;
   min-width: 0;
-  overflow-x: auto;
-  overscroll-behavior-inline: contain;
   gap: 8px;
 }
 .lnl-ping-probe {
   position: relative;
   display: grid;
-  grid-template-columns: 4px minmax(0, 1fr) auto auto;
+  grid-template-columns: minmax(0, 1fr) auto;
   grid-template-rows: auto auto;
-  width: clamp(240px, 31vw, 330px);
-  min-width: 240px;
-  gap: 3px 9px;
-  min-height: 88px;
+  width: 100%;
+  max-width: 200px;
+  min-width: 0;
+  gap: 7px 8px;
+  min-height: 64px;
   align-items: center;
-  padding: 12px;
-  border: 1px solid color-mix(in srgb, var(--lnl-line) 82%, transparent);
+  padding: 9px 10px;
+  border: 1px solid color-mix(in srgb, var(--lnl-green) 28%, var(--lnl-line));
   border-radius: var(--lnl-radius-inner);
-  background: color-mix(in srgb, var(--lnl-surface-raised, var(--card)) 90%, transparent);
+  background: color-mix(in srgb, var(--lnl-green) 5%, var(--lnl-surface-base, var(--background)));
   cursor: pointer;
+  color: inherit;
+  text-align: left;
+  appearance: none;
   transition:
     background-color 180ms ease,
-    opacity 180ms ease,
-    box-shadow 180ms ease;
+    border-color 140ms ease,
+    box-shadow 140ms ease;
 }
-.lnl-ping-probe:hover,
 .lnl-ping-probe:focus-visible {
-  background: color-mix(in srgb, var(--lnl-green) 6%, transparent);
-  box-shadow: inset 0 -2px color-mix(in srgb, var(--lnl-green) 54%, transparent);
-  outline: none;
+  outline: 2px solid var(--lnl-green);
+  outline-offset: -2px;
+}
+.lnl-ping-probe:active {
+  background: color-mix(in srgb, var(--lnl-green) 13%, var(--lnl-surface-inner));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--lnl-green) 35%, transparent);
+}
+@media (hover: hover) and (pointer: fine) {
+  .lnl-ping-probe:hover {
+    border-color: var(--lnl-green);
+  }
 }
 .lnl-ping-probe.is-disabled {
-  opacity: 0.34;
-}
-.lnl-ping-probe > i {
-  grid-row: 1 / 3;
-  width: 4px;
-  height: 40px;
-  box-shadow: 0 0 12px currentColor;
+  border-color: var(--lnl-line);
+  background: transparent;
 }
 .lnl-ping-probe-copy {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: 6px minmax(0, 1fr) 12px;
+  gap: 6px;
+  align-items: start;
   min-width: 0;
 }
-.lnl-ping-probe-copy strong,
-.lnl-ping-probe-copy small {
-  display: block;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+.lnl-ping-probe-copy i {
+  width: 6px;
+  height: 6px;
+  margin-top: 5px;
+  border-radius: 50%;
+}
+.lnl-ping-probe-check {
+  color: var(--lnl-green);
+  font-size: 12px;
 }
 .lnl-ping-probe-copy strong {
-  font-size: 13px;
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow-wrap: anywhere;
+  font-size: 12px;
+  line-height: 1.3;
 }
-.lnl-ping-probe-copy small,
 .lnl-ping-probe-value small,
 .lnl-ping-probe-meta {
   color: var(--muted-foreground);
-  font: 8px/1.4 var(--font-mono);
-  letter-spacing: 0.05em;
+  font: 11px/1.3 var(--font-sans);
+  font-variant-numeric: tabular-nums;
 }
 .lnl-ping-probe-value {
   display: flex;
   align-items: baseline;
   gap: 3px;
   color: var(--foreground);
-  font-family: var(--font-mono);
+  font-family: var(--font-sans);
+  font-variant-numeric: tabular-nums;
 }
 .lnl-ping-probe-value strong {
-  font-size: 19px;
+  font-size: 16px;
 }
 .lnl-ping-probe-meta {
-  grid-column: 2 / 4;
+  grid-column: 2;
+  justify-self: end;
   display: flex;
   gap: 10px;
-}
-.lnl-ping-probe-info {
-  grid-row: 1 / 3;
-  color: var(--muted-foreground);
 }
 .lnl-ping-plot {
   min-width: 0;
@@ -1438,7 +1678,7 @@ onUnmounted(() => {
     border-right: 0;
     border-bottom: 1px solid var(--lnl-line);
   }
-  .lnl-ping-probes-head::before {
+  .lnl-ping-probes-head > div:first-child::before {
     display: none;
   }
   .lnl-ping-plot-head {
@@ -1472,7 +1712,7 @@ onUnmounted(() => {
 
   .lnl-ping-window > span,
   .lnl-ping-selection > span,
-  .lnl-ping-probes-head::before {
+  .lnl-ping-probes-head > div:first-child::before {
     display: none;
   }
 
@@ -1490,28 +1730,21 @@ onUnmounted(() => {
   }
 
   .lnl-ping-probe-list {
-    display: flex;
-    gap: 7px;
-    padding: 2px 1px 7px;
-    overflow-x: auto;
-    scroll-padding-inline: 1px;
-    scroll-snap-type: x proximity;
-    scrollbar-width: thin;
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 6px;
+    padding: 2px 1px 1px;
+    overflow: visible;
   }
 
   .lnl-ping-probe {
-    grid-template-columns: 3px minmax(0, 1fr) auto auto;
-    width: clamp(190px, 72vw, 260px);
-    min-width: clamp(190px, 72vw, 260px);
-    min-height: 82px;
-    gap: 2px 6px;
-    padding: 8px;
-    scroll-snap-align: start;
-  }
-
-  .lnl-ping-probe > i {
-    width: 3px;
-    height: 36px;
+    grid-template-columns: minmax(0, 1fr) auto;
+    width: 100%;
+    min-width: 0;
+    min-height: 60px;
+    max-width: none;
+    gap: 6px;
+    padding: 7px;
   }
 
   .lnl-ping-probe-copy strong {
@@ -1525,23 +1758,22 @@ onUnmounted(() => {
     -webkit-line-clamp: 2;
   }
 
-  .lnl-ping-probe-copy small,
   .lnl-ping-probe-value small,
   .lnl-ping-probe-meta {
-    font-size: 7.5px;
+    font-size: 10px;
   }
 
   .lnl-ping-probe-value strong {
-    font-size: 17px;
+    font-size: 16px;
   }
 
   .lnl-ping-probe-meta {
     gap: 7px;
   }
 
-  .lnl-ping-probe-info {
-    width: 28px;
-    height: 28px;
+  .lnl-ping-probes-info {
+    width: 44px;
+    height: 44px;
   }
 
   .lnl-ping-plot {

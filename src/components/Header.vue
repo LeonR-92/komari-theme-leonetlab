@@ -21,6 +21,7 @@ interface ThemeOrigin {
 interface AppearanceChange {
   mode?: ThemeMode
   palette?: ColorPalette
+  cursor?: CursorStyle
   restore?: boolean
 }
 
@@ -43,6 +44,7 @@ const themeTransition = ref<{
   accent: string
   secondary: string
   phase: 'revealing' | 'settling'
+  run: number
 } | null>(null)
 const themeTransitionActive = ref(false)
 const leavingForAdmin = ref(false)
@@ -57,9 +59,15 @@ let queuedAppearance: AppearanceChange | null = null
 let queuedThemeOrigin: ThemeOrigin | null = null
 let activeViewTransition: ViewTransition | null = null
 let componentUnmounting = false
+let transitionRun = 0
 const logoVisible = ref(true)
 const appearancePanelOpen = ref(false)
 const appearanceButton = ref<HTMLElement | null>(null)
+const appearancePanel = ref<HTMLElement | null>(null)
+const requestedAppearance = ref<AppearanceChange | null>(null)
+const selectedMode = computed(() => requestedAppearance.value?.mode ?? (requestedAppearance.value?.restore ? appStore.defaultThemeMode : appStore.themeMode))
+const selectedPalette = computed(() => requestedAppearance.value?.palette ?? (requestedAppearance.value?.restore ? appStore.defaultColorPalette : appStore.colorPalette))
+const selectedCursor = computed(() => requestedAppearance.value?.cursor ?? (requestedAppearance.value?.restore ? appStore.defaultCursorStyle : appStore.cursorStyle))
 
 const themeModeOptions: Array<{ value: ThemeMode, label: string, icon: string }> = [
   { value: 'system', label: '自动', icon: 'icon-park-outline:dark-mode' },
@@ -116,8 +124,8 @@ function writeThemeOrigin(origin: ThemeOrigin) {
 }
 
 function resolveAppearanceTarget(change: AppearanceChange): AppearanceTarget {
-  const mode = change.restore ? appStore.defaultThemeMode : change.mode ?? appStore.themeMode
-  const palette = change.restore ? appStore.defaultColorPalette : change.palette ?? appStore.colorPalette
+  const mode = change.mode ?? (change.restore ? appStore.defaultThemeMode : appStore.themeMode)
+  const palette = change.palette ?? (change.restore ? appStore.defaultColorPalette : appStore.colorPalette)
   return { mode, palette, resolvedMode: appStore.resolveThemeMode(mode) }
 }
 
@@ -128,16 +136,17 @@ function commitPendingTheme() {
   pendingAppearance = null
   if (change.restore) {
     appStore.restoreAppearanceDefaults()
-    return
   }
   if (change.mode)
     appStore.updateThemeMode(change.mode)
   if (change.palette)
     appStore.updateColorPalette(change.palette)
+  if (change.cursor)
+    appStore.updateCursorStyle(change.cursor)
 }
 
-function finishThemeTransition() {
-  if (!themeTransitionActive.value)
+function finishThemeTransition(run = transitionRun) {
+  if (run !== transitionRun || !themeTransitionActive.value)
     return
   for (const timer of [themeCommitTimer, themeFallbackTimer]) {
     if (timer !== null) {
@@ -162,11 +171,19 @@ function finishThemeTransition() {
   queuedAppearance = null
   queuedThemeOrigin = null
   if (!componentUnmounting && queuedChange) {
-    queueMicrotask(() => startThemeTransition(queuedChange, queuedOrigin ?? resolveThemeOrigin()))
+    queueMicrotask(() => {
+      if (!componentUnmounting)
+        startThemeTransition(queuedChange, queuedOrigin ?? resolveThemeOrigin())
+    })
+  }
+  else {
+    requestedAppearance.value = null
   }
 }
 
 function handleThemeWipeAnimationEnd(event: AnimationEvent) {
+  if (!(event.target instanceof HTMLElement) || event.target !== event.currentTarget || Number(event.target.dataset.themeRun) !== transitionRun)
+    return
   if (event.animationName === 'lnl-theme-fallback-reveal') {
     if (themeCommitTimer !== null) {
       window.clearTimeout(themeCommitTimer)
@@ -182,20 +199,28 @@ function handleThemeWipeAnimationEnd(event: AnimationEvent) {
     finishThemeTransition()
 }
 
-function settleThemeTransitionImmediately() {
+function settleThemeTransitionImmediately(run = transitionRun) {
+  if (run !== transitionRun)
+    return
+  if (queuedAppearance) {
+    pendingAppearance = queuedAppearance
+    queuedAppearance = null
+    queuedThemeOrigin = null
+  }
   commitPendingTheme()
   activeViewTransition?.skipTransition()
-  finishThemeTransition()
+  finishThemeTransition(run)
 }
 
 function beginThemeTransition(origin: ThemeOrigin) {
+  transitionRun += 1
   writeThemeOrigin(origin)
   themeTransitionActive.value = true
   document.documentElement.classList.add('lnl-theme-transitioning')
   window.dispatchEvent(new CustomEvent('leonetlab:theme-transition-start'))
 }
 
-function startFallbackThemeTransition(change: AppearanceChange, target: AppearanceTarget) {
+function startFallbackThemeTransition(change: AppearanceChange, target: AppearanceTarget, run: number) {
   pendingAppearance = change
   const targetAccents = PALETTE_ACCENT_COLORS[target.palette][target.resolvedMode]
   themeTransition.value = {
@@ -205,16 +230,21 @@ function startFallbackThemeTransition(change: AppearanceChange, target: Appearan
     accent: targetAccents.primary,
     secondary: targetAccents.secondary,
     phase: 'revealing',
+    run,
   }
   themeCommitTimer = scheduleTransitionTask(() => {
+    if (run !== transitionRun)
+      return
     themeCommitTimer = null
     commitPendingTheme()
     if (themeTransition.value)
       themeTransition.value = { ...themeTransition.value, phase: 'settling' }
   }, FALLBACK_THEME_COMMIT_MS)
   themeFallbackTimer = scheduleTransitionTask(() => {
+    if (run !== transitionRun)
+      return
     themeFallbackTimer = null
-    settleThemeTransitionImmediately()
+    settleThemeTransitionImmediately(run)
   }, THEME_TRANSITION_FALLBACK_MS)
 }
 
@@ -229,16 +259,19 @@ function startThemeTransition(change: AppearanceChange, origin: ThemeOrigin) {
   if (target.resolvedMode === appStore.resolvedThemeMode && target.palette === appStore.colorPalette) {
     pendingAppearance = change
     commitPendingTheme()
+    requestedAppearance.value = null
     return
   }
 
-  if (motionReduced.value) {
+  if (motionReduced.value || document.visibilityState === 'hidden') {
     pendingAppearance = change
     commitPendingTheme()
+    requestedAppearance.value = null
     return
   }
 
   beginThemeTransition(origin)
+  const run = transitionRun
   const transitionDocument = document as Document & {
     startViewTransition?: Document['startViewTransition']
   }
@@ -246,15 +279,19 @@ function startThemeTransition(change: AppearanceChange, origin: ThemeOrigin) {
     pendingAppearance = change
     try {
       const transition = transitionDocument.startViewTransition(async () => {
+        if (run !== transitionRun || !themeTransitionActive.value)
+          return
         commitPendingTheme()
         await nextTick()
       })
       activeViewTransition = transition
       themeFallbackTimer = scheduleTransitionTask(() => {
+        if (run !== transitionRun)
+          return
         themeFallbackTimer = null
-        settleThemeTransitionImmediately()
+        settleThemeTransitionImmediately(run)
       }, THEME_TRANSITION_FALLBACK_MS)
-      void transition.finished.then(finishThemeTransition, settleThemeTransitionImmediately)
+      void transition.finished.then(() => finishThemeTransition(run), () => settleThemeTransitionImmediately(run))
       return
     }
     catch {
@@ -262,27 +299,40 @@ function startThemeTransition(change: AppearanceChange, origin: ThemeOrigin) {
     }
   }
 
-  startFallbackThemeTransition(change, target)
+  startFallbackThemeTransition(change, target, run)
 }
 
 function requestAppearance(change: AppearanceChange) {
+  const intent: AppearanceChange = change.restore ? { restore: true } : { ...requestedAppearance.value, ...change }
+  requestedAppearance.value = intent
   const origin = resolveThemeOrigin(appearanceButton.value)
   if (themeTransitionActive.value) {
-    queuedAppearance = change
+    queuedAppearance = intent
     queuedThemeOrigin = origin
     return
   }
-  startThemeTransition(change, origin)
+  startThemeTransition(intent, origin)
 }
 
-function toggleAppearancePanel(originElement?: Element | null) {
+function closeAppearancePanel(returnFocus = false) {
+  appearancePanelOpen.value = false
+  if (returnFocus)
+    appearanceButton.value?.focus({ preventScroll: true })
+}
+
+async function toggleAppearancePanel(originElement?: Element | null) {
   if (originElement instanceof HTMLElement)
     appearanceButton.value = originElement
   appearancePanelOpen.value = !appearancePanelOpen.value
+  if (appearancePanelOpen.value) {
+    await nextTick()
+    if (appearancePanelOpen.value)
+      appearancePanel.value?.querySelector<HTMLElement>('button[aria-pressed="true"]')?.focus({ preventScroll: true })
+  }
 }
 
 function selectCursor(style: CursorStyle) {
-  appStore.updateCursorStyle(style)
+  requestAppearance({ cursor: style })
 }
 
 function restoreAppearance() {
@@ -295,12 +345,14 @@ function handleDocumentPointerDown(event: PointerEvent) {
   const target = event.target instanceof Element ? event.target : null
   if (target?.closest('.lnl-appearance-panel') || target?.closest('[data-action="toggleAppearance"]'))
     return
-  appearancePanelOpen.value = false
+  closeAppearancePanel()
 }
 
 function handleDocumentKeydown(event: KeyboardEvent) {
-  if (event.key === 'Escape')
-    appearancePanelOpen.value = false
+  if (event.key === 'Escape' && appearancePanelOpen.value) {
+    event.preventDefault()
+    closeAppearancePanel(true)
+  }
 }
 
 function handleVisibilityChange() {
@@ -338,8 +390,6 @@ function handleButtonClick(action: string, event: MouseEvent) {
 
 onUnmounted(() => {
   componentUnmounting = true
-  queuedAppearance = null
-  queuedThemeOrigin = null
   document.removeEventListener('visibilitychange', handleVisibilityChange)
   document.removeEventListener('pointerdown', handleDocumentPointerDown)
   document.removeEventListener('keydown', handleDocumentKeydown)
@@ -407,13 +457,16 @@ function handleLogoError(event: Event) {
       <section
         v-if="appearancePanelOpen"
         id="lnl-appearance-panel"
+        ref="appearancePanel"
         class="lnl-appearance-panel"
         role="dialog"
         aria-label="外观设置"
       >
         <header>
-          <span>APPEARANCE</span>
-          <strong>外观设置</strong>
+          <div><span>APPEARANCE</span><strong>外观设置</strong></div>
+          <button type="button" class="lnl-appearance-close" aria-label="关闭外观设置" @click="closeAppearancePanel(true)">
+            ×
+          </button>
         </header>
         <fieldset>
           <legend>亮度</legend>
@@ -423,8 +476,8 @@ function handleLogoError(event: Event) {
               :key="option.value"
               type="button"
               :data-theme-mode="option.value"
-              :class="{ active: appStore.themeMode === option.value }"
-              :aria-pressed="appStore.themeMode === option.value"
+              :class="{ active: selectedMode === option.value }"
+              :aria-pressed="selectedMode === option.value"
               @click="requestAppearance({ mode: option.value })"
             >
               <Icon :icon="option.icon" :width="15" :height="15" />
@@ -440,13 +493,13 @@ function handleLogoError(event: Event) {
               :key="option.value"
               type="button"
               :data-color-palette="option.value"
-              :class="{ active: appStore.colorPalette === option.value }"
-              :aria-pressed="appStore.colorPalette === option.value"
+              :class="{ active: selectedPalette === option.value }"
+              :aria-pressed="selectedPalette === option.value"
               @click="requestAppearance({ palette: option.value })"
             >
               <i :style="{ '--swatch': option.color }" />
               <span>{{ option.label }}</span>
-              <Icon v-if="appStore.colorPalette === option.value" icon="tabler:check" :width="14" :height="14" />
+              <Icon v-if="selectedPalette === option.value" icon="tabler:check" :width="14" :height="14" />
             </button>
           </div>
         </fieldset>
@@ -458,8 +511,8 @@ function handleLogoError(event: Event) {
               :key="option.value"
               type="button"
               :data-cursor-style="option.value"
-              :class="{ active: appStore.cursorStyle === option.value }"
-              :aria-pressed="appStore.cursorStyle === option.value"
+              :class="{ active: selectedCursor === option.value }"
+              :aria-pressed="selectedCursor === option.value"
               @click="selectCursor(option.value)"
             >
               {{ option.label }}
@@ -474,6 +527,8 @@ function handleLogoError(event: Event) {
     </Transition>
     <div
       v-if="themeTransition"
+      :key="themeTransition.run"
+      :data-theme-run="themeTransition.run"
       class="lnl-theme-wipe"
       :class="[`to-${themeTransition.target}`, `is-${themeTransition.phase}`]"
       :style="{
@@ -509,18 +564,16 @@ function handleLogoError(event: Event) {
 
 <style scoped>
 .lnl-header-action {
+  min-width: 44px;
+  min-height: 44px;
   transition:
     color var(--lnl-motion-fast) ease,
     background-color var(--lnl-motion-fast) ease,
     transform var(--lnl-motion-fast) var(--lnl-ease-out);
 }
 
-.lnl-header-action:hover {
-  transform: translate3d(0, -1px, 0);
-}
-
 .lnl-header-action:active {
-  transform: scale(0.9);
+  transform: scale(0.97);
 }
 
 .lnl-header-action > :deep(svg) {
@@ -529,12 +582,18 @@ function handleLogoError(event: Event) {
     transform var(--lnl-motion-standard) var(--lnl-ease-emphasis);
 }
 
-.lnl-header-action[data-action='toggleAppearance']:hover > :deep(svg) {
-  transform: rotate(16deg) scale(1.08);
-}
+@media (hover: hover) and (pointer: fine) {
+  .lnl-header-action:hover {
+    transform: translate3d(0, -1px, 0);
+  }
 
-.lnl-header-action[data-action='jumpToSetting']:hover > :deep(svg) {
-  transform: rotate(32deg);
+  .lnl-header-action[data-action='toggleAppearance']:hover > :deep(svg) {
+    transform: rotate(16deg) scale(1.08);
+  }
+
+  .lnl-header-action[data-action='jumpToSetting']:hover > :deep(svg) {
+    transform: rotate(32deg);
+  }
 }
 
 .lnl-header-action.is-busy {
@@ -542,11 +601,15 @@ function handleLogoError(event: Event) {
 }
 
 .lnl-appearance-panel {
+  transform-origin: top right;
   position: fixed;
   z-index: 135;
   top: calc(env(safe-area-inset-top, 0px) + 76px);
   right: max(18px, env(safe-area-inset-right, 0px));
   width: min(332px, calc(100vw - 24px));
+  max-height: calc(100dvh - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px) - 90px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
   padding: 15px;
   border: 1px solid color-mix(in srgb, var(--lnl-green) 34%, var(--border));
   border-radius: var(--lnl-radius-card);
@@ -557,7 +620,7 @@ function handleLogoError(event: Event) {
 
 .lnl-appearance-panel > header {
   display: flex;
-  align-items: baseline;
+  align-items: center;
   justify-content: space-between;
   margin-bottom: 13px;
 }
@@ -570,6 +633,8 @@ function handleLogoError(event: Event) {
 }
 
 .lnl-appearance-panel > header strong {
+  display: block;
+  margin-top: 4px;
   font: 650 14px/1.25 var(--font-sans);
 }
 
@@ -600,13 +665,51 @@ function handleLogoError(event: Event) {
 
 .lnl-appearance-segments button,
 .lnl-palette-grid button,
-.lnl-appearance-reset {
-  min-height: 36px;
+.lnl-appearance-reset,
+.lnl-appearance-close {
+  min-height: 44px;
   border: 0;
   border-radius: calc(var(--lnl-radius-control) - 3px);
   background: transparent;
   color: var(--muted-foreground);
   font: 600 12px/1.2 var(--font-sans);
+  cursor: pointer;
+  transition:
+    background-color 140ms ease,
+    color 140ms ease,
+    box-shadow 140ms ease,
+    transform 120ms var(--lnl-ease-out);
+}
+
+.lnl-appearance-close {
+  min-width: 44px;
+  font-size: 24px;
+}
+
+.lnl-appearance-panel button:active {
+  transform: scale(0.97);
+  background-color: color-mix(in srgb, var(--lnl-green) 13%, var(--lnl-surface-inner));
+}
+
+.lnl-appearance-panel button:focus-visible {
+  outline: 2px solid var(--lnl-green);
+  outline-offset: 2px;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .lnl-appearance-panel button:hover {
+    color: var(--foreground);
+    background-color: color-mix(in srgb, var(--lnl-green) 8%, var(--lnl-surface-inner));
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .lnl-appearance-panel button {
+    transition: none;
+  }
+  .lnl-appearance-panel button:active {
+    transform: none;
+  }
 }
 
 .lnl-appearance-segments button {

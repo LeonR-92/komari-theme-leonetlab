@@ -12,8 +12,9 @@ const dist = resolve(root, 'dist')
 const komariVersionArgument = process.argv.find(argument => argument.startsWith('--komari-version='))
 const fixtureKomariVersion = komariVersionArgument?.split('=', 2)[1] || '1.2.5-fix1'
 const externalFixtureDriver = process.env.SMOKE_EXTERNAL_DRIVER === '1'
-const usesModernKomariFixture = ['1.3.2', '1.4.2', '1.4.3'].includes(fixtureKomariVersion)
-const usesKomari14xFixture = ['1.4.2', '1.4.3'].includes(fixtureKomariVersion)
+const usesModernKomariFixture = ['1.3.2', '1.4.2', '1.4.3', '1.5.0', '1.5.0-fix1', '1.5.1', '1.6.0'].includes(fixtureKomariVersion)
+const usesCurrentMetricFixture = ['1.4.2', '1.4.3', '1.5.0', '1.5.0-fix1', '1.5.1', '1.6.0'].includes(fixtureKomariVersion)
+const usesKomari15Fixture = ['1.5.0', '1.5.0-fix1', '1.5.1', '1.6.0'].includes(fixtureKomariVersion)
 const visualAuditEnabled = Boolean(process.env.SMOKE_SCREENSHOT_DIR)
 const financeDetailsLabelPattern = /查看财务汇率详情/
 const visitorResolvedInfoPattern = /Fixture Network|Test Region|Observatory/
@@ -88,7 +89,20 @@ function status(uuid, cpu) {
     client: uuid,
     time: '2026-07-20T08:00:00Z',
     cpu,
-    gpu: 0,
+    gpu: usesKomari15Fixture ? 42 : 0,
+    ...(usesKomari15Fixture
+      ? {
+          gpu_count: 1,
+          gpu_average_usage: 42,
+          gpu_detailed_info: [{
+            name: 'Fixture GPU',
+            memory_total: 8_589_934_592,
+            memory_used: 2_147_483_648,
+            utilization: 42,
+            temperature: 51,
+          }],
+        }
+      : {}),
     ram: 2_147_483_648,
     ram_total: 8_589_934_592,
     swap: 0,
@@ -191,26 +205,26 @@ const dialogPingRecords = [
 const metricSeries = dialogPingTasks.flatMap(task => [
   {
     metric_key: 'ping.latency_ms',
-    tags: usesKomari14xFixture ? undefined : { task_id: String(task.id) },
-    interval_seconds: usesKomari14xFixture ? task.interval : undefined,
+    tags: usesCurrentMetricFixture ? undefined : { task_id: String(task.id) },
+    interval_seconds: usesCurrentMetricFixture ? task.interval : undefined,
     points: dialogPingRecords
       .filter(record => record.task_id === task.id)
       .map(record => ({
         time: record.time,
         value: record.value < 0 ? null : record.value,
-        labels: usesKomari14xFixture ? { task_id: String(task.id) } : undefined,
+        labels: usesCurrentMetricFixture ? { task_id: String(task.id) } : undefined,
       })),
   },
   {
     metric_key: 'ping.loss',
-    tags: usesKomari14xFixture ? undefined : { task_id: String(task.id) },
-    interval_seconds: usesKomari14xFixture ? task.interval : undefined,
+    tags: usesCurrentMetricFixture ? undefined : { task_id: String(task.id) },
+    interval_seconds: usesCurrentMetricFixture ? task.interval : undefined,
     points: dialogPingRecords
       .filter(record => record.task_id === task.id)
       .map(record => ({
         time: record.time,
         value: record.value < 0 ? 1 : 0,
-        labels: usesKomari14xFixture ? { task_id: String(task.id) } : undefined,
+        labels: usesCurrentMetricFixture ? { task_id: String(task.id) } : undefined,
       })),
   },
 ])
@@ -219,8 +233,8 @@ const metricTaskStats = dialogPingTasks.map(task => ({
   name: task.name,
   type: task.type,
   interval: task.interval,
-  loss: usesKomari14xFixture ? task.loss : task.loss / 100,
-  loss_approximate: usesKomari14xFixture && task.id === 2,
+  loss: usesCurrentMetricFixture ? task.loss : task.loss / 100,
+  loss_approximate: usesCurrentMetricFixture && task.id === 2,
   min: task.min,
   max: task.max,
   avg: task.avg,
@@ -329,12 +343,12 @@ const server = createServer((request, response) => {
         'common:getNodes': usesModernKomariFixture
           ? Object.fromEntries(clients.map(item => [item.uuid, item]))
           : clients,
-        'public:getNodesInformation': usesKomari14xFixture
+        'public:getNodesInformation': usesCurrentMetricFixture
           ? Object.fromEntries(clients.map(item => [item.uuid, { ...item, ipv4: '', ipv6: '', remark: '', version: '' }]))
           : undefined,
         'common:getNodesLatestStatus': statuses,
         'common:getNodeRecentStatus': { count: historyRecords.length, records: historyRecords },
-        'public:listMetricDefinitions': usesKomari14xFixture
+        'public:listMetricDefinitions': usesCurrentMetricFixture
           ? [
               { name: 'gpu.usage', description: 'GPU utilization', type: 'gauge', unit: '%', retention_days: 30 },
               { name: 'gpu.device.usage', description: 'Per-device GPU utilization', type: 'gauge', unit: '%', retention_days: 30 },
@@ -344,10 +358,10 @@ const server = createServer((request, response) => {
             ]
           : undefined,
         'public:queryMetrics': usesModernKomariFixture
-          ? { interval_seconds: usesKomari14xFixture ? 60 : undefined, series: metricSeries }
+          ? { interval_seconds: usesCurrentMetricFixture ? 60 : undefined, series: metricSeries }
           : undefined,
         'public:getPingMetricStats': usesModernKomariFixture
-          ? { interval_seconds: usesKomari14xFixture ? 60 : undefined, stats: metricTaskStats }
+          ? { interval_seconds: usesCurrentMetricFixture ? 60 : undefined, stats: metricTaskStats }
           : undefined,
         'public:getPublicPingTasks': usesModernKomariFixture
           ? dialogPingTasks.map((task, index) => ({ id: task.id, weight: index + 1 }))
@@ -1443,7 +1457,15 @@ const mobileSearchMoveAuditExpression = `new Promise((resolve) => {
     if (target && cards.length >= 2 && toggle) {
       clearInterval(timer);
       const wrapper = target.parentElement;
-      const before = wrapper.getBoundingClientRect().top;
+      const before = wrapper.getBoundingClientRect().top + scrollY;
+      const moveSuppressed = matchMedia('(pointer: coarse)').matches || matchMedia('(max-width: 760px)').matches;
+      const motionReduced = matchMedia('(prefers-reduced-motion: reduce)').matches;
+      let leaveTransitions = 0;
+      const onTransitionRun = (event) => {
+        if (event.target instanceof Element && event.target.matches('.node-card-switch-leave-active'))
+          leaveTransitions += 1;
+      };
+      document.addEventListener('transitionrun', onTransitionRun, true);
       toggle.click();
       setTimeout(() => {
         const input = document.querySelector('#node-search');
@@ -1452,16 +1474,23 @@ const mobileSearchMoveAuditExpression = `new Promise((resolve) => {
         const samples = [];
         const sampleStart = performance.now();
         const frame = () => {
-          samples.push(wrapper.getBoundingClientRect().top);
-          if (performance.now() - sampleStart < 1100) {
+          samples.push(wrapper.getBoundingClientRect().top + scrollY);
+          const filtered = document.querySelectorAll('.node-card').length === 1;
+          const elapsed = performance.now() - sampleStart;
+          if (elapsed < 1100 || (!filtered && elapsed < 4000)) {
             requestAnimationFrame(frame);
             return;
           }
+          document.removeEventListener('transitionrun', onTransitionRun, true);
           const rounded = [...new Set(samples.map(value => Math.round(value * 10) / 10))];
           resolve({
             before,
             after: samples.at(-1),
             distinctPositions: rounded.length,
+            filtered,
+            moveSuppressed,
+            motionReduced,
+            leaveTransitions,
             transitionProperty: getComputedStyle(wrapper).transitionProperty,
             transitionDuration: getComputedStyle(wrapper).transitionDuration,
           });
@@ -1495,7 +1524,9 @@ const mobileProbeMatrixAuditExpression = `new Promise((resolve) => {
             scrollWidth: list.scrollWidth,
             rows: new Set(cards.map(card => Math.round(card.getBoundingClientRect().top))).size,
             cardWidths: cards.map(card => card.getBoundingClientRect().width),
-            allStatsVisible: cards.every(card => /LOSS/.test(card.textContent || '') && /JIT/.test(card.textContent || '')),
+            compactStatsVisible: cards.every(card => /ms/.test(card.textContent || '') && /丢包/.test(card.textContent || '')),
+            secondaryStatsHidden: cards.every(card => !/JIT|ICMP|TCP/.test(card.textContent || '')),
+            nativeButtons: cards.every(card => card.tagName === 'BUTTON' && card.getAttribute('aria-pressed') === 'true'),
             contained: cards.every((card) => {
               const rect = card.getBoundingClientRect();
               return rect.left >= listRect.left - 0.5 && rect.right <= listRect.right + 0.5;
@@ -1747,7 +1778,7 @@ const slowPublicSettingsShellAuditExpression = `new Promise((resolve) => {
 })`
 
 const visitorFixtureInitScript = `(() => {
-  sessionStorage.setItem('komari-observatory:intro:1.4.3-fix3', 'seen');
+  sessionStorage.setItem('komari-observatory:intro:1.6.0', 'seen');
   sessionStorage.removeItem('komari-observatory:visitor-presentation:1.4.3');
   const nativeFetch = window.fetch.bind(window);
   window.fetch = (input, init) => {
@@ -1766,7 +1797,7 @@ const visitorFixtureInitScript = `(() => {
 })()`
 
 async function capturePingDialogScreenshot(name, width, height) {
-  const result = await runInteractivePage(name, width, height, pingDialogOpenExpression, name, `sessionStorage.setItem('komari-observatory:intro:1.4.3-fix3', 'seen');`)
+  const result = await runInteractivePage(name, width, height, pingDialogOpenExpression, name, `sessionStorage.setItem('komari-observatory:intro:1.6.0', 'seen');`)
   assert.equal(result?.state, 'opened')
   assert.ok(result?.left >= -0.5 && result?.right <= result?.viewportWidth + 0.5, `Ping dialog escaped viewport: ${JSON.stringify(result)}`)
   assert.ok(result?.centerError <= 1, `Ping dialog is not centered: ${JSON.stringify(result)}`)
@@ -1774,7 +1805,7 @@ async function capturePingDialogScreenshot(name, width, height) {
 
 async function auditMobileFinanceOverflow(width) {
   const screenshotName = process.env.SMOKE_SCREENSHOT_DIR && width === 390 ? 'mobile-finance-open' : undefined
-  const result = await runInteractivePage(`mobile-finance-audit-${width}`, width, 844, financeOverflowAuditExpression, screenshotName, `sessionStorage.setItem('komari-observatory:intro:1.4.3-fix3', 'seen');`)
+  const result = await runInteractivePage(`mobile-finance-audit-${width}`, width, 844, financeOverflowAuditExpression, screenshotName, `sessionStorage.setItem('komari-observatory:intro:1.6.0', 'seen');`)
   assert.equal(result?.state, 'opened')
   assert.doesNotMatch(result?.triggerText ?? '', financeDetailsLabelPattern)
   assert.equal(result?.assistiveHintHidden, true, `Finance assistive hint became visible: ${JSON.stringify(result)}`)
@@ -1788,7 +1819,7 @@ async function auditMobileFinanceOverflow(width) {
 }
 
 async function auditNodeFinanceStates(width) {
-  const initScript = `sessionStorage.setItem('komari-observatory:intro:1.4.3-fix3', 'seen');`
+  const initScript = `sessionStorage.setItem('komari-observatory:intro:1.6.0', 'seen');`
   const defaultResult = await runInteractivePage(
     `node-finance-states-default-${width}`,
     width,
@@ -1834,7 +1865,7 @@ async function auditPingBarGeometry() {
     900,
     pingBarGeometryAuditExpression,
     undefined,
-    `sessionStorage.setItem('komari-observatory:intro:1.4.3-fix3', 'seen');`,
+    `sessionStorage.setItem('komari-observatory:intro:1.6.0', 'seen');`,
   )
   reportBrowserAudit('node-ping-bar-geometry', result)
   assert.equal(result?.length, 2, `Expected latency and loss panels: ${JSON.stringify(result)}`)
@@ -1874,7 +1905,7 @@ async function auditGlobeFlagsAcrossThemeChange() {
     780,
     globeFlagThemeAuditExpression,
     undefined,
-    `sessionStorage.setItem('komari-observatory:intro:1.4.3-fix3', 'seen'); localStorage.setItem('appearance', 'light'); localStorage.setItem('leonetlab:appearance:user-override', '1');`,
+    `sessionStorage.setItem('komari-observatory:intro:1.6.0', 'seen'); localStorage.setItem('appearance', 'light'); localStorage.setItem('leonetlab:appearance:user-override', '1');`,
   )
   reportBrowserAudit('globe-flags-theme-change', result)
   assert.equal(result?.initialCount, 4, `Expected four globe flag overlays: ${JSON.stringify(result)}`)
@@ -1901,7 +1932,7 @@ async function auditGlobeRegionInteraction() {
     780,
     globeRegionInteractionAuditExpression,
     undefined,
-    `window.__lnlGlobeProbe = {}; sessionStorage.setItem('komari-observatory:intro:1.4.3-fix3', 'seen');`,
+    `window.__lnlGlobeProbe = {}; sessionStorage.setItem('komari-observatory:intro:1.6.0', 'seen');`,
   )
   reportBrowserAudit('globe-region-interaction', result)
   assert.equal(result?.openedTooEarly, false, `Region preview skipped hover intent delay: ${JSON.stringify(result)}`)
@@ -1922,7 +1953,7 @@ async function auditGlobeRouteRipple() {
     780,
     globeRouteRippleAuditExpression,
     undefined,
-    `sessionStorage.setItem('komari-observatory:intro:1.4.3-fix3', 'seen');`,
+    `sessionStorage.setItem('komari-observatory:intro:1.6.0', 'seen');`,
   )
   reportBrowserAudit('globe-route-ripple', result)
   assert.equal(result?.routeRipple, true, `Returning home did not trigger the route ripple: ${JSON.stringify(result)}`)
@@ -1938,7 +1969,7 @@ async function auditPingDialogCloseAnimation() {
     780,
     pingDialogCloseAuditExpression,
     undefined,
-    `sessionStorage.setItem('komari-observatory:intro:1.4.3-fix3', 'seen');`,
+    `sessionStorage.setItem('komari-observatory:intro:1.6.0', 'seen');`,
   )
   reportBrowserAudit('ping-dialog-close-animation', result)
   assert.equal(result?.closedSeen, true, `Ping dialog skipped its closed state: ${JSON.stringify(result)}`)
@@ -2009,7 +2040,7 @@ async function auditMetricStoreFallback() {
       780,
       pingDialogOpenExpression,
       undefined,
-      `sessionStorage.setItem('komari-observatory:intro:1.4.3-fix3', 'seen');`,
+      `sessionStorage.setItem('komari-observatory:intro:1.6.0', 'seen');`,
     )
     reportBrowserAudit('metric-store-fallback', result)
     assert.equal(result?.state, 'opened', `Ping dialog did not open behind an uninitialized metric store: ${JSON.stringify(result)}`)
@@ -2034,7 +2065,7 @@ async function auditGlobeMotionMode(mode, expectedMoved) {
       780,
       globeMotionAuditExpression.replace('__EARTH_MODE__', mode),
       undefined,
-      `sessionStorage.setItem('komari-observatory:intro:1.4.3-fix3', 'seen');`,
+      `sessionStorage.setItem('komari-observatory:intro:1.6.0', 'seen');`,
     )
     reportBrowserAudit(`globe-motion-${mode}`, result)
     assert.equal(result?.moved, expectedMoved, `Unexpected ${mode} globe motion: ${JSON.stringify(result)}`)
@@ -2051,7 +2082,7 @@ async function auditPingContentMotion() {
     780,
     pingContentMotionAuditExpression,
     undefined,
-    `sessionStorage.setItem('komari-observatory:intro:1.4.3-fix3', 'seen');`,
+    `sessionStorage.setItem('komari-observatory:intro:1.6.0', 'seen');`,
   )
   reportBrowserAudit('ping-content-motion', result)
   assert.match(result?.toolbarAnimation || '', pingSectionInPattern, `Ping toolbar has no entrance transition: ${JSON.stringify(result)}`)
@@ -2062,14 +2093,19 @@ async function auditPingContentMotion() {
   assert.match(result?.smoothingTooltipText || '', ewmaPattern, `Ping smoothing tooltip is missing its algorithm explanation: ${JSON.stringify(result)}`)
 }
 
-async function auditMobileProbeMatrix() {
-  const result = await runInteractivePage('mobile-probe-matrix', 390, 844, mobileProbeMatrixAuditExpression)
-  reportBrowserAudit('mobile-probe-matrix', result)
-  assert.equal(result?.count, 3, `Expected three mobile probes: ${JSON.stringify(result)}`)
-  assert.ok(result?.scrollWidth > result?.clientWidth + 1, `Mobile probes did not expose the intended horizontal rail: ${JSON.stringify(result)}`)
-  assert.equal(result?.rows, 1, `Mobile probes should remain on one horizontal rail: ${JSON.stringify(result)}`)
-  assert.equal(result?.cardWidths?.every(width => width >= 190 && width <= 260), true, `Mobile probe width escaped the readable range: ${JSON.stringify(result)}`)
-  assert.equal(result?.allStatsVisible, true, `Mobile probe cards lost LOSS or JIT data: ${JSON.stringify(result)}`)
+async function auditMobileProbeMatrix(width) {
+  const label = `mobile-probe-matrix-${width}`
+  const result = await runInteractivePage(label, width, width === 320 ? 720 : 844, mobileProbeMatrixAuditExpression)
+  reportBrowserAudit(label, result)
+  assert.equal(result?.count, 3, `Expected three mobile probes at ${width}px: ${JSON.stringify(result)}`)
+  assert.ok(result?.scrollWidth <= result?.clientWidth + 1, `Mobile probe grid overflowed at ${width}px: ${JSON.stringify(result)}`)
+  assert.equal(result?.rows, 2, `Three mobile probes should form a two-column grid at ${width}px: ${JSON.stringify(result)}`)
+  assert.equal(result?.cardWidths?.every(cardWidth => cardWidth >= 120 && cardWidth <= 190), true, `Mobile probe width escaped the compact range at ${width}px: ${JSON.stringify(result)}`)
+  assert.ok(Math.max(...result.cardWidths) - Math.min(...result.cardWidths) <= 1, `Mobile probe widths are inconsistent at ${width}px: ${JSON.stringify(result)}`)
+  assert.equal(result?.compactStatsVisible, true, `Mobile probe cards lost latency or loss at ${width}px: ${JSON.stringify(result)}`)
+  assert.equal(result?.secondaryStatsHidden, true, `Mobile probe cards still expose secondary statistics at ${width}px: ${JSON.stringify(result)}`)
+  assert.equal(result?.nativeButtons, true, `Mobile probe controls lost button semantics at ${width}px: ${JSON.stringify(result)}`)
+  assert.equal(result?.contained, true, `Mobile probe cards escaped their grid at ${width}px: ${JSON.stringify(result)}`)
 }
 
 async function auditVisitorCollapse() {
@@ -2134,7 +2170,7 @@ async function auditSearchGeometry(width) {
     width <= 760 ? 844 : 900,
     searchGeometryAuditExpression,
     undefined,
-    `sessionStorage.setItem('komari-observatory:intro:1.4.3-fix3', 'seen');`,
+    `sessionStorage.setItem('komari-observatory:intro:1.6.0', 'seen');`,
   )
   reportBrowserAudit(`search-geometry-${width}`, result)
   assert.equal(result?.drawerContained, true, `Search drawer escaped its viewport: ${JSON.stringify(result)}`)
@@ -2166,7 +2202,7 @@ async function auditSlowPublicSettingsShell() {
 async function auditMobileChromeLayout() {
   visitorInfoEnabledFixture = true
   try {
-    const initScript = `${visitorFixtureInitScript}\nsessionStorage.setItem('komari-observatory:intro:1.4.3-fix3', 'seen');`
+    const initScript = `${visitorFixtureInitScript}\nsessionStorage.setItem('komari-observatory:intro:1.6.0', 'seen');`
     const result = await runInteractivePage('mobile-chrome-layout', 390, 844, mobileChromeLayoutAuditExpression, undefined, initScript)
     reportBrowserAudit('mobile-chrome-layout', result)
     assert.ok(Math.abs(result?.logoWidth - result?.logoHeight) < 0.5, `Mobile logo frame is not square: ${JSON.stringify(result)}`)
@@ -2194,7 +2230,7 @@ async function auditMobileIntroTypography() {
     844,
     mobileIntroTypographyAuditExpression,
     undefined,
-    `sessionStorage.removeItem('komari-observatory:intro:1.4.3-fix3');`,
+    `sessionStorage.removeItem('komari-observatory:intro:1.6.0');`,
   )
   reportBrowserAudit('mobile-intro-typography', result)
   assert.ok(result?.left >= -0.5 && result?.right <= result?.viewportWidth + 0.5, `Mobile intro title escaped viewport: ${JSON.stringify(result)}`)
@@ -2224,11 +2260,19 @@ async function auditMobileSearchMove() {
     844,
     mobileSearchMoveAuditExpression,
     undefined,
-    `sessionStorage.setItem('komari-observatory:intro:1.4.3-fix3', 'seen');`,
+    `sessionStorage.setItem('komari-observatory:intro:1.6.0', 'seen');`,
   )
   reportBrowserAudit('mobile-search-move', result)
+  assert.equal(result?.filtered, true, `Search did not settle on its matching node: ${JSON.stringify(result)}`)
   assert.ok(result?.after < result?.before - 100, `Filtered card did not move to the first slot: ${JSON.stringify(result)}`)
-  assert.ok(result?.distinctPositions >= 4, `Filtered card jumped without intermediate frames: ${JSON.stringify(result)}`)
+  if (!result?.motionReduced) {
+    // Mobile deliberately skips FLIP measurements; its leave transition must
+    // still run, but drawer/entrance motion is not proof of a retained-card move.
+    if (result?.moveSuppressed)
+      assert.ok(result?.leaveTransitions > 0, `Mobile filtering lost its leave transition: ${JSON.stringify(result)}`)
+    else
+      assert.ok(result?.distinctPositions >= 4, `Filtered card jumped without intermediate frames: ${JSON.stringify(result)}`)
+  }
 }
 
 if (externalFixtureDriver) {
@@ -2275,7 +2319,8 @@ else {
     await auditMetricStoreFallback()
     await auditIntroDisabledReveal()
     await auditIntroGlobeHandoff()
-    await auditMobileProbeMatrix()
+    await auditMobileProbeMatrix(320)
+    await auditMobileProbeMatrix(390)
     await auditVisitorCollapse()
     await auditVisitorReopen()
     await auditMobileChromeLayout()

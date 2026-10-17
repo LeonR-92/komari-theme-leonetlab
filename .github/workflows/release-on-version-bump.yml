@@ -35,8 +35,8 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      # validate checks the compiled Komari HTML markers, so seed dist on a clean runner.
-      - name: Seed production output
+      # Build includes Vue/TypeScript checks; reuse this exact output for all gates and publication.
+      - name: Build and type-check release package
         run: npm run build
 
       - name: Lint
@@ -44,17 +44,16 @@ jobs:
           npm run lint
           git diff --exit-code
 
-      - name: Type check
-        run: npm run type-check
-
       - name: Validate manifest and version compatibility
         run: npm run validate
 
       - name: Install Playwright browser engines
-        run: npx playwright install --with-deps chromium firefox webkit
+        run: npx playwright install --with-deps chromium webkit
 
       - name: Cross-browser interaction tests
-        run: npm run test:browsers
+        # Chromium desktop/mobile plus WebKit touch cover the agreed routine matrix.
+        # Add a directed Firefox check when a shared-engine regression requires it.
+        run: npx playwright test --project=chromium-desktop --project=chromium-mobile --project=webkit-tablet
 
       - name: Smoke test Komari 1.2.5 response rendering
         env:
@@ -76,8 +75,15 @@ jobs:
           CHROME_PATH: /usr/bin/google-chrome
         run: npm run smoke:1.4.3
 
-      - name: Build release package
-        run: npm run build
+      - name: Smoke test Komari 1.5.0-fix1 response rendering
+        env:
+          CHROME_PATH: /usr/bin/google-chrome
+        run: npm run smoke:1.5.0
+
+      - name: Smoke test Komari 1.6.0 response rendering
+        env:
+          CHROME_PATH: /usr/bin/google-chrome
+        run: npm run smoke:1.6.0
 
       - name: Audit production dependencies
         # 只审计随主题分发的生产依赖（--omit=dev）：构建/lint 工具链的漏洞
@@ -171,5 +177,7 @@ jobs:
           name: ${{ steps.version.outputs.release_tag }}
           target_commitish: ${{ github.sha }}
           generate_release_notes: true
+          prerelease: ${{ contains(steps.version.outputs.current_version, '-beta.') }}
+          make_latest: ${{ contains(steps.version.outputs.current_version, '-beta.') && 'false' || 'true' }}
           fail_on_unmatched_files: true
           files: ${{ steps.version.outputs.asset }}

@@ -1,7 +1,7 @@
 import type { Page } from '@playwright/test'
 import { expect, test } from '@playwright/test'
 
-const introSessionKey = 'komari-observatory:intro:1.4.3-fix3'
+const introSessionKey = 'komari-observatory:intro:1.6.0'
 const introEnabledCacheKey = 'komari-observatory:intro-enabled:v1'
 
 async function emulateStandaloneDisplayMode(page: Page) {
@@ -73,7 +73,7 @@ test('recovers once when the desktop entry asset is replaced by stale HTML', asy
   expect(entryRequests).toBeGreaterThanOrEqual(2)
   await expect(page.locator('#lnl-boot-fallback')).toHaveCount(0)
   await expect.poll(() => page.evaluate(() => ({
-    attempt: sessionStorage.getItem('komari-observatory:boot-recovery:1.4.3-fix3'),
+    attempt: sessionStorage.getItem('komari-observatory:boot-recovery:1.6.0'),
     cacheDeletes: Number(sessionStorage.getItem('__lnl_boot_cache_deletes') || 0),
     recoveryQuery: new URL(location.href).searchParams.has('__komari_boot_recovery'),
     unregisters: Number(sessionStorage.getItem('__lnl_boot_unregisters') || 0),
@@ -110,7 +110,7 @@ test('applies compact, standard and hidden managed homepage layouts', async ({ p
   await expect(hero.locator('.lnl-dashboard-status')).toBeVisible()
 })
 
-test('renders the Komari 1.4.3 fixture without viewport overflow', async ({ page }, testInfo) => {
+test('renders the Komari 1.6.0 fixture without viewport overflow', async ({ page }, testInfo) => {
   const pageErrors: string[] = []
   const iconifyRequests: string[] = []
   page.on('pageerror', error => pageErrors.push(error.message))
@@ -170,6 +170,43 @@ test('renders the Komari 1.4.3 fixture without viewport overflow', async ({ page
       }))
       expect(widths.scroll, `${viewport.width}x${viewport.height} overflow`).toBeLessThanOrEqual(widths.client + 1)
     }
+  }
+})
+
+test('keeps compact viewports in a two-column Ping probe grid', async ({ page, browserName }) => {
+  test.skip(browserName !== 'chromium', 'Chromium mobile covers compact probe geometry and selection semantics.')
+
+  for (const viewport of [{ width: 320, height: 720 }, { width: 390, height: 844 }]) {
+    await page.setViewportSize(viewport)
+    await page.goto('/')
+    await page.getByRole('button', { name: /延迟.+查看 Tokyo Fixture Ping 详情/ }).click()
+    const probes = page.locator('.lnl-ping-probe')
+    await expect(probes).toHaveCount(3)
+
+    const geometry = await page.locator('.lnl-ping-probe-list').evaluate((list) => {
+      const cards = [...list.querySelectorAll<HTMLElement>('.lnl-ping-probe')]
+      return {
+        overflow: list.scrollWidth - list.clientWidth,
+        rows: new Set(cards.map(card => Math.round(card.getBoundingClientRect().top))).size,
+        widths: cards.map(card => card.getBoundingClientRect().width),
+        labels: cards.map(card => card.textContent || ''),
+      }
+    })
+    expect(geometry.overflow).toBeLessThanOrEqual(1)
+    expect(geometry.rows).toBe(2)
+    expect(Math.max(...geometry.widths) - Math.min(...geometry.widths)).toBeLessThanOrEqual(1)
+    expect(geometry.labels.every(label => label.includes('ms') && label.includes('丢包'))).toBe(true)
+    expect(geometry.labels.every(label => !/JIT|ICMP|TCP/.test(label))).toBe(true)
+
+    await expect(probes.first()).toHaveAttribute('aria-pressed', 'true')
+    await probes.first().click()
+    await expect(probes.first()).toHaveAttribute('aria-pressed', 'false')
+    await page.getByRole('button', { name: '清空', exact: true }).click()
+    await expect.poll(() => probes.evaluateAll(cards => cards.every(card => card.getAttribute('aria-pressed') === 'false'))).toBe(true)
+    await page.getByRole('tab', { name: '6 小时', exact: true }).click()
+    await expect.poll(() => probes.evaluateAll(cards => cards.every(card => card.getAttribute('aria-pressed') === 'false'))).toBe(true)
+    await page.getByRole('button', { name: '全选', exact: true }).click()
+    await expect.poll(() => probes.evaluateAll(cards => cards.every(card => card.getAttribute('aria-pressed') === 'true'))).toBe(true)
   }
 })
 
@@ -561,6 +598,7 @@ test('isolates GPU failures from connection and process telemetry', async ({ pag
   const workspace = page.locator('[data-extended-telemetry]')
   const gpuTab = workspace.getByRole('tab', { name: 'GPU', exact: true })
   await gpuTab.click()
+  await expect(workspace.getByRole('button', { name: /查看 1 个 GPU 的实时状态/ })).toBeVisible()
   await expect(workspace.getByText('该指标暂时无法加载，请稍后重试')).toBeVisible()
 
   await workspace.getByRole('tab', { name: '连接', exact: true }).click()

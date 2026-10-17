@@ -281,11 +281,14 @@ function isValidIpv6Segment(segment: string, index: number, segments: string[]):
 }
 
 let visitorGeoDeadline = Number.POSITIVE_INFINITY
+let visitorGeoRun = 0
+let visitorGeoController: AbortController | null = null
 
 async function fetchJson<T>(url: string, timeoutMs: number): Promise<T> {
   const remainingBudget = Math.max(1, visitorGeoDeadline - performance.now())
   const requestTimeout = Math.min(timeoutMs, remainingBudget)
   const controller = new AbortController()
+  visitorGeoController = controller
   const timeoutId = window.setTimeout(() => controller.abort(), requestTimeout)
 
   try {
@@ -299,10 +302,12 @@ async function fetchJson<T>(url: string, timeoutMs: number): Promise<T> {
   }
   finally {
     window.clearTimeout(timeoutId)
+    if (visitorGeoController === controller)
+      visitorGeoController = null
   }
 }
 
-async function fetchVisitorGeo(): Promise<VisitorGeoData | null> {
+async function fetchVisitorGeo(run: number): Promise<VisitorGeoData | null> {
   visitorGeoDeadline = performance.now() + 4500
   const loaders = [
     async (): Promise<VisitorGeoData> => {
@@ -453,7 +458,7 @@ async function fetchVisitorGeo(): Promise<VisitorGeoData | null> {
   ]
 
   for (const load of loaders) {
-    if (performance.now() >= visitorGeoDeadline)
+    if (run !== visitorGeoRun || performance.now() >= visitorGeoDeadline)
       break
     try {
       const result = await load()
@@ -473,12 +478,15 @@ function handleFlagError(): void {
 }
 
 onMounted(() => {
+  const run = ++visitorGeoRun
   const client = detectVisitorClient(navigator.userAgent, navigator.maxTouchPoints)
   device.value = client.device
   browser.value = client.browser
   visitTime.value = formatVisitTime(new Date())
 
-  void fetchVisitorGeo().then((geo) => {
+  void fetchVisitorGeo(run).then((geo) => {
+    if (run !== visitorGeoRun)
+      return
     if (!geo) {
       ip.value = '识别失败'
       isp.value = '网络识别暂不可用'
@@ -491,7 +499,8 @@ onMounted(() => {
     location.value = geo.location
     countryCode.value = geo.countryCode.toUpperCase()
   }).finally(() => {
-    loading.value = false
+    if (run === visitorGeoRun)
+      loading.value = false
   })
 
   document.addEventListener('visibilitychange', handleVisibilityChange)
@@ -503,6 +512,9 @@ function handleVisibilityChange() {
 }
 
 onUnmounted(() => {
+  visitorGeoRun += 1
+  visitorGeoController?.abort()
+  visitorGeoController = null
   presentationRun += 1
   clearPresentationTimer()
   document.removeEventListener('visibilitychange', handleVisibilityChange)

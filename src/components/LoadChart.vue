@@ -8,6 +8,7 @@ import { computed, onMounted, onUnmounted, ref, shallowRef, watch } from 'vue'
 import VChart from 'vue-echarts'
 import ChartViewport from '@/components/ChartViewport.vue'
 import { CardX } from '@/components/ui/card-x'
+import { DataTooltip } from '@/components/ui/data-tooltip'
 import { Empty } from '@/components/ui/empty'
 import { Spinner } from '@/components/ui/spinner'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
@@ -989,6 +990,7 @@ const hasExtendedTelemetry = computed(() => extendedTelemetryTabs.value.length >
 const optionalTelemetryActive = computed(() => extendedTelemetryTab.value === 'gpu'
   || extendedTelemetryTab.value === 'gpu-memory'
   || extendedTelemetryTab.value === 'gpu-temperature')
+const liveGpuDetails = computed(() => nodeInfo.value?.gpu_detailed_info ?? [])
 
 function metricSeriesLabel(series: MetricSeries, index: number): string {
   const device = series.tags?.device_name || series.tags?.device || series.tags?.name || series.tags?.device_index
@@ -1415,18 +1417,38 @@ onUnmounted(() => {
           <template #header>
             <div class="flex min-w-0 flex-col items-stretch gap-2 sm:flex-row sm:items-center sm:justify-between sm:gap-3">
               <span class="text-base font-bold shrink-0">扩展遥测</span>
-              <Tabs v-model="extendedTelemetryTab" class="min-w-0">
-                <TabsList class="h-auto min-h-7 max-w-full flex-wrap justify-start bg-foreground/5 rounded-sm sm:justify-center">
-                  <TabsTrigger
-                    v-for="tab in extendedTelemetryTabs"
-                    :key="tab.value"
-                    :value="tab.value"
-                    class="h-5.5 px-2 text-[11px] border-none shadow-none rounded-xs"
-                  >
-                    {{ tab.label }}
-                  </TabsTrigger>
-                </TabsList>
-              </Tabs>
+              <div class="min-w-0 flex items-center gap-2">
+                <Tabs v-model="extendedTelemetryTab" class="min-w-0">
+                  <TabsList class="h-auto min-h-7 max-w-full flex-wrap justify-start bg-foreground/5 rounded-sm sm:justify-center">
+                    <TabsTrigger
+                      v-for="tab in extendedTelemetryTabs"
+                      :key="tab.value"
+                      :value="tab.value"
+                      class="h-5.5 px-2 text-[11px] border-none shadow-none rounded-xs"
+                    >
+                      {{ tab.label }}
+                    </TabsTrigger>
+                  </TabsList>
+                </Tabs>
+                <DataTooltip
+                  v-if="optionalTelemetryActive && liveGpuDetails.length"
+                  portal placement="bottom" content-class="!rounded-xl p-3 w-[min(20rem,calc(100vw-1rem))]"
+                >
+                  <button type="button" class="lnl-live-gpu-badge" :aria-label="`查看 ${nodeInfo?.gpu_count ?? liveGpuDetails.length} 个 GPU 的实时状态`">
+                    {{ nodeInfo?.gpu_count ?? liveGpuDetails.length }} GPU
+                  </button>
+                  <template #content>
+                    <div class="space-y-2 text-xs leading-relaxed">
+                      <div v-for="(device, index) in liveGpuDetails" :key="`${device.name}-${index}`" class="lnl-live-gpu-detail">
+                        <strong>{{ device.name || `GPU ${index + 1}` }}</strong>
+                        <span>{{ Math.round(device.utilization * 10) / 10 }}%</span>
+                        <span>{{ formatBytes(device.memory_used) }} / {{ formatBytes(device.memory_total) }}</span>
+                        <span>{{ device.temperature }} °C</span>
+                      </div>
+                    </div>
+                  </template>
+                </DataTooltip>
+              </div>
             </div>
           </template>
           <ChartViewport>
@@ -1456,5 +1478,39 @@ onUnmounted(() => {
 .lnl-history-tab:focus-visible {
   outline: 2px solid color-mix(in srgb, var(--lnl-green) 46%, transparent);
   outline-offset: 1px;
+}
+
+.lnl-live-gpu-badge {
+  min-height: 28px;
+  flex: none;
+  padding: 0 8px;
+  border: 1px solid color-mix(in srgb, var(--lnl-green) 22%, var(--lnl-line));
+  border-radius: 999px;
+  color: var(--lnl-green);
+  background: color-mix(in srgb, var(--lnl-green) 7%, transparent);
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+}
+
+.lnl-live-gpu-badge:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--lnl-green) 46%, transparent);
+  outline-offset: 1px;
+}
+
+.lnl-live-gpu-detail {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 2px 10px;
+  padding-top: 7px;
+  border-top: 1px solid var(--lnl-line);
+}
+
+.lnl-live-gpu-detail strong {
+  grid-column: 1 / -1;
+}
+
+.lnl-live-gpu-detail span {
+  color: var(--muted-foreground);
+  font-variant-numeric: tabular-nums;
 }
 </style>

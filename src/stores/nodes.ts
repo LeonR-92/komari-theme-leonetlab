@@ -1,8 +1,9 @@
-import type { Client, NodeStatus, NodeStatusPing } from '@/utils/rpc'
+import type { Client, GPUDeviceInfo, NodeStatus, NodeStatusPing } from '@/utils/rpc'
 import { defineStore } from 'pinia'
 import { computed, ref } from 'vue'
 import { parseNodeGroups } from '@/utils/groupHelper'
 import { normalizeUuidCollection } from '@/utils/nodeResponse'
+import { normalizeNodeGpuSnapshot } from '@/utils/nodeStatus'
 
 /** 流量限制类型 */
 export type TrafficLimitType = 'up' | 'down' | 'min' | 'max' | 'sum'
@@ -47,6 +48,9 @@ export interface NodeData {
   time: string
   cpu: number
   gpu: number
+  gpu_count?: number
+  gpu_average_usage?: number
+  gpu_detailed_info?: GPUDeviceInfo[]
   ram: number
   swap: number
   load: number
@@ -74,6 +78,9 @@ interface StatusData {
   time: string
   cpu: number
   gpu: number
+  gpu_count?: number
+  gpu_average_usage?: number
+  gpu_detailed_info?: GPUDeviceInfo[]
   ram: number
   swap: number
   load: number
@@ -171,6 +178,9 @@ const useNodesStore = defineStore('nodes', () => {
       time: '',
       cpu: 0,
       gpu: 0,
+      gpu_count: undefined,
+      gpu_average_usage: undefined,
+      gpu_detailed_info: undefined,
       ram: 0,
       swap: 0,
       load: 0,
@@ -200,6 +210,9 @@ const useNodesStore = defineStore('nodes', () => {
       time: status.time,
       cpu: status.cpu,
       gpu: status.gpu,
+      gpu_count: status.gpu_count,
+      gpu_average_usage: status.gpu_average_usage,
+      gpu_detailed_info: status.gpu_detailed_info,
       ram: status.ram,
       swap: status.swap,
       load: status.load,
@@ -223,11 +236,12 @@ const useNodesStore = defineStore('nodes', () => {
    * 从 NodeStatus 提取状态数据
    */
   function extractStatusData(status: NodeStatus): StatusData {
+    const gpuSnapshot = normalizeNodeGpuSnapshot(status)
     return {
       online: status.online,
       time: status.time,
       cpu: status.cpu,
-      gpu: status.gpu,
+      ...gpuSnapshot,
       ram: status.ram,
       swap: status.swap,
       load: status.load,
@@ -363,6 +377,9 @@ const useNodesStore = defineStore('nodes', () => {
           time: currentNode.time,
           cpu: currentNode.cpu,
           gpu: currentNode.gpu,
+          gpu_count: currentNode.gpu_count,
+          gpu_average_usage: currentNode.gpu_average_usage,
+          gpu_detailed_info: currentNode.gpu_detailed_info,
           ram: currentNode.ram,
           swap: currentNode.swap,
           load: currentNode.load,

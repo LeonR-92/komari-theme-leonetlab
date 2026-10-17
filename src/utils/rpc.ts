@@ -189,12 +189,25 @@ export interface NodeStatusPing {
   max: number
 }
 
+/** Komari 1.5 agent-reported GPU device snapshot. */
+export interface GPUDeviceInfo {
+  name: string
+  memory_total: number
+  memory_used: number
+  utilization: number
+  temperature: number
+}
+
 /** 节点状态 */
 export interface NodeStatus {
   client: string
   time: string
   cpu: number
   gpu: number
+  /** Komari 1.5+ optional detailed GPU snapshot fields. */
+  gpu_count?: number
+  gpu_average_usage?: number
+  gpu_detailed_info?: GPUDeviceInfo[]
   ram: number
   ram_total: number
   swap: number
@@ -411,8 +424,6 @@ export class RpcClient {
         signal: controller.signal,
       })
 
-      clearTimeout(timeoutId)
-
       if (!response.ok) {
         throw new RpcError(response.status, `HTTP error: ${response.status}`)
       }
@@ -421,12 +432,16 @@ export class RpcClient {
       return this.handleResponse(data)
     }
     catch (error) {
-      clearTimeout(timeoutId)
       if (error instanceof RpcError)
         throw error
       if (error instanceof Error && error.name === 'AbortError')
         throw new RpcError(-32001, `Request timeout after ${timeoutMs}ms`)
       throw new RpcError(-32000, `Network error: ${error instanceof Error ? error.message : String(error)}`)
+    }
+    finally {
+      // Headers can arrive before a stalled JSON body. Keep the deadline active
+      // through parsing so every request still reaches success or timeout.
+      clearTimeout(timeoutId)
     }
   }
 

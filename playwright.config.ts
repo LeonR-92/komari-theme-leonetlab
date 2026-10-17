@@ -29,7 +29,7 @@ export default defineConfig({
   webServer: process.env.PLAYWRIGHT_REUSE_SERVER === '1'
     ? undefined
     : {
-        command: 'node scripts/smoke-komari-1.2.5.mjs --komari-version=1.4.3',
+        command: 'node scripts/smoke-komari-1.2.5.mjs --komari-version=1.6.0',
         env: {
           SMOKE_EXTERNAL_DRIVER: '1',
           SMOKE_FIXTURE_PORT: String(fixturePort),

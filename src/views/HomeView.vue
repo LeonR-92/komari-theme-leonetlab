@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import type { NodeData } from '@/stores/nodes'
 import { Icon } from '@iconify/vue'
-import { useDebounceFn, useIntervalFn, useNow } from '@vueuse/core'
+import { useDocumentVisibility, useIntervalFn, useNow } from '@vueuse/core'
 import { computed, defineAsyncComponent, nextTick, onActivated, onBeforeUnmount, onDeactivated, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import MarkdownRenderer from '@/components/MarkdownRenderer.vue'
@@ -36,7 +36,9 @@ const { pickSurfaceClass } = useBackgroundSurface()
 const nodesStore = useNodesStore()
 const router = useRouter()
 const { rates: exchangeRates, ensureFinanceRates } = useFinanceRates()
-const now = useNow({ interval: 60_000 })
+const { now, pause: pauseClock, resume: resumeClock } = useNow({ interval: 60_000, controls: true })
+const documentVisibility = useDocumentVisibility()
+const homeActive = ref(true)
 const expiryRotationIndex = ref(0)
 const EXPIRY_WARNING_MS = 3 * 24 * 60 * 60 * 1000
 const showNodeLoadingState = ref(false)
@@ -112,20 +114,14 @@ const { pause: pauseExpiryRotation, resume: resumeExpiryRotation } = useInterval
 }, 4200)
 
 onActivated(() => {
-  resumeExpiryRotation()
+  homeActive.value = true
+  resumeHomeStatus()
   scheduleNodeLoadingState()
   if (appStore.homeScrollPosition > 0) {
     nextTick(() => {
       window.scrollTo({ top: appStore.homeScrollPosition, behavior: 'instant' })
     })
   }
-})
-
-onDeactivated(() => {
-  pauseExpiryRotation()
-  clearNodeLoadingStateTimer()
-  showNodeLoadingState.value = false
-  appStore.homeScrollPosition = window.scrollY
 })
 
 watch(
@@ -163,6 +159,8 @@ let viewModeFeedbackFrame = 0
 let viewModeCommitFrame = 0
 let searchFocusFeedbackFrame = 0
 let searchFocusCommitFrame = 0
+let searchDebounceTimer: number | null = null
+let interactionRun = 0
 const onlineNodeCount = computed(() => nodesStore.nodes.filter(node => node.online).length)
 const totalNodeCount = computed(() => nodesStore.nodes.length)
 
@@ -175,10 +173,12 @@ function beginSearchReorderMotion() {
 }
 
 function setNodeViewMode(mode: 'card' | 'list') {
-  if (appStore.nodeViewMode === mode)
-    return
   window.cancelAnimationFrame(viewModeFeedbackFrame)
   window.cancelAnimationFrame(viewModeCommitFrame)
+  viewModeFeedbackFrame = 0
+  viewModeCommitFrame = 0
+  if (!homeActive.value || appStore.nodeViewMode === mode)
+    return
   // Paint the control feedback before replacing the card/list DOM. The second
   // frame keeps view changes responsive on CPU-throttled mobile devices.
   viewModeFeedbackFrame = window.requestAnimationFrame(() => {
@@ -199,17 +199,24 @@ function finishSearchReorderMotionLater() {
   }, 520)
 }
 
-const updateDebouncedSearch = useDebounceFn((value: string) => {
-  beginSearchReorderMotion()
-  debouncedSearchText.value = value
-  finishSearchReorderMotionLater()
-}, 300)
-
 watch(searchText, (value) => {
-  updateDebouncedSearch(value)
+  if (searchDebounceTimer !== null)
+    window.clearTimeout(searchDebounceTimer)
+  searchDebounceTimer = null
+  if (!homeActive.value)
+    return
+  searchDebounceTimer = window.setTimeout(() => {
+    searchDebounceTimer = null
+    beginSearchReorderMotion()
+    debouncedSearchText.value = value
+    finishSearchReorderMotionLater()
+  }, 300)
 })
 
 async function toggleNodeSearch() {
+  window.cancelAnimationFrame(searchFocusFeedbackFrame)
+  window.cancelAnimationFrame(searchFocusCommitFrame)
+  const run = ++interactionRun
   if (searchOpen.value) {
     beginSearchReorderMotion()
     searchText.value = ''
@@ -221,6 +228,8 @@ async function toggleNodeSearch() {
 
   searchOpen.value = true
   await nextTick()
+  if (!homeActive.value || !searchOpen.value || run !== interactionRun)
+    return
   window.cancelAnimationFrame(searchFocusFeedbackFrame)
   window.cancelAnimationFrame(searchFocusCommitFrame)
   // Let the drawer feedback paint before focus may open a mobile soft keyboard.
@@ -228,7 +237,8 @@ async function toggleNodeSearch() {
     searchFocusFeedbackFrame = 0
     searchFocusCommitFrame = window.requestAnimationFrame(() => {
       searchFocusCommitFrame = 0
-      document.querySelector<HTMLInputElement>('#node-search')?.focus()
+      if (homeActive.value && searchOpen.value && run === interactionRun)
+        document.querySelector<HTMLInputElement>('#node-search')?.focus({ preventScroll: true })
     })
   })
 }
@@ -309,6 +319,10 @@ watch(pingDialogOpen, (open) => {
     pingDialogCleanupTimer = null
   }
   if (!open) {
+    if (!homeActive.value) {
+      selectedPingNodeUuid.value = null
+      return
+    }
     pingDialogCleanupTimer = window.setTimeout(() => {
       selectedPingNodeUuid.value = null
       pingDialogCleanupTimer = null
@@ -326,12 +340,15 @@ function handlePingClick(node: NodeData) {
     pingDialogCleanupTimer = null
   }
   selectedPingNodeUuid.value = node.uuid
+  const run = interactionRun
   nextTick(() => {
-    pingDialogOpen.value = true
+    if (homeActive.value && run === interactionRun)
+      pingDialogOpen.value = true
   })
 }
 
-onBeforeUnmount(() => {
+function cancelHomeInteractionTasks() {
+  interactionRun += 1
   window.cancelAnimationFrame(viewModeFeedbackFrame)
   window.cancelAnimationFrame(viewModeCommitFrame)
   window.cancelAnimationFrame(searchFocusFeedbackFrame)
@@ -340,6 +357,47 @@ onBeforeUnmount(() => {
     window.clearTimeout(pingDialogCleanupTimer)
   if (searchReorderMotionTimer !== null)
     window.clearTimeout(searchReorderMotionTimer)
+  if (searchDebounceTimer !== null)
+    window.clearTimeout(searchDebounceTimer)
+  pingDialogCleanupTimer = null
+  searchReorderMotionTimer = null
+  searchDebounceTimer = null
+  searchReorderMotionActive.value = false
+  debouncedSearchText.value = searchText.value
+}
+
+function resumeHomeStatus() {
+  if (homeActive.value && documentVisibility.value === 'visible') {
+    resumeClock()
+    resumeExpiryRotation()
+  }
+  else {
+    pauseClock()
+    pauseExpiryRotation()
+  }
+}
+
+watch(documentVisibility, () => {
+  resumeHomeStatus()
+  if (documentVisibility.value !== 'visible')
+    cancelHomeInteractionTasks()
+})
+
+onDeactivated(() => {
+  homeActive.value = false
+  cancelHomeInteractionTasks()
+  pingDialogOpen.value = false
+  selectedPingNodeUuid.value = null
+  pauseExpiryRotation()
+  pauseClock()
+  clearNodeLoadingStateTimer()
+  showNodeLoadingState.value = false
+  appStore.homeScrollPosition = window.scrollY
+})
+
+onBeforeUnmount(() => {
+  homeActive.value = false
+  cancelHomeInteractionTasks()
   clearNodeLoadingStateTimer()
 })
 

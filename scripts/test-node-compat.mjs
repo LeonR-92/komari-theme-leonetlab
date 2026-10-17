@@ -13,6 +13,7 @@ import {
 } from '../src/utils/financeHelper.ts'
 import { isMetricCapabilityUnavailable } from '../src/utils/metricCompatibility.ts'
 import { normalizeUuidCollection } from '../src/utils/nodeResponse.ts'
+import { normalizeNodeGpuSnapshot } from '../src/utils/nodeStatus.ts'
 import {
   getLatencyToneClass,
   getLossToneClass,
@@ -50,6 +51,40 @@ assert.deepEqual(normalizeUuidCollection({ legacy_index: nodeA }), {
 })
 
 assert.deepEqual(normalizeUuidCollection(undefined), {})
+
+// Official 1.5.0-fix1, 1.5.1 and 1.6.0 share the node/status/record RPC sources.
+// Additional server keys must remain optional at the normalization boundary.
+for (const version of ['1.2.6', '1.3.2', '1.4.2', '1.4.3', '1.5.0', '1.5.0-fix1', '1.5.1', '1.6.0']) {
+  assert.deepEqual(normalizeUuidCollection({ legacy_index: nodeA }), { 'node-a': nodeA }, version)
+  assert.equal(normalizeNodeGpuSnapshot({ gpu: 18, gpu_average_usage: 0, gpu_count: 1 }).gpu, 0, `${version}: valid zero GPU average`)
+}
+
+assert.deepEqual(normalizeNodeGpuSnapshot({ gpu: 18 }), {
+  gpu: 18,
+  gpu_count: undefined,
+  gpu_average_usage: undefined,
+  gpu_detailed_info: undefined,
+})
+assert.deepEqual(normalizeNodeGpuSnapshot({
+  gpu: 18,
+  gpu_count: 1,
+  gpu_average_usage: 42.5,
+  gpu_detailed_info: [{ name: 'GPU 0', memory_total: 8_000, memory_used: 2_000, utilization: 42.5, temperature: 51 }],
+}), {
+  gpu: 42.5,
+  gpu_count: 1,
+  gpu_average_usage: 42.5,
+  gpu_detailed_info: [{ name: 'GPU 0', memory_total: 8_000, memory_used: 2_000, utilization: 42.5, temperature: 51 }],
+})
+assert.deepEqual(normalizeNodeGpuSnapshot({
+  gpu: 12,
+  gpu_detailed_info: [{ name: 'invalid', memory_total: Number.NaN, memory_used: 0, utilization: 0, temperature: 0 }],
+}), {
+  gpu: 12,
+  gpu_count: 0,
+  gpu_average_usage: undefined,
+  gpu_detailed_info: [],
+})
 
 assert.equal(isMetricCapabilityUnavailable({ code: -32601, message: 'Method not found' }), true)
 assert.equal(isMetricCapabilityUnavailable({ code: -32603, message: 'metric store not initialized' }), true)
@@ -278,4 +313,4 @@ assert.equal(oneTime.text, '$499')
 assert.equal(oneTime.oneTime, true)
 assert.match(formatRecurringCostTooltip(oneTime, 'yearly'), /^一次性 499\.00 USD · 后台原值/)
 
-console.log('Komari 1.2.5-fix1/1.2.5-fix2/1.2.7 node, record, and Ping metric compatibility passed.')
+console.log('Komari 1.2.5-fix1 through 1.6.0 node, GPU, record, and Ping metric compatibility passed.')
