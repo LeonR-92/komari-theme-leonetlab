@@ -32,7 +32,11 @@ test('preserves the last view intent and cancels delayed search focus on navigat
   await expect(page.getByRole('button', { name: '卡片视图', exact: true })).toHaveAttribute('aria-pressed', 'true')
 })
 
-test('keeps cleared and custom Ping intent through refresh and missing ranges', async ({ page }) => {
+test('keeps cleared and custom Ping intent through refresh and missing ranges', async ({ page }, testInfo) => {
+  // Six foreground range changes and a live refresh need more total time in
+  // software-rendered WebKit CI; keep the individual assertions unchanged.
+  if (testInfo.project.name === 'webkit-tablet')
+    test.setTimeout(60_000)
   let statsRequests = 0
   let missingFirst = false
   await page.addInitScript(() => {
