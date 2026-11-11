@@ -1563,7 +1563,8 @@ const mobileProbeMatrixAuditExpression = `new Promise((resolve) => {
             rows: new Set(cards.map(card => Math.round(card.getBoundingClientRect().top))).size,
             cardWidths: cards.map(card => card.getBoundingClientRect().width),
             compactStatsVisible: cards.every(card => /ms/.test(card.textContent || '') && /丢包/.test(card.textContent || '')),
-            secondaryStatsHidden: cards.every(card => !/JIT|ICMP|TCP/.test(card.textContent || '')),
+            protocols: cards.map(card => card.querySelector('.lnl-ping-probe-proto')?.textContent?.trim()),
+            secondaryStatsHidden: cards.every(card => !/JIT|P50|P99|σ/.test(card.textContent || '')),
             nativeButtons: cards.every(card => card.tagName === 'BUTTON' && card.getAttribute('aria-pressed') === 'true'),
             contained: cards.every((card) => {
               const rect = card.getBoundingClientRect();
@@ -2142,6 +2143,7 @@ async function auditMobileProbeMatrix(width) {
   assert.ok(Math.max(...result.cardWidths) - Math.min(...result.cardWidths) <= 1, `Mobile probe widths are inconsistent at ${width}px: ${JSON.stringify(result)}`)
   assert.equal(result?.compactStatsVisible, true, `Mobile probe cards lost latency or loss at ${width}px: ${JSON.stringify(result)}`)
   assert.equal(result?.secondaryStatsHidden, true, `Mobile probe cards still expose secondary statistics at ${width}px: ${JSON.stringify(result)}`)
+  assert.deepEqual(result?.protocols, ['ICMP', 'TCP', 'TCP'], `Mobile probe protocols differ at ${width}px`)
   assert.equal(result?.nativeButtons, true, `Mobile probe controls lost button semantics at ${width}px: ${JSON.stringify(result)}`)
   assert.equal(result?.contained, true, `Mobile probe cards escaped their grid at ${width}px: ${JSON.stringify(result)}`)
 }

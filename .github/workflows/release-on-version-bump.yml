@@ -39,9 +39,19 @@ jobs:
         run: |
           node <<'NODE' >> "$GITHUB_OUTPUT"
           const { execFileSync } = require('node:child_process')
+          const { readFileSync } = require('node:fs')
           let legacy = true
           try {
-            const base = process.env.BASE_SHA
+            let base = process.env.BASE_SHA
+            if (process.env.GITHUB_EVENT_NAME === 'push') {
+              const version = JSON.parse(readFileSync('komari-theme.json', 'utf8')).version
+              const tag = execFileSync('git', ['tag', '--list', `v${version}`], { encoding: 'utf8' }).trim()
+              if (!tag) {
+                // A test-only retry still needs the compatibility scope of the whole release.
+                const tags = execFileSync('git', ['tag', '--merged', 'HEAD', '--sort=-version:refname'], { encoding: 'utf8' })
+                base = tags.split('\n').find(value => /^v\d+\.\d+\.\d+$/.test(value))
+              }
+            }
             if (base && !/^0+$/.test(base)) {
               const paths = execFileSync('git', ['diff', '--name-only', base, 'HEAD'], { encoding: 'utf8' }).trim().split('\n')
               legacy = paths.some(path => /^src\/(?:utils\/(?:rpc|api|nodeResponse|.*[Mm]etric.*|.*[Hh]istory.*|.*[Pp]ing.*)\.ts|stores\/nodes\.ts|types\/)/.test(path))

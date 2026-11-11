@@ -190,13 +190,15 @@ test('keeps compact viewports in a two-column Ping probe grid', async ({ page, b
         rows: new Set(cards.map(card => Math.round(card.getBoundingClientRect().top))).size,
         widths: cards.map(card => card.getBoundingClientRect().width),
         labels: cards.map(card => card.textContent || ''),
+        protocols: cards.map(card => card.querySelector('.lnl-ping-probe-proto')?.textContent?.trim()),
       }
     })
     expect(geometry.overflow).toBeLessThanOrEqual(1)
     expect(geometry.rows).toBe(2)
     expect(Math.max(...geometry.widths) - Math.min(...geometry.widths)).toBeLessThanOrEqual(1)
     expect(geometry.labels.every(label => label.includes('ms') && label.includes('丢包'))).toBe(true)
-    expect(geometry.labels.every(label => !/JIT|ICMP|TCP/.test(label))).toBe(true)
+    expect(geometry.protocols).toEqual(['ICMP', 'TCP', 'TCP'])
+    expect(geometry.labels.every(label => !/JIT|P50|P99|σ/.test(label))).toBe(true)
 
     await expect(probes.first()).toHaveAttribute('aria-pressed', 'true')
     await probes.first().click()
