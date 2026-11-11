@@ -76,21 +76,18 @@ jobs:
       - name: Validate manifest and version compatibility
         run: npm run validate
 
-      - name: Install Playwright browser engines
-        timeout-minutes: 6
-        run: |
-          # Use the primary signed Ubuntu archive when the runner uses the Azure mirror.
-          for source in /etc/apt/sources.list.d/ubuntu.sources /etc/apt/sources.list; do
-            if [ -f "$source" ]; then
-              sudo sed -i -E 's#https?://azure\.archive\.ubuntu\.com/ubuntu#https://archive.ubuntu.com/ubuntu#g' "$source"
-            fi
-          done
-          npx playwright install --with-deps chromium webkit
-
       - name: Cross-browser interaction tests
-        # Chromium desktop/mobile plus WebKit touch cover the agreed routine matrix.
-        # Add a directed Firefox check when a shared-engine regression requires it.
-        run: npx playwright test --project=chromium-desktop --project=chromium-mobile --project=webkit-tablet
+        timeout-minutes: 15
+        env:
+          # Keep in sync with the locked @playwright/test version. Browsers and
+          # system libraries are preinstalled, so apt availability is not a release dependency.
+          PLAYWRIGHT_IMAGE: mcr.microsoft.com/playwright:v1.61.1-noble@sha256:5b8f294aff9041b7191c34a4bab3ac270157a28774d4b0660e9743297b697e48
+        run: |
+          docker run --rm --init --ipc=host \
+            --user "$(id -u):$(id -g)" --env CI --env HOME=/tmp \
+            --volume "$GITHUB_WORKSPACE:/work" --workdir /work "$PLAYWRIGHT_IMAGE" \
+            node node_modules/@playwright/test/cli.js test \
+              --project=chromium-desktop --project=chromium-mobile --project=webkit-tablet
 
       - name: Smoke test Komari 1.2.5 response rendering
         if: steps.smoke_scope.outputs.legacy == 'true'
