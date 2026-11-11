@@ -77,7 +77,15 @@ jobs:
         run: npm run validate
 
       - name: Install Playwright browser engines
-        run: npx playwright install --with-deps chromium webkit
+        timeout-minutes: 6
+        run: |
+          # Use the primary signed Ubuntu archive when the runner uses the Azure mirror.
+          for source in /etc/apt/sources.list.d/ubuntu.sources /etc/apt/sources.list; do
+            if [ -f "$source" ]; then
+              sudo sed -i -E 's#https?://azure\.archive\.ubuntu\.com/ubuntu#https://archive.ubuntu.com/ubuntu#g' "$source"
+            fi
+          done
+          npx playwright install --with-deps chromium webkit
 
       - name: Cross-browser interaction tests
         # Chromium desktop/mobile plus WebKit touch cover the agreed routine matrix.
