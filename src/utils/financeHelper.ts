@@ -178,8 +178,14 @@ export function shouldExcludeFreeNodes(): boolean {
   return value === null ? true : value === 'true'
 }
 
-export function getStoredFinanceCurrency(): CurrencyCode {
-  return normalizeCurrency(getLocalStorageItem('fin_currency') || 'CNY')
+export function hasStoredFinanceCurrency(): boolean {
+  const stored = getLocalStorageItem('fin_currency')
+  return Boolean(stored && resolveCurrency(stored))
+}
+
+export function getStoredFinanceCurrency(fallback: CurrencyCode = 'CNY'): CurrencyCode {
+  const stored = getLocalStorageItem('fin_currency')
+  return stored ? normalizeCurrency(stored) : fallback
 }
 
 export function setStoredFinanceCurrency(currency: CurrencyCode): void {

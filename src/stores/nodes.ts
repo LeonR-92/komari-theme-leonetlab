@@ -118,12 +118,21 @@ const useNodesStore = defineStore('nodes', () => {
   const totalCount = computed(() => nodes.value.length)
 
   /** 所有分组 */
+  let cachedGroups: string[] = []
   const groups = computed(() => {
     const groupSet = new Set<string>()
     nodes.value.forEach((n) => {
       parseNodeGroups(n.group).forEach(group => groupSet.add(group))
     })
-    return Array.from(groupSet)
+    const nextGroups = Array.from(groupSet)
+    if (
+      nextGroups.length === cachedGroups.length
+      && nextGroups.every((group, index) => group === cachedGroups[index])
+    ) {
+      return cachedGroups
+    }
+    cachedGroups = nextGroups
+    return nextGroups
   })
 
   /** 按 UUID 索引的节点映射 */
@@ -335,23 +344,26 @@ const useNodesStore = defineStore('nodes', () => {
    */
   function updateNodeStatuses(statuses: Record<string, NodeStatus>): void {
     let hasChanges = false
-    const indexByUuid = new Map(nodes.value.map((node, index) => [node.uuid, index]))
+    const nextNodes = [...nodes.value]
+    const indexByUuid = new Map(nextNodes.map((node, index) => [node.uuid, index]))
 
     Object.entries(statuses).forEach(([uuid, status]) => {
       const index = indexByUuid.get(uuid)
       if (index === undefined)
         return
 
-      const node = nodes.value[index]
+      const node = nextNodes[index]
       if (!node)
         return
 
-      nodes.value[index] = updateNodeStatus(node, extractStatusData(status))
+      nextNodes[index] = updateNodeStatus(node, extractStatusData(status))
       hasChanges = true
     })
 
-    if (hasChanges)
+    if (hasChanges) {
+      nodes.value = nextNodes
       refreshEarthNodes()
+    }
   }
 
   /**

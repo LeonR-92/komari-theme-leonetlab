@@ -1,14 +1,16 @@
 <script setup lang="ts">
 import type { CurrencyCode } from '@/utils/financeHelper'
 import { Icon } from '@iconify/vue'
-import { computed, defineAsyncComponent, onBeforeMount, onMounted, ref } from 'vue'
+import { computed, defineAsyncComponent, onBeforeMount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import DetailChartSkeleton from '@/components/DetailChartSkeleton.vue'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { CardX } from '@/components/ui/card-x'
+import { DataTooltip } from '@/components/ui/data-tooltip'
 import { Empty } from '@/components/ui/empty'
 import { useBackgroundSurface } from '@/composables/useBackgroundSurface'
+import { useFinanceRates } from '@/composables/useFinanceRates'
 import { useAppStore } from '@/stores/app'
 import { useNodesStore } from '@/stores/nodes'
 import * as financeHelper from '@/utils/financeHelper'
@@ -34,19 +36,22 @@ const router = useRouter()
 const appStore = useAppStore()
 const { pickSurfaceClass } = useBackgroundSurface()
 const nodesStore = useNodesStore()
-const exchangeRates = ref(financeHelper.DEFAULT_EXCHANGE_RATES)
-const financeBaseCurrency = ref<CurrencyCode>('CNY')
+const { rates: exchangeRates, ensureFinanceRates } = useFinanceRates()
+const financeBaseCurrency = ref<CurrencyCode>(financeHelper.getStoredFinanceCurrency(appStore.nodeCardCurrency))
+
+watch(() => appStore.nodeCardCurrency, (nextCurrency) => {
+  if (!financeHelper.hasStoredFinanceCurrency())
+    financeBaseCurrency.value = nextCurrency
+})
 
 onBeforeMount(() => {
   if (window.scrollY !== 0)
     window.scrollTo({ top: 0, behavior: 'instant' })
 })
 
-onMounted(async () => {
-  financeBaseCurrency.value = financeHelper.getStoredFinanceCurrency()
-
-  const { rates } = await financeHelper.getDailyExchangeRates()
-  exchangeRates.value = rates
+onMounted(() => {
+  financeBaseCurrency.value = financeHelper.getStoredFinanceCurrency(appStore.nodeCardCurrency)
+  void ensureFinanceRates()
 })
 
 const formatBytes = (bytes: number) => formatBytesWithConfig(bytes, appStore.byteDecimals)
@@ -195,6 +200,9 @@ const metricCards = computed<MetricCard[]>(() => {
   ]
 })
 
+const liveGpuDetails = computed(() => data.value?.gpu_detailed_info ?? [])
+const liveGpuCount = computed(() => data.value?.gpu_count ?? liveGpuDetails.value.length)
+
 const hardwareInfo = computed<InfoItem[]>(() => [
   { label: 'CPU', value: data.value ? `${data.value.cpu_name} (x${data.value.cpu_cores})` : '-', icon: 'icon-park-outline:cpu' },
   { label: '架构', value: data.value?.arch ?? '-', icon: 'icon-park-outline:application-two' },
@@ -342,6 +350,28 @@ const trafficProgressStyle = computed(() => ({
               <div class="flex gap-1 items-center text-muted-foreground">
                 <Icon v-if="item.icon" :icon="item.icon" :width="14" :height="14" />
                 <span class="text-xs sm:text-sm">{{ item.label }}</span>
+                <DataTooltip
+                  v-if="item.label === 'GPU' && liveGpuDetails.length > 0"
+                  portal placement="bottom" content-class="!rounded-xl p-3 w-[min(20rem,calc(100vw-1rem))]"
+                >
+                  <button
+                    type="button"
+                    class="lnl-detail-gpu-badge ml-auto"
+                    :aria-label="`查看 ${liveGpuCount} 个 GPU 的实时状态`"
+                  >
+                    {{ liveGpuCount }} GPU · {{ Math.round((data?.gpu ?? 0) * 10) / 10 }}%
+                  </button>
+                  <template #content>
+                    <div class="space-y-2 text-xs leading-relaxed">
+                      <div v-for="(device, gpuIndex) in liveGpuDetails" :key="`${device.name}-${gpuIndex}`" class="lnl-detail-gpu-item">
+                        <strong>{{ device.name || `GPU ${gpuIndex + 1}` }}</strong>
+                        <span>{{ Math.round(device.utilization * 10) / 10 }}%</span>
+                        <span>{{ formatBytes(device.memory_used) }} / {{ formatBytes(device.memory_total) }}</span>
+                        <span>{{ device.temperature }} °C</span>
+                      </div>
+                    </div>
+                  </template>
+                </DataTooltip>
               </div>
               <span class="text-xs sm:text-sm break-all">{{ item.value }}</span>
             </div>
@@ -465,6 +495,71 @@ const trafficProgressStyle = computed(() => ({
 </template>
 
 <style scoped>
+.lnl-detail-gpu-badge {
+  min-height: 20px;
+  flex: none;
+  padding: 0 7px;
+  border: 1px solid color-mix(in srgb, var(--lnl-green) 24%, var(--lnl-line));
+  border-radius: 999px;
+  color: var(--lnl-green);
+  background: color-mix(in srgb, var(--lnl-green) 8%, transparent);
+  font: 600 10px/18px var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+  transition:
+    background-color 140ms ease,
+    border-color 140ms ease,
+    transform 120ms var(--lnl-ease-out);
+}
+
+.lnl-detail-gpu-badge:hover {
+  border-color: color-mix(in srgb, var(--lnl-green) 42%, var(--lnl-line));
+  background: color-mix(in srgb, var(--lnl-green) 13%, transparent);
+}
+
+.lnl-detail-gpu-badge:active {
+  transform: scale(0.96);
+}
+
+.lnl-detail.is-motion-reduced .lnl-detail-gpu-badge {
+  transition: none;
+  transform: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .lnl-detail-gpu-badge {
+    transition: none;
+    transform: none;
+  }
+}
+
+.lnl-detail-gpu-badge:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--lnl-green) 46%, transparent);
+  outline-offset: 1px;
+}
+
+.lnl-detail-gpu-item {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 2px 10px;
+  padding-top: 7px;
+  border-top: 1px solid var(--lnl-line);
+}
+
+.lnl-detail-gpu-item:first-child {
+  padding-top: 0;
+  border-top: 0;
+}
+
+.lnl-detail-gpu-item strong {
+  grid-column: 1 / -1;
+}
+
+.lnl-detail-gpu-item span {
+  color: var(--muted-foreground);
+  font-variant-numeric: tabular-nums;
+}
+
 .lnl-detail-node-loading {
   display: grid;
   min-height: calc(100svh - 73px);

@@ -11,7 +11,12 @@ defineProps<{
 }>()
 
 const appStore = useAppStore()
+const themeVersion = __BUILD_VERSION__
 const serverVersion = ref<VersionInfo | null>(null)
+const shortServerHash = computed(() => {
+  const hash = serverVersion.value?.hash?.trim()
+  return hash ? hash.slice(0, 7) : ''
+})
 const showIcp = computed(() => appStore.icpEnabled && appStore.icpNumber)
 const showPolice = computed(() => appStore.policeEnabled && appStore.policeNumber)
 const showFiling = computed(() => showIcp.value || showPolice.value)
@@ -45,10 +50,11 @@ onMounted(async () => {
     <div class="lnl-footer-meta">
       <p>
         <a href="https://github.com/komari-monitor/komari" target="_blank" rel="noopener noreferrer">Powered by Komari Monitor.</a>
-        <span v-if="serverVersion?.version">{{ serverVersion.version }}</span>
+        <span v-if="serverVersion?.version">{{ serverVersion.version }}<template v-if="shortServerHash"> ({{ shortServerHash }})</template></span>
       </p>
       <p>
         <a href="https://github.com/LeonR-92/komari-theme-leonetlab" target="_blank" rel="noopener noreferrer">Komari Observatory</a>
+        <span>v{{ themeVersion }}</span>
         · based on
         <a href="https://github.com/Tokinx/komari-theme-emerald" target="_blank" rel="noopener noreferrer">Komari Emerald</a>
       </p>

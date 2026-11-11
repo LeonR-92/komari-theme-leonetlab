@@ -28,7 +28,7 @@ const POSITION_EPSILON = 0.5
 const RING_RETENTION = 0.8
 const DOT_RETENTION = 0.2
 const TEXT_TARGET_SELECTOR = 'input, textarea, select, [contenteditable="true"], [data-native-cursor]'
-const INTERACTIVE_TARGET_SELECTOR = 'a, button, [role="button"], [role="link"], [tabindex]:not([tabindex="-1"]), .node-card, [data-custom-cursor="interactive"]'
+const INTERACTIVE_TARGET_SELECTOR = 'a, button, [role="button"], [role="link"], [role="tab"], [role="menuitemradio"], [role="option"], [role="switch"], [data-slot="tabs-trigger"], [tabindex]:not([tabindex="-1"]), .node-card, [data-custom-cursor="interactive"]'
 
 function stopFrame() {
   if (frame)
@@ -281,7 +281,15 @@ onUnmounted(() => {
 }
 
 .lnl-custom-cursor-ring.is-pressed {
-  scale: 0.78;
+  scale: 0.82;
+  transition-duration: 110ms;
+}
+
+.lnl-custom-cursor-ring.is-interactive.is-pressed {
+  border-color: var(--lnl-green);
+  background: color-mix(in srgb, var(--lnl-green) 15%, transparent);
+  scale: 1.18;
+  transition-duration: 110ms;
 }
 
 .lnl-custom-cursor-ring.is-grabbing {
@@ -290,7 +298,8 @@ onUnmounted(() => {
 }
 
 .lnl-custom-cursor-dot.is-pressed {
-  scale: 1.45;
+  scale: 1.62;
+  transition-duration: 110ms;
 }
 
 :global(html.lnl-custom-cursor-active body),
@@ -298,6 +307,11 @@ onUnmounted(() => {
 :global(html.lnl-custom-cursor-active button),
 :global(html.lnl-custom-cursor-active [role='button']),
 :global(html.lnl-custom-cursor-active [role='link']),
+:global(html.lnl-custom-cursor-active [role='tab']),
+:global(html.lnl-custom-cursor-active [role='menuitemradio']),
+:global(html.lnl-custom-cursor-active [role='option']),
+:global(html.lnl-custom-cursor-active [role='switch']),
+:global(html.lnl-custom-cursor-active [data-slot='tabs-trigger']),
 :global(html.lnl-custom-cursor-active .node-card),
 :global(html.lnl-custom-cursor-active .node-earth-globe) {
   cursor: none !important;

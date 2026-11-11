@@ -152,6 +152,7 @@ interface TaskInfo {
   p99?: number
   p50?: number
   p99_p50_ratio?: number
+  stddev?: number
   min?: number
   max?: number
   avg?: number
@@ -197,6 +198,7 @@ interface PingMetricTaskStats {
   p50?: number
   p99?: number
   p99_p50_ratio?: number
+  stddev?: number
 }
 
 interface PingMetricStatsResponse {
@@ -311,7 +313,7 @@ function getMetricTaskId(series: MetricSeries, point: MetricPoint): number | nul
 }
 
 function isValidPingTime(value: unknown): value is string {
-  return typeof value === 'string' && Number.isFinite(dayjs(value).valueOf())
+  return typeof value === 'string' && Number.isFinite(Date.parse(value))
 }
 
 function normalizePingRecords(value: unknown, fallbackClient: string): PingRecord[] {
@@ -346,7 +348,10 @@ function normalizeTaskStatistics(task: TaskInfo): TaskInfo {
     avg: validStatistic(task.avg),
     min: validStatistic(task.min),
     max: validStatistic(task.max),
+    p50: validStatistic(task.p50),
+    p99: validStatistic(task.p99),
     p99_p50_ratio: validStatistic(task.p99_p50_ratio),
+    stddev: validStatistic(task.stddev),
   }
 }
 
@@ -417,6 +422,7 @@ async function fetchMetricRecords(uuid: string, hours: number): Promise<PingChar
     p99: task.p99,
     p50: task.p50,
     p99_p50_ratio: task.p99_p50_ratio,
+    stddev: task.stddev,
     min: task.min,
     max: task.max,
     avg: task.avg,
@@ -529,11 +535,13 @@ async function fetchRecords(options: { background?: boolean } = {}) {
       return
 
     const records = result.records
-    records.sort((a, b) => dayjs(a.time).valueOf() - dayjs(b.time).valueOf())
+    records.sort((a, b) => Date.parse(a.time) - Date.parse(b.time))
+    const lossPoints = result.lossPoints
+    lossPoints.sort((a, b) => Date.parse(a.time) - Date.parse(b.time))
 
     interactiveChartUpdate.value = !background
     remoteData.value = records
-    remoteLossData.value = result.lossPoints
+    remoteLossData.value = lossPoints
     tasks.value = result.tasks
     error.value = null
     refreshError.value = false
@@ -576,19 +584,24 @@ const mergedData = computed(() => {
   const anchors: number[] = []
 
   for (const rec of data) {
-    const ts = dayjs(rec.time).valueOf()
+    const ts = Date.parse(rec.time)
+    if (!Number.isFinite(ts))
+      continue
     let anchor: number | null = null
 
-    for (const a of anchors) {
+    for (let i = anchors.length - 1; i >= 0; i--) {
+      const a = anchors[i]!
       if (Math.abs(a - ts) <= toleranceMs) {
         anchor = a
         break
       }
+      if (ts - a > toleranceMs)
+        break
     }
 
     const useTs = anchor ?? ts
     if (!grouped.has(useTs)) {
-      grouped.set(useTs, { time: dayjs(useTs).toISOString() })
+      grouped.set(useTs, { time: new Date(useTs).toISOString() })
       if (anchor === null) {
         anchors.push(useTs)
       }
@@ -602,46 +615,50 @@ const mergedData = computed(() => {
   // response. Keep an explicit null row so the line breaks at the real loss
   // timestamp and the loss marker remains aligned with the x-axis.
   for (const loss of lossData) {
-    const ts = dayjs(loss.time).valueOf()
-    let anchor: number | null = null
-    for (const candidate of anchors) {
-      if (Math.abs(candidate - ts) <= toleranceMs) {
-        anchor = candidate
-        break
-      }
+    const ts = Date.parse(loss.time)
+    if (!Number.isFinite(ts))
+      continue
+    let lo = 0
+    let hi = anchors.length
+    while (lo < hi) {
+      const mid = (lo + hi) >>> 1
+      if (anchors[mid]! < ts - toleranceMs)
+        lo = mid + 1
+      else
+        hi = mid
     }
+    const anchor = (lo < anchors.length && Math.abs(anchors[lo]! - ts) <= toleranceMs)
+      ? anchors[lo]!
+      : null
     const useTs = anchor ?? ts
     if (!grouped.has(useTs)) {
-      grouped.set(useTs, { time: dayjs(useTs).toISOString() })
-      anchors.push(useTs)
+      grouped.set(useTs, { time: new Date(useTs).toISOString() })
+      if (anchor === null)
+        anchors.splice(lo, 0, useTs)
     }
     const group = grouped.get(useTs)!
     if (!(loss.task_id in group))
       group[loss.task_id] = null
   }
 
-  const merged = Array.from(grouped.values()).sort(
-    (a, b) => dayjs(a.time as string).valueOf() - dayjs(b.time as string).valueOf(),
-  )
-
+  const sortedEntries = Array.from(grouped.entries()).sort((a, b) => a[0] - b[0])
   const hours = selectedHours.value
-  const lastItem = merged.at(-1)
-  const lastTs = lastItem ? dayjs(lastItem.time as string).valueOf() : dayjs().valueOf()
+  const lastEntry = sortedEntries.at(-1)
+  const lastTs = lastEntry ? lastEntry[0] : Date.now()
   const fromTs = lastTs - hours * 3600_000
 
   let startIdx = 0
-  for (let i = 0; i < merged.length; i++) {
-    const item = merged[i]
-    if (!item)
+  for (let i = 0; i < sortedEntries.length; i++) {
+    const entry = sortedEntries[i]
+    if (!entry)
       continue
-    const ts = dayjs(item.time as string).valueOf()
-    if (ts >= fromTs) {
+    if (entry[0] >= fromTs) {
       startIdx = Math.max(0, i - 1)
       break
     }
   }
 
-  return merged.slice(startIdx)
+  return sortedEntries.slice(startIdx).map(entry => entry[1])
 })
 
 const chartData = computed(() => {
@@ -749,14 +766,14 @@ const packetLossMarkers = computed(() => {
   if (!data.length || !selectedTasks.value.length)
     return markers
 
-  const chartTimes = data.map(item => dayjs(item.time as string).valueOf())
+  const chartTimes = data.map(item => Date.parse(item.time as string))
   const toleranceMs = mergeToleranceMs.value
 
   const markerSets = new Map<number, Set<number>>()
   for (const record of remoteLossData.value) {
     if (record.loss <= 0 || !selectedTaskIdSet.value.has(record.task_id))
       continue
-    const matchedIndex = findNearestTimeIndex(chartTimes, dayjs(record.time).valueOf(), toleranceMs)
+    const matchedIndex = findNearestTimeIndex(chartTimes, Date.parse(record.time), toleranceMs)
     if (matchedIndex < 0)
       continue
     const points = markerSets.get(record.task_id) ?? new Set<number>()
@@ -1164,7 +1181,8 @@ onUnmounted(() => {
                         <span>{{ task.type?.toUpperCase() || 'PING' }} · {{ task.interval || 60 }}s</span>
                         <span>均值 {{ task.avg !== undefined ? `${Math.round(task.avg)}ms` : '—' }}</span>
                         <span>范围 {{ task.min !== undefined && task.max !== undefined ? `${Math.round(task.min)}–${Math.round(task.max)}ms` : '—' }}</span>
-                        <span>JIT {{ task.p99_p50_ratio !== undefined ? task.p99_p50_ratio.toFixed(2) : '—' }}</span>
+                        <span v-if="task.p50 !== undefined || task.p99 !== undefined">P50/P99 {{ task.p50 !== undefined ? Math.round(task.p50) : '—' }} / {{ task.p99 !== undefined ? Math.round(task.p99) : '—' }}ms</span>
+                        <span>JIT {{ task.p99_p50_ratio !== undefined ? task.p99_p50_ratio.toFixed(2) : '—' }}<template v-if="task.stddev !== undefined"> · σ {{ task.stddev.toFixed(1) }}ms</template></span>
                       </div>
                       <p v-if="latestValues.some(task => task.lossApproximate)" class="text-muted-foreground">
                         ≈ 表示丢包率由延迟缺失样本近似推算；真实丢包指标可用后会自动切换。
@@ -1189,18 +1207,30 @@ onUnmounted(() => {
                 <div class="lnl-ping-probe-copy">
                   <i :style="{ backgroundColor: task.color }" aria-hidden="true" />
                   <strong>{{ task.name }}</strong>
-                  <span class="lnl-ping-probe-check" aria-hidden="true">{{ selectedTaskIdSet.has(task.id) ? '✓' : '' }}</span>
+                  <span class="lnl-ping-probe-check" aria-hidden="true">✓</span>
                 </div>
                 <div class="lnl-ping-probe-value">
                   <strong>{{ formatProbeLatency(task) }}</strong>
                   <small>ms</small>
                 </div>
                 <div class="lnl-ping-probe-meta">
+                  <em v-if="task.type" class="lnl-ping-probe-proto">{{ task.type.toUpperCase() }}</em>
                   <span>丢包 {{ formatProbeLoss(task) }}</span>
                 </div>
               </button>
             </div>
           </aside>
+          <div v-else-if="loading" class="lnl-ping-probes-skeleton" aria-hidden="true">
+            <div class="lnl-ping-probes-head">
+              <div>
+                <span>探测线路</span>
+                <small>SYNCING</small>
+              </div>
+            </div>
+            <div class="lnl-ping-probe-list">
+              <div v-for="placeholderIndex in 3" :key="placeholderIndex" class="lnl-ping-probe-skeleton-card" />
+            </div>
+          </div>
 
           <section class="lnl-ping-plot" aria-label="延迟时间线">
             <div class="lnl-ping-plot-head">
@@ -1282,6 +1312,9 @@ onUnmounted(() => {
 .lnl-ping-panel.is-motion-enabled .lnl-ping-probe {
   animation: ping-section-in 440ms calc(100ms + var(--lnl-probe-index, 0) * 55ms) cubic-bezier(0.22, 1, 0.36, 1) both;
 }
+.lnl-ping-panel.is-motion-enabled .lnl-ping-probe-skeleton-card {
+  animation: ping-skeleton-pulse 1.4s ease-in-out infinite alternate;
+}
 .lnl-ping-panel.is-motion-enabled .lnl-ping-plot-head {
   animation: ping-section-in 440ms 180ms cubic-bezier(0.22, 1, 0.36, 1) both;
 }
@@ -1334,7 +1367,6 @@ onUnmounted(() => {
 }
 .lnl-ping-window-tab[data-state='active'] {
   color: var(--lnl-green);
-  background: color-mix(in srgb, var(--lnl-green) 10%, transparent);
 }
 .lnl-ping-window-tab:focus-visible,
 .lnl-ping-select-action:focus-visible,
@@ -1353,11 +1385,24 @@ onUnmounted(() => {
   margin-right: 4px;
   color: var(--muted-foreground);
 }
+.lnl-ping-select-action,
+.lnl-ping-chart-action {
+  transition:
+    background-color 150ms ease,
+    border-color 150ms ease,
+    color 150ms ease,
+    transform 120ms var(--lnl-ease-out);
+}
+.lnl-ping-select-action:active,
+.lnl-ping-chart-action:active {
+  transform: scale(0.96);
+}
 .lnl-ping-select-action {
   border: 1px solid color-mix(in srgb, var(--lnl-green) 18%, var(--lnl-line));
 }
 .lnl-ping-select-action.is-active {
   color: var(--lnl-green);
+  border-color: color-mix(in srgb, var(--lnl-green) 38%, var(--lnl-line));
   background: color-mix(in srgb, var(--lnl-green) 7%, transparent);
 }
 .lnl-ping-chart-action.is-active {
@@ -1372,7 +1417,8 @@ onUnmounted(() => {
   min-height: 0;
   flex-direction: column;
 }
-.lnl-ping-probes {
+.lnl-ping-probes,
+.lnl-ping-probes-skeleton {
   display: flex;
   flex-direction: column;
   min-width: 0;
@@ -1380,6 +1426,14 @@ onUnmounted(() => {
   padding: 8px;
   gap: 8px;
   background: transparent;
+}
+.lnl-ping-probe-skeleton-card {
+  width: 100%;
+  max-width: 200px;
+  min-height: 64px;
+  border: 1px solid color-mix(in srgb, var(--lnl-line) 75%, transparent);
+  border-radius: var(--lnl-radius-inner);
+  background: color-mix(in srgb, var(--lnl-green) 3%, var(--lnl-surface-base, var(--background)));
 }
 .lnl-ping-probes-head {
   display: flex;
@@ -1464,16 +1518,18 @@ onUnmounted(() => {
 .lnl-ping-probe-list {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(min(160px, 100%), 1fr));
-  align-items: start;
+  align-items: stretch;
   min-width: 0;
   gap: 8px;
 }
 .lnl-ping-probe {
   position: relative;
+  box-sizing: border-box;
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
-  grid-template-rows: auto auto;
+  grid-template-rows: minmax(16px, 1fr) auto;
   width: 100%;
+  height: 100%;
   max-width: 200px;
   min-width: 0;
   gap: 7px 8px;
@@ -1490,13 +1546,15 @@ onUnmounted(() => {
   transition:
     background-color 180ms ease,
     border-color 140ms ease,
-    box-shadow 140ms ease;
+    box-shadow 140ms ease,
+    transform 120ms var(--lnl-ease-out);
 }
 .lnl-ping-probe:focus-visible {
   outline: 2px solid var(--lnl-green);
   outline-offset: -2px;
 }
 .lnl-ping-probe:active {
+  transform: scale(0.98);
   background: color-mix(in srgb, var(--lnl-green) 13%, var(--lnl-surface-inner));
   box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--lnl-green) 35%, transparent);
 }
@@ -1511,10 +1569,12 @@ onUnmounted(() => {
 }
 .lnl-ping-probe-copy {
   grid-column: 1 / -1;
+  align-self: start;
   display: grid;
-  grid-template-columns: 6px minmax(0, 1fr) 12px;
+  grid-template-columns: 6px minmax(0, 1fr) 14px;
   gap: 6px;
   align-items: start;
+  min-height: 16px;
   min-width: 0;
 }
 .lnl-ping-probe-copy i {
@@ -1522,10 +1582,34 @@ onUnmounted(() => {
   height: 6px;
   margin-top: 5px;
   border-radius: 50%;
+  transition:
+    opacity 160ms ease,
+    transform 160ms var(--lnl-ease-out);
 }
 .lnl-ping-probe-check {
+  display: inline-flex;
+  width: 14px;
+  height: 14px;
+  align-items: center;
+  justify-content: center;
   color: var(--lnl-green);
   font-size: 12px;
+  line-height: 1;
+  transition:
+    opacity 150ms ease,
+    transform 180ms var(--lnl-ease-emphasis);
+}
+.lnl-ping-probe.is-disabled .lnl-ping-probe-check {
+  opacity: 0;
+  transform: scale(0.65);
+}
+.lnl-ping-probe.is-disabled .lnl-ping-probe-copy i {
+  opacity: 0.45;
+  transform: scale(0.85);
+}
+.lnl-ping-probe.is-disabled .lnl-ping-probe-copy strong,
+.lnl-ping-probe.is-disabled .lnl-ping-probe-value {
+  opacity: 0.68;
 }
 .lnl-ping-probe-copy strong {
   display: -webkit-box;
@@ -1535,6 +1619,7 @@ onUnmounted(() => {
   overflow-wrap: anywhere;
   font-size: 12px;
   line-height: 1.3;
+  transition: opacity 150ms ease;
 }
 .lnl-ping-probe-value small,
 .lnl-ping-probe-meta {
@@ -1557,7 +1642,17 @@ onUnmounted(() => {
   grid-column: 2;
   justify-self: end;
   display: flex;
-  gap: 10px;
+  align-items: center;
+  gap: 5px;
+}
+.lnl-ping-probe-proto {
+  padding: 1px 4px;
+  border: 1px solid color-mix(in srgb, var(--lnl-line) 76%, transparent);
+  border-radius: 4px;
+  color: color-mix(in srgb, var(--muted-foreground) 86%, transparent);
+  font: 600 8px/1.15 var(--font-mono);
+  font-style: normal;
+  letter-spacing: 0.04em;
 }
 .lnl-ping-plot {
   min-width: 0;
@@ -1638,14 +1733,28 @@ onUnmounted(() => {
   box-shadow: 0 20px 60px rgb(0 0 0 / 28%);
 }
 :global(.dark) .lnl-ping-toolbar,
-:global(.dark) .lnl-ping-probes {
+:global(.dark) .lnl-ping-probes,
+:global(.dark) .lnl-ping-probes-skeleton {
   background: color-mix(in srgb, var(--lnl-surface-inner) 78%, transparent);
 }
-:global(.dark) .lnl-ping-probes-head,
-:global(.dark) .lnl-ping-probe {
+:global(.dark) .lnl-ping-probes-head {
   border-color: color-mix(in srgb, var(--lnl-line-strong) 62%, transparent);
   background: var(--lnl-surface-raised);
   box-shadow: inset 0 1px rgb(255 255 255 / 2%);
+}
+:global(.dark) .lnl-ping-probe {
+  border-color: color-mix(in srgb, var(--lnl-green) 34%, var(--lnl-line-strong));
+  background: color-mix(in srgb, var(--lnl-green) 6%, var(--lnl-surface-raised));
+  box-shadow: inset 0 1px rgb(255 255 255 / 2%);
+}
+:global(.dark) .lnl-ping-probe-skeleton-card {
+  border-color: color-mix(in srgb, var(--lnl-line-strong) 56%, transparent);
+  background: color-mix(in srgb, var(--lnl-green) 4%, var(--lnl-surface-raised));
+}
+:global(.dark) .lnl-ping-probe.is-disabled {
+  border-color: color-mix(in srgb, var(--lnl-line-strong) 52%, transparent);
+  background: transparent;
+  box-shadow: none;
 }
 :global(.dark) .lnl-ping-plot {
   border-color: color-mix(in srgb, var(--lnl-line-strong) 68%, transparent);
@@ -1665,7 +1774,8 @@ onUnmounted(() => {
   .lnl-ping-selection {
     overflow-x: auto;
   }
-  .lnl-ping-probes {
+  .lnl-ping-probes,
+  .lnl-ping-probes-skeleton {
     display: block;
     border-radius: var(--lnl-radius-inner);
   }
@@ -1720,7 +1830,8 @@ onUnmounted(() => {
     gap: 5px;
   }
 
-  .lnl-ping-probes {
+  .lnl-ping-probes,
+  .lnl-ping-probes-skeleton {
     padding: 5px;
   }
 
@@ -1737,7 +1848,8 @@ onUnmounted(() => {
     overflow: visible;
   }
 
-  .lnl-ping-probe {
+  .lnl-ping-probe,
+  .lnl-ping-probe-skeleton-card {
     grid-template-columns: minmax(0, 1fr) auto;
     width: 100%;
     min-width: 0;
@@ -1791,8 +1903,23 @@ onUnmounted(() => {
 }
 @media (prefers-reduced-motion: reduce) {
   .lnl-ping-panel.is-motion-enabled
-    :is(.lnl-ping-toolbar, .lnl-ping-probes-head, .lnl-ping-probe, .lnl-ping-plot-head, .lnl-ping-chart) {
+    :is(
+      .lnl-ping-toolbar,
+      .lnl-ping-probes-head,
+      .lnl-ping-probe,
+      .lnl-ping-probe-skeleton-card,
+      .lnl-ping-plot-head,
+      .lnl-ping-chart
+    ) {
     animation: none;
+  }
+}
+@keyframes ping-skeleton-pulse {
+  from {
+    opacity: 0.56;
+  }
+  to {
+    opacity: 0.92;
   }
 }
 @keyframes ping-live-pulse {

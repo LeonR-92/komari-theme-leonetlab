@@ -7,8 +7,9 @@ import { computed, ref, watch } from 'vue'
 import { normalizeCurrency } from '@/utils/financeHelper'
 import { useVisibleMinuteClock } from '@/utils/visibleMinuteClock'
 
+export const COLOR_PALETTES = ['emerald', 'aurora', 'cobalt', 'amber', 'violet', 'crimson', 'glacier', 'graphite'] as const
 export type ThemeMode = 'system' | 'light' | 'dark'
-export type ColorPalette = 'emerald' | 'aurora' | 'cobalt' | 'amber'
+export type ColorPalette = typeof COLOR_PALETTES[number]
 export type CursorStyle = 'halo' | 'native'
 export type BillingDisplayPeriod = 'monthly' | 'quarterly' | 'yearly'
 export type NodeCardDensity = 'comfortable' | 'compact'
@@ -57,10 +58,14 @@ function writeStorageFlag(key: string, enabled: boolean): void {
 }
 
 export const PALETTE_THEME_COLORS: Record<ColorPalette, Record<'light' | 'dark', string>> = {
-  emerald: { light: '#edf7f1', dark: '#04100d' },
+  emerald: { light: '#f4f8f5', dark: '#04100d' },
   aurora: { light: '#edf8f8', dark: '#061013' },
   cobalt: { light: '#f1f5fb', dark: '#070d18' },
   amber: { light: '#fbf6eb', dark: '#151007' },
+  violet: { light: '#f6f3fb', dark: '#0b0714' },
+  crimson: { light: '#fbf3f4', dark: '#14070a' },
+  glacier: { light: '#f0f6fa', dark: '#060e14' },
+  graphite: { light: '#f4f5f6', dark: '#090b0d' },
 }
 
 export const PALETTE_ACCENT_COLORS: Record<ColorPalette, Record<'light' | 'dark', { primary: string, secondary: string }>> = {
@@ -80,6 +85,22 @@ export const PALETTE_ACCENT_COLORS: Record<ColorPalette, Record<'light' | 'dark'
     light: { primary: '#9a6515', secondary: '#8b7045' },
     dark: { primary: '#f2bd62', secondary: '#d8a779' },
   },
+  violet: {
+    light: { primary: '#6438a8', secondary: '#4e67b8' },
+    dark: { primary: '#b892ff', secondary: '#7ec8ff' },
+  },
+  crimson: {
+    light: { primary: '#a82846', secondary: '#bf5b4b' },
+    dark: { primary: '#ff7a96', secondary: '#ffb085' },
+  },
+  glacier: {
+    light: { primary: '#23648e', secondary: '#3d8499' },
+    dark: { primary: '#7fd4ff', secondary: '#68ebd6' },
+  },
+  graphite: {
+    light: { primary: '#2c353d', secondary: '#52606d' },
+    dark: { primary: '#d5dde6', secondary: '#8fa3b8' },
+  },
 }
 
 function isValidThemeMode(value: unknown): value is ThemeMode {
@@ -87,7 +108,7 @@ function isValidThemeMode(value: unknown): value is ThemeMode {
 }
 
 function isValidColorPalette(value: unknown): value is ColorPalette {
-  return value === 'emerald' || value === 'aurora' || value === 'cobalt' || value === 'amber'
+  return typeof value === 'string' && (COLOR_PALETTES as readonly string[]).includes(value)
 }
 
 function isValidCursorStyle(value: unknown): value is CursorStyle {
@@ -414,9 +435,8 @@ const useAppStore = defineStore('app', () => {
   // 只能在 init() 的网络请求完成后才被赋值，远晚于水合。immediate watcher 首次
   // 触发时 settings 为 undefined，不会写回默认值覆盖用户偏好。
   watch(publicSettings, (settings) => {
-    if (settings && !isValidViewMode(storedViewMode.value)) {
-      // 触发 computed setter，会自动保存到 localStorage
-      storedViewMode.value = defaultViewMode.value
+    if (settings && storedViewMode.value !== null && !isValidViewMode(storedViewMode.value)) {
+      storedViewMode.value = null
     }
   }, { immediate: true })
 
@@ -545,6 +565,7 @@ const useAppStore = defineStore('app', () => {
     themeMode.value = defaultThemeMode.value
     storedColorPalette.value = defaultColorPalette.value
     storedCursorStyle.value = defaultCursorStyle.value
+    storedViewMode.value = null
   }
 
   function updateLoginState(loggedIn: boolean) {

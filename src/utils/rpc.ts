@@ -1,4 +1,5 @@
 import type { UuidCollection } from '@/utils/nodeResponse'
+import { publicGpuHistoryParams } from '@/utils/gpuHistory'
 import { normalizeUuidCollection } from '@/utils/nodeResponse'
 import { normalizeTimedRecordCollection } from '@/utils/recordResponse'
 
@@ -158,6 +159,23 @@ export interface PublicInfo {
   sitename: string
   theme: string
   theme_settings: Record<string, unknown>
+}
+
+export interface GpuHistoryRecord {
+  client?: string
+  time: string
+  device_index: number
+  device_name: string
+  mem_total: number
+  mem_used: number
+  utilization: number
+  temperature: number
+}
+
+export interface GpuDeviceHistory {
+  device_index: number
+  device_name: string
+  records: GpuHistoryRecord[]
 }
 
 export interface LoadRecordsResult {
@@ -856,16 +874,21 @@ export class KomariRpc {
     })
 
     const records = normalizeTimedRecordCollection(result?.records, uuid)
-    const responseCount = typeof result?.count === 'number' && Number.isFinite(result.count)
-      ? Math.max(0, Math.floor(result.count))
-      : records.length
-
     return {
       records,
-      count: responseCount,
+      count: typeof result?.count === 'number' && Number.isFinite(result.count) ? Math.max(0, Math.floor(result.count)) : records.length,
       from: typeof result?.from === 'string' ? result.from : undefined,
       to: typeof result?.to === 'string' ? result.to : undefined,
     }
+  }
+
+  /** Fetch per-device fallback data without processing unused general records. */
+  async getPublicGpuHistory(uuid: string, hours: number): Promise<Record<string, GpuDeviceHistory> | undefined> {
+    const result = await this.client.call<{ gpu_devices?: unknown }>(
+      'public:getRecordsByUUID',
+      publicGpuHistoryParams(uuid, hours),
+    )
+    return normalizeGpuDevices(result?.gpu_devices)
   }
 
   /**
@@ -886,6 +909,134 @@ export class KomariRpc {
   close(): void {
     this.client.close()
   }
+}
+
+function normalizeGpuDevices(value: unknown): Record<string, GpuDeviceHistory> | undefined {
+  if (!value || typeof value !== 'object' || Array.isArray(value))
+    return undefined
+
+  const normalized: Record<string, GpuDeviceHistory> = Object.create(null)
+  for (const [key, rawDevice] of Object.entries(value as Record<string, unknown>)) {
+    if (!rawDevice || typeof rawDevice !== 'object')
+      continue
+    const candidate = rawDevice as Partial<GpuDeviceHistory>
+    const rawRecords = Array.isArray(candidate.records) ? candidate.records : []
+    const records = rawRecords.filter((rec): rec is GpuHistoryRecord => Boolean(
+      rec
+      && typeof rec === 'object'
+      && typeof rec.time === 'string'
+      && Number.isFinite(Date.parse(rec.time)),
+    ))
+    if (records.length === 0)
+      continue
+    const deviceIndex = typeof candidate.device_index === 'number' && Number.isFinite(candidate.device_index)
+      ? Math.max(0, Math.trunc(candidate.device_index))
+      : (Number.isInteger(Number(key)) ? Number(key) : 0)
+    const deviceName = typeof candidate.device_name === 'string' && candidate.device_name.trim()
+      ? candidate.device_name.trim()
+      : (records[0]?.device_name || `GPU ${deviceIndex + 1}`)
+    normalized[key] = {
+      device_index: deviceIndex,
+      device_name: deviceName,
+      records,
+    }
+  }
+
+  return Object.keys(normalized).length > 0 ? normalized : undefined
+}
+
+export function synthesizeGpuMetricSeriesFromDevices(
+  uuid: string,
+  gpuDevices: Record<string, GpuDeviceHistory> | undefined,
+  tab: 'gpu' | 'gpu-memory' | 'gpu-temperature',
+): MetricSeries[] {
+  if (!gpuDevices || typeof gpuDevices !== 'object')
+    return []
+
+  const entries = Object.entries(gpuDevices).sort(([, a], [, b]) => a.device_index - b.device_index)
+  const series: MetricSeries[] = []
+
+  for (const [, device] of entries) {
+    const sortedRecords = device.records
+      .map(record => ({ record, time: Date.parse(record.time) }))
+      .sort((a, b) => a.time - b.time)
+      .map(({ record }) => record)
+    if (sortedRecords.length === 0)
+      continue
+    const maxPoints = 400
+    const sampledRecords = sortedRecords.length <= maxPoints
+      ? sortedRecords
+      : Array.from({ length: maxPoints }, (_, index) => sortedRecords[Math.round(index * (sortedRecords.length - 1) / (maxPoints - 1))]!)
+    const tags: Record<string, string> = {
+      device_index: String(device.device_index),
+      device_name: device.device_name,
+    }
+
+    if (tab === 'gpu') {
+      const points = sampledRecords.map(r => ({
+        time: r.time,
+        value: typeof r.utilization === 'number' && Number.isFinite(r.utilization) ? r.utilization : null,
+      }))
+      if (points.some(p => p.value !== null)) {
+        series.push({
+          metric_key: 'gpu.device.usage',
+          entity_id: uuid,
+          tags,
+          count: points.length,
+          points,
+        })
+      }
+      continue
+    }
+
+    if (tab === 'gpu-memory') {
+      const usedPoints = sampledRecords.map(r => ({
+        time: r.time,
+        value: typeof r.mem_used === 'number' && Number.isFinite(r.mem_used) ? r.mem_used : null,
+      }))
+      const totalPoints = sampledRecords.map(r => ({
+        time: r.time,
+        value: typeof r.mem_total === 'number' && Number.isFinite(r.mem_total) ? r.mem_total : null,
+      }))
+      if (usedPoints.some(p => p.value !== null)) {
+        series.push({
+          metric_key: 'gpu.memory.used',
+          entity_id: uuid,
+          tags,
+          count: usedPoints.length,
+          points: usedPoints,
+        })
+      }
+      if (totalPoints.some(p => p.value !== null)) {
+        series.push({
+          metric_key: 'gpu.memory.total',
+          entity_id: uuid,
+          tags,
+          count: totalPoints.length,
+          points: totalPoints,
+        })
+      }
+      continue
+    }
+
+    if (tab === 'gpu-temperature') {
+      const tempPoints = sampledRecords.map(r => ({
+        time: r.time,
+        value: typeof r.temperature === 'number' && Number.isFinite(r.temperature) ? r.temperature : null,
+      }))
+      if (tempPoints.some(p => p.value !== null)) {
+        series.push({
+          metric_key: 'gpu.temperature',
+          entity_id: uuid,
+          tags,
+          count: tempPoints.length,
+          points: tempPoints,
+        })
+      }
+    }
+  }
+
+  return series
 }
 
 // ==================== 单例 ====================

@@ -254,8 +254,9 @@ onUnmounted(() => {
   inset: 0;
   overflow: hidden;
   background:
-    radial-gradient(circle at 72% 8%, rgba(116, 230, 178, 0.075), transparent 28rem),
-    radial-gradient(circle at 12% 36%, rgba(117, 201, 212, 0.04), transparent 24rem), var(--background);
+    radial-gradient(circle at 72% 8%, color-mix(in srgb, var(--lnl-green) 8.5%, transparent), transparent 28rem),
+    radial-gradient(circle at 12% 36%, color-mix(in srgb, var(--lnl-cyan) 4.5%, transparent), transparent 24rem),
+    var(--background);
 }
 
 .lnl-background-ocean {
@@ -266,8 +267,8 @@ onUnmounted(() => {
   height: 58%;
   opacity: 0.27;
   background-image:
-    radial-gradient(circle, rgba(116, 230, 178, 0.78) 0 1px, transparent 1.25px),
-    radial-gradient(circle, rgba(117, 201, 212, 0.35) 0 0.8px, transparent 1px);
+    radial-gradient(circle, color-mix(in srgb, var(--lnl-green) 78%, transparent) 0 1px, transparent 1.25px),
+    radial-gradient(circle, color-mix(in srgb, var(--lnl-cyan) 35%, transparent) 0 0.8px, transparent 1px);
   background-position:
     0 0,
     14px 11px;

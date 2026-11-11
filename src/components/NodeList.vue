@@ -114,8 +114,8 @@ const sortedNodes = computed(() => {
 
 const METRIC_WHITESPACE_PATTERN = /\s+/g
 const compactMetric = (value: string) => value.replace(METRIC_WHITESPACE_PATTERN, '')
-const formatBytes = (bytes: number) => compactMetric(formatBytesWithConfig(bytes))
-const formatBytesPerSecond = (bytes: number) => compactMetric(formatBytesPerSecondWithConfig(bytes))
+const formatBytes = (bytes: number) => compactMetric(formatBytesWithConfig(bytes, appStore.byteDecimals))
+const formatBytesPerSecond = (bytes: number) => compactMetric(formatBytesPerSecondWithConfig(bytes, appStore.byteDecimals))
 const formatMetricPair = (used: number, total: number) => `${formatBytes(used)}/${formatBytes(total)}`
 const formatUptime = (seconds: number) => formatUptimeWithFormat(seconds, 'hour')
 
@@ -280,7 +280,12 @@ function getCustomTags(node: NodeData): Array<string> {
       >
         <div
           v-for="col in columns" :key="col.key"
-          :class="[col.sortable ? 'cursor-pointer' : '', col.key === 'status' ? 'text-center' : 'text-left']"
+          class="lnl-node-list-col"
+          :class="[
+            col.sortable ? 'is-sortable cursor-pointer' : '',
+            col.sortable && sortKey === col.key ? 'is-sorted' : '',
+            col.key === 'status' ? 'text-center' : 'text-left',
+          ]"
           :role="col.sortable ? 'button' : undefined"
           :tabindex="col.sortable ? 0 : undefined"
           :aria-label="col.sortable ? `按${col.label}排序` : undefined"
@@ -288,8 +293,8 @@ function getCustomTags(node: NodeData): Array<string> {
           @keydown.enter.prevent="handleSort(col)"
           @keydown.space.prevent="handleSort(col)"
         >
-          <span class="text-xs text-muted-foreground">
-            {{ col.label }}{{ col.sortable && sortKey === col.key ? (sortDir === 1 ? ' ↑' : ' ↓') : '' }}
+          <span class="lnl-node-list-col-label text-xs text-muted-foreground">
+            {{ col.label }}<i v-if="col.sortable" class="lnl-sort-indicator" :class="{ 'is-active': sortKey === col.key, 'is-desc': sortKey === col.key && sortDir === -1 }" aria-hidden="true">{{ sortKey === col.key ? (sortDir === 1 ? '↑' : '↓') : '↕' }}</i>
           </span>
         </div>
       </div>
@@ -484,11 +489,11 @@ function getCustomTags(node: NodeData): Array<string> {
               <!-- 速率 -->
               <div v-else-if="col.key === 'rate'">
                 <div class="text-[10px] flex flex-col ">
-                  <span class="text-emerald-600 flex flex-row gap-1 items-center">
+                  <span class="text-[var(--lnl-green)] flex flex-row gap-1 items-center">
                     <Icon icon="tabler:chevron-up" width="12" height="12" />
                     {{ formatBytesPerSecond(node.net_out ?? 0) }}
                   </span>
-                  <span class="text-blue-600 flex flex-row gap-1 items-center">
+                  <span class="text-blue-600 dark:text-sky-400 flex flex-row gap-1 items-center">
                     <Icon icon="tabler:chevron-down" width="12" height="12" />
                     {{ formatBytesPerSecond(node.net_in ?? 0) }}
                   </span>
@@ -523,6 +528,55 @@ function getCustomTags(node: NodeData): Array<string> {
   border: 1px solid var(--lnl-line);
   border-radius: var(--lnl-radius-inner);
   background: var(--lnl-surface-inner);
+}
+
+.lnl-node-list-col.is-sortable {
+  user-select: none;
+  border-radius: 6px;
+  transition:
+    color var(--lnl-motion-fast) ease,
+    transform 120ms var(--lnl-ease-out);
+}
+
+.lnl-node-list-col.is-sortable:active {
+  transform: scale(0.97);
+}
+
+.lnl-node-list-col.is-sortable:hover .lnl-node-list-col-label,
+.lnl-node-list-col.is-sorted .lnl-node-list-col-label {
+  color: var(--foreground);
+}
+
+.lnl-node-list-col.is-sorted .lnl-node-list-col-label {
+  color: var(--lnl-green);
+  font-weight: 600;
+}
+
+.lnl-node-list-col-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  transition: color var(--lnl-motion-fast) ease;
+}
+
+.lnl-sort-indicator {
+  display: inline-block;
+  font: 600 10px/1 var(--font-mono);
+  font-style: normal;
+  opacity: 0.36;
+  transition:
+    opacity var(--lnl-motion-fast) ease,
+    color var(--lnl-motion-fast) ease,
+    transform var(--lnl-motion-fast) var(--lnl-ease-out);
+}
+
+.lnl-node-list-col.is-sortable:hover .lnl-sort-indicator {
+  opacity: 0.72;
+}
+
+.lnl-sort-indicator.is-active {
+  color: var(--lnl-green);
+  opacity: 1;
 }
 
 .lnl-node-row {

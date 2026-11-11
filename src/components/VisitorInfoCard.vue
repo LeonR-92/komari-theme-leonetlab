@@ -563,7 +563,7 @@ onUnmounted(() => {
             >
             <div
               v-else
-              class="flex h-4 w-4 shrink-0 items-center justify-center rounded bg-emerald-500/10 text-emerald-600"
+              class="lnl-visitor-row-icon flex h-4 w-4 shrink-0 items-center justify-center rounded"
             >
               <Icon :icon="item.icon" :width="14" :height="14" />
             </div>
@@ -1058,5 +1058,10 @@ onUnmounted(() => {
   .lnl-visitor.is-entering .lnl-visitor-row {
     animation: none;
   }
+}
+
+.lnl-visitor-row-icon {
+  color: var(--lnl-green);
+  background: color-mix(in srgb, var(--lnl-green) 11%, transparent);
 }
 </style>

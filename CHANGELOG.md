@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.6.1 — 2026-11-11
+
+- Aligned with Komari `1.6.1`, added live multi-GPU details and Ping percentile/protocol display, and show the server commit and theme build version in the footer.
+- Align multi-GPU history by timestamp and preserve missing samples. Use the official public records request format for the fallback, with a four-hour limit when the bounded metric query cannot supply data.
+- Expanded light/dark color palettes from four to eight (`emerald`, `aurora`, `cobalt`, `amber`, `violet`, `crimson`, `glacier`, `graphite`) across CSS tokens, COBE WebGL markers, ECharts series, visitor card row icons, boot scripts, and managed theme settings.
+- Added `<TabsIndicator>` sliding active pills across all `<TabsList>` bars (eliminating double active-background stacking and keeping extended telemetry tabs single-row scrollable) and `--segment-index` sliding thumbs inside the appearance panel (`#lnl-appearance-panel`), plus custom halo cursor hover/click physics and tactile feedback on interactive controls.
+- Fixed rapid-click disappearance in `#lnl-appearance-panel` by disabling pointer interception on `::view-transition*` pseudo-elements, guarding outside pointer detection with `composedPath()` and bounding-box hit-testing, keeping `.lnl-palette-check` mounted, and committing cursor style updates immediately.
+- Unified selected and unselected `.lnl-ping-probe` card dimensions (`14px × 14px` `.lnl-ping-probe-check`, `height: 100%`, `align-items: stretch`) and added `.lnl-ping-probes-skeleton` plus `<Spinner>` fade-out transitions so the Ping modal opens smoothly without layout height jumps, with full `disablePageAnimation` (`motionReduced`) coverage across all modal, chart, spinner, and appearance transitions.
+- Reduced date parsing and repeated scans in chart updates, cached per-client Ping statistics, and batched node status updates.
+- Aligned frontend and backend managed settings (`defaultViewMode` non-destructive initialization and full reset on `restoreAppearanceDefaults()`), and hardened `.github/workflows/release-on-version-bump.yml` so any SemVer pre-release (`-`) is published as a GitHub pre-release rather than promoted to Latest Release.
+
 ## 1.6.0 — 2026-10-17
 
 - Aligned with Komari 1.6.0 and additive 1.5 GPU snapshots while retaining legacy node normalization and controlled Ping fallbacks.

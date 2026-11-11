@@ -784,7 +784,7 @@ function openPingDialog() {
 
 :global(.dark) .node-card {
   border-color: var(--lnl-line-strong);
-  background: linear-gradient(145deg, color-mix(in srgb, var(--card) 94%, #193329 6%), var(--card));
+  background: linear-gradient(145deg, color-mix(in srgb, var(--card) 94%, var(--lnl-green) 6%), var(--card));
 }
 
 :global(.dark) .lnl-node-resource-frame,

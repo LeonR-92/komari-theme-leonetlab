@@ -161,8 +161,8 @@ let searchFocusFeedbackFrame = 0
 let searchFocusCommitFrame = 0
 let searchDebounceTimer: number | null = null
 let interactionRun = 0
-const onlineNodeCount = computed(() => nodesStore.nodes.filter(node => node.online).length)
-const totalNodeCount = computed(() => nodesStore.nodes.length)
+const onlineNodeCount = computed(() => nodesStore.onlineCount)
+const totalNodeCount = computed(() => nodesStore.totalCount)
 
 function beginSearchReorderMotion() {
   if (searchReorderMotionTimer !== null) {
@@ -310,7 +310,7 @@ const nodeList = computed(() => {
 const selectedPingNode = computed(() => {
   if (!selectedPingNodeUuid.value)
     return null
-  return nodesStore.nodes.find(node => node.uuid === selectedPingNodeUuid.value) ?? null
+  return nodesStore.nodesByUuid.get(selectedPingNodeUuid.value) ?? null
 })
 
 watch(pingDialogOpen, (open) => {
@@ -501,7 +501,7 @@ function clearLeavingNodeRect(element: Element) {
               <TabsList :class="pickSurfaceClass('w-max h-8 bg-background/60 rounded-md', 'w-max h-8 bg-background/50 backdrop-blur-xl rounded-md')">
                 <TabsTrigger
                   v-for="g in groups" :key="g.name" :value="g.name"
-                  class="h-6.5 flex-none shrink-0 text-xs border-none data-[state=active]:text-emerald-800 dark:data-[state=active]:text-emerald-300 shadow-none rounded-sm"
+                  class="lnl-group-tab h-6.5 flex-none shrink-0 text-xs border-none data-[state=active]:text-[var(--lnl-green)] shadow-none rounded-sm"
                 >
                   {{ g.tab }}
                 </TabsTrigger>
@@ -511,8 +511,8 @@ function clearLeavingNodeRect(element: Element) {
               <Button
                 variant="outline" size="icon" aria-label="卡片视图"
                 :aria-pressed="appStore.nodeViewMode === 'card'"
-                class="h-8 w-8 border-none shadow-none rounded-md"
-                :class="[pickSurfaceClass('bg-background hover:bg-background/95', 'bg-background/50 hover:bg-background/60 backdrop-blur-xs'), appStore.nodeViewMode === 'card' ? '!text-emerald-800 dark:!text-emerald-300 !bg-background' : '']"
+                class="lnl-view-mode-btn h-8 w-8 border-none shadow-none rounded-md"
+                :class="[pickSurfaceClass('bg-background hover:bg-background/95', 'bg-background/50 hover:bg-background/60 backdrop-blur-xs'), appStore.nodeViewMode === 'card' ? 'is-active !text-[var(--lnl-green)] !bg-background' : '']"
                 @click="setNodeViewMode('card')"
               >
                 <Icon icon="tabler:layout-grid" :width="14" :height="14" />
@@ -520,8 +520,8 @@ function clearLeavingNodeRect(element: Element) {
               <Button
                 variant="outline" size="icon" aria-label="列表视图"
                 :aria-pressed="appStore.nodeViewMode === 'list'"
-                class="h-8 w-8 border-none shadow-none rounded-md"
-                :class="[pickSurfaceClass('bg-background hover:bg-background/95', 'bg-background/50 hover:bg-background/60 backdrop-blur-xs'), appStore.nodeViewMode === 'list' ? '!text-emerald-800 dark:!text-emerald-300 !bg-background' : '']"
+                class="lnl-view-mode-btn h-8 w-8 border-none shadow-none rounded-md"
+                :class="[pickSurfaceClass('bg-background hover:bg-background/95', 'bg-background/50 hover:bg-background/60 backdrop-blur-xs'), appStore.nodeViewMode === 'list' ? 'is-active !text-[var(--lnl-green)] !bg-background' : '']"
                 @click="setNodeViewMode('list')"
               >
                 <Icon icon="tabler:table" :width="14" :height="14" />
@@ -610,8 +610,8 @@ function clearLeavingNodeRect(element: Element) {
     <Dialog v-model:open="pingDialogOpen">
       <DialogContent
         v-if="selectedPingNode"
-        class="lnl-ping-dialog w-[calc(100vw-1rem)] max-w-[1240px] gap-0 overflow-hidden rounded-[var(--lnl-radius-card)] border-emerald-600/20 p-0 shadow-[0_0_3rem] shadow-emerald-950/20 sm:w-[calc(100vw-2rem)]"
-        :class="pickSurfaceClass('bg-background', 'bg-background/94')"
+        class="lnl-ping-dialog w-[calc(100vw-1rem)] max-w-[1240px] gap-0 overflow-hidden rounded-[var(--lnl-radius-card)] p-0 sm:w-[calc(100vw-2rem)]"
+        :class="[pickSurfaceClass('bg-background', 'bg-background/94'), { 'is-motion-reduced': appStore.disablePageAnimation }]"
       >
         <DialogHeader class="lnl-ping-dialog-head flex flex-row items-center pr-12">
           <span class="lnl-ping-dialog-index" aria-hidden="true">PING</span>
@@ -682,6 +682,37 @@ function clearLeavingNodeRect(element: Element) {
   to {
     transform: rotate(1turn);
   }
+}
+
+:global(.lnl-ping-dialog) {
+  transform-origin: 50% 50%;
+  will-change: transform, opacity;
+  border-color: color-mix(in srgb, var(--lnl-green) 24%, var(--border)) !important;
+  box-shadow: 0 0 3rem color-mix(in srgb, var(--lnl-green) 14%, rgb(0 0 0 / 28%)) !important;
+}
+
+.lnl-view-mode-btn {
+  transition:
+    color var(--lnl-motion-fast) ease,
+    background-color var(--lnl-motion-fast) ease,
+    box-shadow var(--lnl-motion-fast) ease,
+    transform 120ms var(--lnl-ease-out);
+}
+
+.lnl-view-mode-btn:active {
+  transform: scale(0.94);
+}
+
+.lnl-group-tab[data-state='active'] {
+  color: var(--lnl-green) !important;
+  background: transparent !important;
+  box-shadow: none !important;
+}
+
+.lnl-view-mode-btn.is-active {
+  background: color-mix(in srgb, var(--lnl-green) 9%, var(--lnl-surface-raised, var(--background))) !important;
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--lnl-green) 36%, transparent) !important;
+  color: var(--lnl-green) !important;
 }
 
 .lnl-ping-dialog-head {
@@ -847,29 +878,52 @@ function clearLeavingNodeRect(element: Element) {
     transform var(--lnl-motion-standard) var(--lnl-ease-emphasis);
 }
 
+.lnl-node-search-toggle:active {
+  transform: scale(0.94);
+}
+
 .lnl-node-toolbar.is-searching .lnl-node-search-toggle {
   color: var(--lnl-green);
   transform: rotate(90deg);
 }
 
+.lnl-node-toolbar.is-searching .lnl-node-search-toggle:active {
+  transform: rotate(90deg) scale(0.94);
+}
+
 :global(.lnl-ping-dialog[data-state='open']) {
-  animation: lnl-ping-dialog-in 360ms cubic-bezier(0.16, 1, 0.3, 1) both;
+  animation: lnl-ping-dialog-in 380ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+:global(.lnl-ping-dialog[data-state='open']) .lnl-ping-dialog-head {
+  animation: lnl-ping-dialog-head-in 340ms 25ms cubic-bezier(0.22, 1, 0.36, 1) both;
 }
 
 :global(.lnl-ping-dialog[data-state='closed']) {
-  animation: lnl-ping-dialog-out 240ms cubic-bezier(0.4, 0, 1, 1) both;
+  animation: lnl-ping-dialog-out 220ms cubic-bezier(0.4, 0, 1, 1) both;
 }
 
 @keyframes lnl-ping-dialog-in {
   from {
     opacity: 0;
     translate: -50% -50%;
-    transform: scale(0.985);
+    transform: scale(0.94);
   }
   to {
     opacity: 1;
     translate: -50% -50%;
     transform: scale(1);
+  }
+}
+
+@keyframes lnl-ping-dialog-head-in {
+  from {
+    opacity: 0;
+    transform: translate3d(0, -6px, 0);
+  }
+  to {
+    opacity: 1;
+    transform: none;
   }
 }
 
@@ -882,7 +936,7 @@ function clearLeavingNodeRect(element: Element) {
   to {
     opacity: 0;
     translate: -50% -50%;
-    transform: scale(0.992);
+    transform: scale(0.96);
   }
 }
 
@@ -953,6 +1007,7 @@ function clearLeavingNodeRect(element: Element) {
   }
 
   :global(.lnl-ping-dialog[data-state='open']),
+  :global(.lnl-ping-dialog[data-state='open']) .lnl-ping-dialog-head,
   :global(.lnl-ping-dialog[data-state='closed']) {
     animation: none;
   }
@@ -971,15 +1026,25 @@ function clearLeavingNodeRect(element: Element) {
   }
 
   .lnl-node-search-drawer,
+  .lnl-node-search-drawer-inner,
   .lnl-node-search-input,
-  .lnl-node-search-toggle {
+  .lnl-node-search-toggle,
+  .lnl-view-mode-btn {
     transition: none;
   }
 }
 
+:global(.lnl-ping-dialog.is-motion-reduced[data-state='open']),
+:global(.lnl-ping-dialog.is-motion-reduced[data-state='open']) .lnl-ping-dialog-head,
+:global(.lnl-ping-dialog.is-motion-reduced[data-state='closed']) {
+  animation: none;
+}
+
 .lnl-node-toolbar.is-motion-reduced .lnl-node-search-drawer,
+.lnl-node-toolbar.is-motion-reduced .lnl-node-search-drawer-inner,
 .lnl-node-toolbar.is-motion-reduced .lnl-node-search-input,
-.lnl-node-toolbar.is-motion-reduced .lnl-node-search-toggle {
+.lnl-node-toolbar.is-motion-reduced .lnl-node-search-toggle,
+.lnl-node-toolbar.is-motion-reduced .lnl-view-mode-btn {
   transition: none;
 }
 </style>

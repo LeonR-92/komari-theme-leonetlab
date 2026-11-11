@@ -86,10 +86,10 @@ jobs:
           CHROME_PATH: /usr/bin/google-chrome
         run: npm run smoke:1.4.3
 
-      - name: Smoke test Komari 1.6.0 response rendering
+      - name: Smoke test Komari 1.6.1 response rendering
         env:
           CHROME_PATH: /usr/bin/google-chrome
-        run: npm run smoke:1.6.0
+        run: npm run smoke:1.6.1
 
       - name: Audit production dependencies
         # 只审计随主题分发的生产依赖（--omit=dev）：构建/lint 工具链的漏洞
@@ -183,7 +183,7 @@ jobs:
           name: ${{ steps.version.outputs.release_tag }}
           target_commitish: ${{ github.sha }}
           generate_release_notes: true
-          prerelease: ${{ contains(steps.version.outputs.current_version, '-beta.') }}
-          make_latest: ${{ contains(steps.version.outputs.current_version, '-beta.') && 'false' || 'true' }}
+          prerelease: ${{ contains(steps.version.outputs.current_version, '-') }}
+          make_latest: ${{ contains(steps.version.outputs.current_version, '-') && 'false' || 'true' }}
           fail_on_unmatched_files: true
           files: ${{ steps.version.outputs.asset }}

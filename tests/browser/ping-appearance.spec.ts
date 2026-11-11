@@ -2,13 +2,16 @@ import { expect, test } from '@playwright/test'
 
 test.beforeEach(async ({ page }) => {
   await page.addInitScript(() => {
-    sessionStorage.setItem('komari-observatory:intro:1.6.0', 'seen')
+    sessionStorage.setItem('komari-observatory:intro:1.6.1', 'seen')
     localStorage.setItem('appearance', 'light')
     localStorage.setItem('leonetlab:appearance:user-override', '1')
   })
 })
 
 test('keeps two-line Ping probes readable across compact and desktop layouts', async ({ page }, testInfo) => {
+  // Desktop covers five full navigations, dialog interactions and two screenshots.
+  if (testInfo.project.name === 'chromium-desktop')
+    test.setTimeout(60_000)
   const viewports = testInfo.project.name === 'chromium-desktop'
     ? [{ width: 320, height: 720 }, { width: 390, height: 844 }, { width: 820, height: 768 }, { width: 1440, height: 900 }, { width: 844, height: 390 }]
     : [testInfo.project.use.viewport!]
@@ -44,6 +47,12 @@ test('keeps two-line Ping probes readable across compact and desktop layouts', a
     await probes.nth(1).click()
     await expect(probes.nth(1)).toHaveAttribute('aria-pressed', 'false')
     await expect(probes.first()).toHaveAttribute('aria-pressed', 'true')
+    const toggledSizes = await probes.evaluateAll(elements => elements.slice(0, 2).map((element) => {
+      const rect = element.getBoundingClientRect()
+      return { width: rect.width, height: rect.height }
+    }))
+    expect(Math.abs(toggledSizes[0]!.width - toggledSizes[1]!.width)).toBeLessThanOrEqual(1)
+    expect(Math.abs(toggledSizes[0]!.height - toggledSizes[1]!.height)).toBeLessThanOrEqual(1)
     await page.getByRole('button', { name: '查看探测线路统计说明' }).click()
     await expect(page.locator('.lnl-ping-probe-detail').first()).toContainText('JIT —')
     if (testInfo.project.name === 'chromium-desktop' && (viewport.width === 390 || viewport.width === 1440)) {

@@ -7,7 +7,7 @@
     <link rel="manifest" href="/manifest.webmanifest" />
     <title>Komari Monitor</title>
     <meta name="description" content="A simple server monitor tool." />
-    <meta name="komari-theme-build" content="1.6.0" />
+    <meta name="komari-theme-build" content="1.6.1" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <meta name="color-scheme" content="dark light" />
     <meta name="theme-color" content="#04100d" />
@@ -25,12 +25,20 @@
           }
           const mode = readStored('appearance', 'system')
           const paletteValue = readStored('komari-observatory:palette', 'emerald')
-          const palette = ['emerald', 'aurora', 'cobalt', 'amber'].includes(paletteValue) ? paletteValue : 'emerald'
+          const palette = ['emerald', 'aurora', 'cobalt', 'amber', 'violet', 'crimson', 'glacier', 'graphite'].includes(
+            paletteValue,
+          )
+            ? paletteValue
+            : 'emerald'
           const colors = {
-            emerald: { light: '#edf7f1', dark: '#04100d' },
+            emerald: { light: '#f4f8f5', dark: '#04100d' },
             aurora: { light: '#edf8f8', dark: '#061013' },
             cobalt: { light: '#f1f5fb', dark: '#070d18' },
             amber: { light: '#fbf6eb', dark: '#151007' },
+            violet: { light: '#f6f3fb', dark: '#0b0714' },
+            crimson: { light: '#fbf3f4', dark: '#14070a' },
+            glacier: { light: '#f0f6fa', dark: '#060e14' },
+            graphite: { light: '#f4f5f6', dark: '#090b0d' },
           }
           const beijingHour = Number(
             new Intl.DateTimeFormat('en-US', {
@@ -134,7 +142,7 @@
     </div>
     <script>
       ;(() => {
-        const RECOVERY_KEY = 'komari-observatory:boot-recovery:1.6.0'
+        const RECOVERY_KEY = 'komari-observatory:boot-recovery:1.6.1'
         const RECOVERY_PARAM = '__komari_boot_recovery'
         let mounted = false
         let recovering = false

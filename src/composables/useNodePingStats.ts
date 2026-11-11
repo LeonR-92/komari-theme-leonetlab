@@ -30,6 +30,7 @@ interface SharedPingRecordsResponse {
 
 interface SharedPingRecordsState {
   recordsByClient: Map<string, PingRecord[]>
+  statsByClient: Map<string, NodePingStatsState>
 }
 
 interface SharedPingRecordsEntry {
@@ -90,24 +91,25 @@ function getSharedPingRecordsEntry(hours: number): SharedPingRecordsEntry {
 }
 
 function buildRecordsByClient(records: PingRecord[]): Map<string, PingRecord[]> {
-  const grouped = new Map<string, PingRecord[]>()
+  const grouped = new Map<string, Array<{ record: PingRecord, timestamp: number }>>()
 
   for (const record of records) {
     if (!record.client)
       continue
 
+    const timestamp = Date.parse(record.time)
     const clientRecords = grouped.get(record.client) ?? []
-    clientRecords.push(record)
+    clientRecords.push({ record, timestamp: Number.isFinite(timestamp) ? timestamp : 0 })
     grouped.set(record.client, clientRecords)
   }
 
-  for (const clientRecords of grouped.values()) {
-    clientRecords.sort(
-      (left, right) => new Date(left.time).getTime() - new Date(right.time).getTime(),
-    )
+  const sortedByClient = new Map<string, PingRecord[]>()
+  for (const [client, clientRecords] of grouped.entries()) {
+    clientRecords.sort((left, right) => left.timestamp - right.timestamp)
+    sortedByClient.set(client, clientRecords.map(entry => entry.record))
   }
 
-  return grouped
+  return sortedByClient
 }
 
 async function loadSharedPingRecords(entry: SharedPingRecordsEntry, hours: number): Promise<void> {
@@ -128,6 +130,7 @@ async function loadSharedPingRecords(entry: SharedPingRecordsEntry, hours: numbe
 
       entry.data.value = {
         recordsByClient: buildRecordsByClient(result?.records ?? []),
+        statsByClient: new Map(),
       }
       entry.lastFetchedAt = Date.now()
     }
@@ -183,7 +186,7 @@ function retainSharedPingRecordsEntry(hours: number): () => void {
 function buildPingHistory(records: PingRecord[]): NodePingHistoryPoint[] {
   const sortedRecords = records
     .map((record) => {
-      const timestamp = new Date(record.time).getTime()
+      const timestamp = Date.parse(record.time)
       return { ...record, timestamp }
     })
     .filter(record => Number.isFinite(record.timestamp))
@@ -344,8 +347,14 @@ export function useNodePingStats(
     if (!state)
       return createEmptyStats()
 
+    const cachedStats = state.statsByClient.get(nodeUuid)
+    if (cachedStats)
+      return cachedStats
+
     const records = state.recordsByClient.get(nodeUuid) ?? []
-    return records.length ? buildStats(records) : createEmptyStats()
+    const computedStats = records.length ? buildStats(records) : createEmptyStats()
+    state.statsByClient.set(nodeUuid, computedStats)
+    return computedStats
   })
 
   // 副作用：按需触发首次共享加载并维护 loading/error，不再命令式写入 stats。

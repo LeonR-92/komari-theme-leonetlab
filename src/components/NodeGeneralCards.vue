@@ -1,10 +1,11 @@
 <script setup lang="ts">
 import type { NodeData } from '@/stores/nodes'
 import type { CurrencyCode } from '@/utils/financeHelper'
-import { computed, defineAsyncComponent, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, defineAsyncComponent, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { CardX } from '@/components/ui/card-x'
 import { DataTooltip } from '@/components/ui/data-tooltip'
 import { useBackgroundSurface } from '@/composables/useBackgroundSurface'
+import { useFinanceRates } from '@/composables/useFinanceRates'
 import { useAppStore } from '@/stores/app'
 import { useNodesStore } from '@/stores/nodes'
 import * as financeHelper from '@/utils/financeHelper'
@@ -21,8 +22,8 @@ const NodeEarthMaps = defineAsyncComponent(() => import('@/components/NodeEarthM
 const appStore = useAppStore()
 const { pickSurfaceClass } = useBackgroundSurface()
 const nodesStore = useNodesStore()
-const exchangeRates = ref(financeHelper.DEFAULT_EXCHANGE_RATES)
-const exchangeRateBaseCurrency = ref<CurrencyCode>('CNY')
+const { rates: exchangeRates, ensureFinanceRates } = useFinanceRates()
+const exchangeRateBaseCurrency = ref<CurrencyCode>(financeHelper.getStoredFinanceCurrency(appStore.nodeCardCurrency))
 const excludeFreeNodes = ref(true)
 const financeRateCurrencies: readonly CurrencyCode[] = financeHelper.DISPLAY_FINANCE_CURRENCIES
 const summaryNodes = computed(() => props.nodes ?? nodesStore.nodes)
@@ -191,14 +192,18 @@ const cardGridClass = computed(() => showVisualPanel.value
   ? 'h-42 -mt-42 col-span-12 row-start-3 z-9 grid grid-cols-12 grid-rows-2 gap-2 lg:mt-0 lg:h-auto lg:col-span-6 lg:row-start-1'
   : 'col-span-1 grid grid-cols-3 lg:grid-cols-6 gap-2')
 
-onMounted(async () => {
+watch(() => appStore.nodeCardCurrency, (nextCurrency) => {
+  if (!financeHelper.hasStoredFinanceCurrency())
+    exchangeRateBaseCurrency.value = nextCurrency
+})
+
+onMounted(() => {
   document.addEventListener('pointerdown', handleFinanceCurrencyDocumentPointerDown, true)
   document.addEventListener('keydown', handleFinanceCurrencyKeydown)
-  exchangeRateBaseCurrency.value = financeHelper.getStoredFinanceCurrency()
+  exchangeRateBaseCurrency.value = financeHelper.getStoredFinanceCurrency(appStore.nodeCardCurrency)
   excludeFreeNodes.value = financeHelper.shouldExcludeFreeNodes()
 
-  const { rates } = await financeHelper.getDailyExchangeRates()
-  exchangeRates.value = rates
+  void ensureFinanceRates()
 })
 
 onBeforeUnmount(() => {
@@ -308,7 +313,7 @@ onBeforeUnmount(() => {
         <CardX
           id="lnl-finance-popover"
           hoverable data-finance-popover
-          class="lnl-finance-popover absolute top-0 z-20 h-42 rounded-md border-none shadow-[0_0_20px,0_0_0_1px] shadow-emerald-600/10"
+          class="lnl-finance-popover absolute top-0 z-20 h-42 rounded-md border-none"
           :class="[
             pickSurfaceClass('bg-background', 'bg-background/50 backdrop-blur-lg'),
             openFinanceCard && 'is-open',
@@ -525,6 +530,9 @@ onBeforeUnmount(() => {
   max-width: 22rem;
   opacity: 0;
   pointer-events: none;
+  box-shadow:
+    0 0 20px color-mix(in srgb, var(--lnl-green) 11%, transparent),
+    0 0 0 1px color-mix(in srgb, var(--lnl-green) 18%, var(--lnl-line));
   transform: translate3d(-50%, -25%, 0) scale(0.5);
   transform-origin: top center;
   transition:

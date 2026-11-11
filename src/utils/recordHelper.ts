@@ -3,8 +3,6 @@
  * 参考 React 版本的 RecordHelper.tsx 实现
  */
 
-import dayjs from 'dayjs'
-
 /** 负载记录格式 */
 export interface RecordFormat {
   client: string
@@ -222,8 +220,10 @@ export function fillMissingTimePoints<T extends { time?: string, updated_at?: st
   if (!data.length)
     return []
 
-  const getTime = (item: T) =>
-    dayjs(item.time ?? item.updated_at ?? '').valueOf()
+  const getTime = (item: T) => {
+    const raw = item.time ?? item.updated_at ?? ''
+    return raw ? Date.parse(raw) : Number.NaN
+  }
 
   // 预计算时间戳并剔除非法记录，避免无效日期污染排序和补点。
   const timedData = data
@@ -282,14 +282,15 @@ export function fillMissingTimePoints<T extends { time?: string, updated_at?: st
   }
 
   const filled: T[] = timePoints.map((t, index) => {
+    const isoTime = new Date(t).toISOString()
     const found = slots.get(index)?.item
     if (found) {
       // 找到则使用，但对齐时间到网格
-      return { ...found, time: dayjs(t).toISOString() }
+      return { ...found, time: isoTime }
     }
 
     // 未找到则插入空值模板
-    return { ...nullTemplate, time: dayjs(t).toISOString() } as T
+    return { ...nullTemplate, time: isoTime } as T
   })
 
   return filled
@@ -321,7 +322,11 @@ export function interpolateNullsLinear<T extends object>(
 
   const times = rows.map((r) => {
     const value = readRecordField(r, 'time') ?? readRecordField(r, 'updated_at')
-    return dayjs(typeof value === 'string' || typeof value === 'number' ? value : '').valueOf()
+    if (typeof value === 'number')
+      return value
+    if (typeof value === 'string' && value)
+      return Date.parse(value)
+    return Number.NaN
   })
   const out: T[] = rows.map(r => ({ ...r }))
 

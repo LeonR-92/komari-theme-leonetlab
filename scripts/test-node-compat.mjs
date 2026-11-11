@@ -11,6 +11,7 @@ import {
   formatNodeRecurringCost,
   formatRecurringCostTooltip,
 } from '../src/utils/financeHelper.ts'
+import { alignGpuHistorySeries, publicGpuHistoryParams } from '../src/utils/gpuHistory.ts'
 import { isMetricCapabilityUnavailable } from '../src/utils/metricCompatibility.ts'
 import { normalizeUuidCollection } from '../src/utils/nodeResponse.ts'
 import { normalizeNodeGpuSnapshot } from '../src/utils/nodeStatus.ts'
@@ -52,9 +53,9 @@ assert.deepEqual(normalizeUuidCollection({ legacy_index: nodeA }), {
 
 assert.deepEqual(normalizeUuidCollection(undefined), {})
 
-// Official 1.5.0-fix1, 1.5.1 and 1.6.0 share the node/status/record RPC sources.
+// These versions share the tested node-map shape, not necessarily the same RPC sources.
 // Additional server keys must remain optional at the normalization boundary.
-for (const version of ['1.2.6', '1.3.2', '1.4.2', '1.4.3', '1.5.0', '1.5.0-fix1', '1.5.1', '1.6.0']) {
+for (const version of ['1.2.6', '1.3.2', '1.4.2', '1.4.3', '1.5.0', '1.5.0-fix1', '1.5.1', '1.6.0', '1.6.1']) {
   assert.deepEqual(normalizeUuidCollection({ legacy_index: nodeA }), { 'node-a': nodeA }, version)
   assert.equal(normalizeNodeGpuSnapshot({ gpu: 18, gpu_average_usage: 0, gpu_count: 1 }).gpu, 0, `${version}: valid zero GPU average`)
 }
@@ -313,4 +314,22 @@ assert.equal(oneTime.text, '$499')
 assert.equal(oneTime.oneTime, true)
 assert.match(formatRecurringCostTooltip(oneTime, 'yearly'), /^一次性 499\.00 USD · 后台原值/)
 
-console.log('Komari 1.2.5-fix1 through 1.6.0 node, GPU, record, and Ping metric compatibility passed.')
+// Komari 1.6.1 common:getRecords ping task statistics can return total: 0, latest: -1
+// when a task has no records in the requested time window.
+assert.deepEqual(summarizePingSamples([]), { latency: null, loss: null })
+
+assert.deepEqual(publicGpuHistoryParams('node-a', 720), { uuid: 'node-a', hours: '4', load_type: 'all' })
+assert.deepEqual(publicGpuHistoryParams('node-a', 1), { uuid: 'node-a', hours: '1', load_type: 'all' })
+assert.deepEqual(publicGpuHistoryParams('node-a', Number.NaN), { uuid: 'node-a', hours: '1', load_type: 'all' })
+const gpuTimeA = '2026-11-11T00:00:00Z'
+const gpuTimeB = '2026-11-11T00:05:00Z'
+const gpuTimeC = '2026-11-11T00:10:00Z'
+assert.deepEqual(alignGpuHistorySeries([
+  { points: [{ time: gpuTimeB, value: 20 }, { time: gpuTimeA, value: 0 }] },
+  { points: [{ time: gpuTimeC, value: 45 }, { time: '2026-11-11T08:05:00+08:00', value: 35 }, { time: 'invalid', value: 99 }] },
+]), {
+  timestamps: [gpuTimeA, gpuTimeB, gpuTimeC].map(time => Date.parse(time)),
+  valuesBySeries: [[0, 20, null], [null, 35, 45]],
+})
+
+console.log('Komari 1.2.5-fix1 through 1.6.1 node, GPU, record, and Ping metric compatibility passed.')

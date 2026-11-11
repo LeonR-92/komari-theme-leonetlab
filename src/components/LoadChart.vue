@@ -16,11 +16,12 @@ import { useBackgroundSurface } from '@/composables/useBackgroundSurface'
 import { useMotionPreference } from '@/composables/useMotionPreference'
 import { useAppStore } from '@/stores/app'
 import { useNodesStore } from '@/stores/nodes'
+import { alignGpuHistorySeries, GPU_HISTORY_FALLBACK_MAX_HOURS } from '@/utils/gpuHistory'
 import { formatBytes, formatBytesSplit } from '@/utils/helper'
 import { isMetricCapabilityUnavailable, listAvailableMetricDefinitions } from '@/utils/metricCapabilities'
 import { isMobileLike } from '@/utils/mobilePerf'
 import { fillMissingTimePoints, getAdaptiveHistoryDisplayIntervalSeconds, getHistoryDisplayIntervalSeconds, getSparsePointSymbolSize } from '@/utils/recordHelper'
-import { getSharedRpc } from '@/utils/rpc'
+import { getSharedRpc, synthesizeGpuMetricSeriesFromDevices } from '@/utils/rpc'
 import '@/utils/echarts' // 共享 ECharts 配置
 
 const props = defineProps<{
@@ -268,7 +269,7 @@ async function fetchRecentData() {
     if (requestId !== fetchRequestId)
       return
     const records = result?.records || []
-    records.sort((a, b) => dayjs(a.time).valueOf() - dayjs(b.time).valueOf())
+    records.sort((a, b) => Date.parse(a.time) - Date.parse(b.time))
     const maxLength = 150
     remoteData.value = records.slice(-maxLength)
   }
@@ -326,17 +327,18 @@ async function fetchData() {
 
 // ==================== 数据处理 ====================
 
+const formattedRemoteData = computed(() => statusToRecordFormat(remoteData.value))
+
 const historyDisplayIntervalSeconds = computed(() => {
   if (isRealtime.value)
     return 0
   const hours = selectedHours.value || 4
   const minimumIntervalSec = getHistoryDisplayIntervalSeconds(hours)
-  const data = statusToRecordFormat(remoteData.value)
-  return getAdaptiveHistoryDisplayIntervalSeconds(data, minimumIntervalSec)
+  return getAdaptiveHistoryDisplayIntervalSeconds(formattedRemoteData.value, minimumIntervalSec)
 })
 
 const chartData = computed(() => {
-  const data = statusToRecordFormat(remoteData.value)
+  const data = formattedRemoteData.value
   if (!data.length)
     return []
 
@@ -948,24 +950,46 @@ type ExtendedTelemetryTab = 'connections' | 'process' | OptionalTelemetryTab
 type OptionalTelemetryStatus = 'idle' | 'loading' | 'ready' | 'empty' | 'unavailable' | 'error'
 
 interface OptionalTelemetryCacheEntry {
+  fetchedAt: number
   status: 'ready' | 'empty'
   series: MetricSeries[]
+  fallbackHours: number | null
 }
 
+const OPTIONAL_TELEMETRY_CACHE_TTL_MS = 60_000
+const OPTIONAL_TELEMETRY_CACHE_MAX_ENTRIES = 12
 const extendedTelemetryTab = ref<ExtendedTelemetryTab>('connections')
 const availableMetricNames = ref<ReadonlySet<string>>(new Set())
+const hasRecordGpuDevices = ref(false)
 const optionalMetricSeries = shallowRef<MetricSeries[]>([])
+const optionalFallbackHours = ref<number | null>(null)
 const optionalTelemetryStatus = ref<OptionalTelemetryStatus>('idle')
 const optionalTelemetryError = ref<string | null>(null)
 const optionalTelemetryCache = new Map<string, OptionalTelemetryCacheEntry>()
 let metricCapabilityRequestId = 0
 let optionalTelemetryRequestId = 0
 
-const gpuUsageMetricKey = computed(() => ['gpu.device.usage', 'gpu.usage'].find(name => availableMetricNames.value.has(name)) ?? null)
-const hasGpuMemoryMetrics = computed(() => availableMetricNames.value.has('gpu.memory.used') && availableMetricNames.value.has('gpu.memory.total'))
-const hasGpuTemperatureMetric = computed(() => availableMetricNames.value.has('gpu.temperature'))
+function rememberOptionalTelemetry(key: string, status: 'ready' | 'empty', series: MetricSeries[], fallbackHours: number | null): void {
+  optionalTelemetryCache.delete(key)
+  optionalTelemetryCache.set(key, { fetchedAt: Date.now(), status, series, fallbackHours })
+  while (optionalTelemetryCache.size > OPTIONAL_TELEMETRY_CACHE_MAX_ENTRIES) {
+    const oldestKey = optionalTelemetryCache.keys().next().value
+    if (typeof oldestKey !== 'string')
+      break
+    optionalTelemetryCache.delete(oldestKey)
+  }
+}
+
+const nodeHasGpuHardware = computed(() => Boolean(
+  nodeInfo.value?.gpu_name
+  || (typeof nodeInfo.value?.gpu_count === 'number' && nodeInfo.value.gpu_count > 0)
+  || (nodeInfo.value?.gpu_detailed_info && nodeInfo.value.gpu_detailed_info.length > 0),
+))
+const gpuUsageMetricKey = computed(() => ['gpu.device.usage', 'gpu.usage'].find(name => availableMetricNames.value.has(name)) ?? (hasRecordGpuDevices.value ? 'gpu.device.usage' : null))
+const hasGpuMemoryMetrics = computed(() => (availableMetricNames.value.has('gpu.memory.used') && availableMetricNames.value.has('gpu.memory.total')) || hasRecordGpuDevices.value)
+const hasGpuTemperatureMetric = computed(() => availableMetricNames.value.has('gpu.temperature') || hasRecordGpuDevices.value)
 const shouldDetectOptionalMetrics = computed(() => appStore.extendedTelemetryEnabled
-  && Boolean(nodeInfo.value?.gpu_name)
+  && nodeHasGpuHardware.value
   && (appStore.extendedTelemetryGpuUsageEnabled
     || appStore.extendedTelemetryGpuMemoryEnabled
     || appStore.extendedTelemetryGpuTemperatureEnabled))
@@ -991,6 +1015,7 @@ const optionalTelemetryActive = computed(() => extendedTelemetryTab.value === 'g
   || extendedTelemetryTab.value === 'gpu-memory'
   || extendedTelemetryTab.value === 'gpu-temperature')
 const liveGpuDetails = computed(() => nodeInfo.value?.gpu_detailed_info ?? [])
+const alignedOptionalMetricData = computed(() => alignGpuHistorySeries(optionalMetricSeries.value))
 
 function metricSeriesLabel(series: MetricSeries, index: number): string {
   const device = series.tags?.device_name || series.tags?.device || series.tags?.name || series.tags?.device_index
@@ -1028,7 +1053,7 @@ const optionalMetricChartOption = computed(() => ({
   grid: chartMarginWithLegend.value,
   xAxis: {
     ...baseXAxisConfig.value,
-    data: optionalMetricSeries.value[0]?.points.map(point => formatTime(point.time, showDateInAxis.value)) ?? [],
+    data: alignedOptionalMetricData.value.timestamps.map(time => formatTime(new Date(time).toISOString(), showDateInAxis.value)),
   },
   yAxis: {
     ...baseYAxisConfig.value,
@@ -1041,7 +1066,7 @@ const optionalMetricChartOption = computed(() => ({
     },
   },
   series: optionalMetricSeries.value.map((series, index) => {
-    const values = series.points.map(point => point.value)
+    const values = alignedOptionalMetricData.value.valuesBySeries[index] ?? []
     return {
       name: metricSeriesLabel(series, index),
       type: 'line',
@@ -1085,6 +1110,7 @@ function optionalMetricCacheKey(metricKeys: string[]): string {
 function resetOptionalTelemetry(status: OptionalTelemetryStatus = 'idle'): void {
   optionalTelemetryRequestId += 1
   optionalMetricSeries.value = []
+  optionalFallbackHours.value = null
   optionalTelemetryError.value = null
   optionalTelemetryStatus.value = status
 }
@@ -1099,8 +1125,9 @@ function normalizeOptionalMetricSeries(value: unknown): MetricSeries[] {
     const series = candidate as Partial<MetricSeries>
     if (!Array.isArray(series.points))
       return []
-    const points = series.points.filter(point => point && typeof point.time === 'string' && (typeof point.value === 'number' || point.value === null))
-    if (points.length === 0 || typeof series.metric_key !== 'string' || typeof series.entity_id !== 'string')
+    const points = series.points.filter(point => point && typeof point.time === 'string' && Number.isFinite(Date.parse(point.time))
+      && (point.value === null || (typeof point.value === 'number' && Number.isFinite(point.value))))
+    if (!points.some(point => point.value !== null) || typeof series.metric_key !== 'string' || typeof series.entity_id !== 'string')
       return []
     return [{ ...series, count: typeof series.count === 'number' ? series.count : points.length, points } as MetricSeries]
   })
@@ -1111,16 +1138,21 @@ async function detectOptionalMetricCapabilities(): Promise<void> {
   // range reset must not discard a valid definition response that is still in flight.
   const capabilityRequestId = ++metricCapabilityRequestId
   availableMetricNames.value = new Set()
-  optionalMetricSeries.value = []
-  optionalTelemetryError.value = null
-  optionalTelemetryStatus.value = 'idle'
+  hasRecordGpuDevices.value = false
+  resetOptionalTelemetry()
   if (!shouldDetectOptionalMetrics.value)
     return
   try {
     const definitions = await listAvailableMetricDefinitions(rpc)
     if (capabilityRequestId !== metricCapabilityRequestId || !shouldDetectOptionalMetrics.value)
       return
-    availableMetricNames.value = new Set(definitions.map(definition => definition.name))
+    const names = new Set(definitions.map(definition => definition.name))
+    availableMetricNames.value = names
+    const missingEnabledMetric = (appStore.extendedTelemetryGpuUsageEnabled && !gpuUsageMetricKey.value)
+      || (appStore.extendedTelemetryGpuMemoryEnabled && !hasGpuMemoryMetrics.value)
+      || (appStore.extendedTelemetryGpuTemperatureEnabled && !hasGpuTemperatureMetric.value)
+    if (!missingEnabledMetric)
+      return
   }
   catch {
     if (capabilityRequestId !== metricCapabilityRequestId)
@@ -1128,55 +1160,99 @@ async function detectOptionalMetricCapabilities(): Promise<void> {
     // Optional capability discovery never blocks local connection/process data.
     availableMetricNames.value = new Set()
   }
+
+  try {
+    const gpuProbe = await rpc.getPublicGpuHistory(props.uuid, 1)
+    if (capabilityRequestId !== metricCapabilityRequestId || !shouldDetectOptionalMetrics.value)
+      return
+    hasRecordGpuDevices.value = Boolean(gpuProbe)
+  }
+  catch {
+    if (capabilityRequestId !== metricCapabilityRequestId)
+      return
+    hasRecordGpuDevices.value = false
+  }
 }
 
 async function fetchOptionalMetrics(): Promise<void> {
   if (!optionalTelemetryActive.value)
     return
 
-  const metricKeys = optionalMetricKeys()
+  const activeTab = extendedTelemetryTab.value as 'gpu' | 'gpu-memory' | 'gpu-temperature'
+  const metricKeys = optionalMetricKeys(activeTab)
   if (metricKeys.length === 0) {
     resetOptionalTelemetry('unavailable')
     return
   }
+  const requestId = ++optionalTelemetryRequestId
   const cacheKey = optionalMetricCacheKey(metricKeys)
   const cached = optionalTelemetryCache.get(cacheKey)
-  if (cached) {
+  if (cached && Date.now() - cached.fetchedAt <= OPTIONAL_TELEMETRY_CACHE_TTL_MS) {
     optionalMetricSeries.value = cached.series
+    optionalFallbackHours.value = cached.fallbackHours
     optionalTelemetryError.value = null
     optionalTelemetryStatus.value = cached.status
     return
   }
 
-  const requestId = ++optionalTelemetryRequestId
+  const uuid = props.uuid
+  const hours = selectedHours.value || 1
   optionalMetricSeries.value = []
+  optionalFallbackHours.value = null
   optionalTelemetryError.value = null
   optionalTelemetryStatus.value = 'loading'
   try {
-    const result = await rpc.queryMetrics({
-      metric_keys: metricKeys,
-      entity_ids: [props.uuid],
-      hours: selectedHours.value || 1,
-      max_points: 400,
-      aggregation_by_metric: Object.fromEntries(metricKeys.map(metricKey => [metricKey, 'avg'])),
-      fill_empty: false,
-    })
+    let series: MetricSeries[] = []
+    let fallbackHours: number | null = null
+    if (metricKeys.every(key => availableMetricNames.value.has(key))) {
+      try {
+        const result = await rpc.queryMetrics({
+          metric_keys: metricKeys,
+          entity_ids: [uuid],
+          hours,
+          max_points: 400,
+          aggregation_by_metric: Object.fromEntries(metricKeys.map(metricKey => [metricKey, 'avg'])),
+          fill_empty: false,
+        })
+        series = normalizeOptionalMetricSeries(result?.series)
+      }
+      catch (err) {
+        if (!isMetricCapabilityUnavailable(err))
+          throw err
+      }
+      if (requestId !== optionalTelemetryRequestId)
+        return
+    }
+
+    if (series.length === 0 && (hasRecordGpuDevices.value || nodeHasGpuHardware.value)) {
+      try {
+        const devices = await rpc.getPublicGpuHistory(uuid, hours)
+        if (requestId !== optionalTelemetryRequestId)
+          return
+        series = synthesizeGpuMetricSeriesFromDevices(uuid, devices, activeTab)
+        if (series.length > 0) {
+          hasRecordGpuDevices.value = true
+          if (hours > GPU_HISTORY_FALLBACK_MAX_HOURS)
+            fallbackHours = GPU_HISTORY_FALLBACK_MAX_HOURS
+        }
+      }
+      catch (err) {
+        if (!isMetricCapabilityUnavailable(err))
+          throw err
+      }
+    }
+
     if (requestId !== optionalTelemetryRequestId)
       return
-    const series = normalizeOptionalMetricSeries(result?.series)
     const status = series.length > 0 ? 'ready' : 'empty'
-    optionalTelemetryCache.set(cacheKey, { status, series })
+    rememberOptionalTelemetry(cacheKey, status, series, fallbackHours)
     optionalMetricSeries.value = series
+    optionalFallbackHours.value = fallbackHours
     optionalTelemetryStatus.value = status
   }
-  catch (err) {
+  catch {
     if (requestId !== optionalTelemetryRequestId)
       return
-    if (isMetricCapabilityUnavailable(err)) {
-      optionalMetricSeries.value = []
-      optionalTelemetryStatus.value = 'unavailable'
-      return
-    }
     optionalMetricSeries.value = []
     optionalTelemetryError.value = '该指标暂时无法加载，请稍后重试'
     optionalTelemetryStatus.value = 'error'
@@ -1232,6 +1308,7 @@ watch(() => props.uuid, () => {
   remoteData.value = []
   resetOptionalTelemetry()
   availableMetricNames.value = new Set()
+  hasRecordGpuDevices.value = false
   extendedTelemetryTab.value = 'connections'
   isInitialLoad.value = true // 切换节点时重置首次加载状态
   void fetchData()
@@ -1418,13 +1495,13 @@ onUnmounted(() => {
             <div class="flex min-w-0 flex-col items-stretch gap-2 sm:flex-row sm:items-center sm:justify-between sm:gap-3">
               <span class="text-base font-bold shrink-0">扩展遥测</span>
               <div class="min-w-0 flex items-center gap-2">
-                <Tabs v-model="extendedTelemetryTab" class="min-w-0">
-                  <TabsList class="h-auto min-h-7 max-w-full flex-wrap justify-start bg-foreground/5 rounded-sm sm:justify-center">
+                <Tabs v-model="extendedTelemetryTab" class="min-w-0 max-w-full overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+                  <TabsList class="h-7 min-w-max justify-start bg-foreground/5 rounded-sm sm:justify-center">
                     <TabsTrigger
                       v-for="tab in extendedTelemetryTabs"
                       :key="tab.value"
                       :value="tab.value"
-                      class="h-5.5 px-2 text-[11px] border-none shadow-none rounded-xs"
+                      class="lnl-history-tab h-5.5 flex-none shrink-0 px-2 text-[11px] border-none shadow-none rounded-xs"
                     >
                       {{ tab.label }}
                     </TabsTrigger>
@@ -1451,6 +1528,9 @@ onUnmounted(() => {
               </div>
             </div>
           </template>
+          <p v-if="optionalTelemetryActive && optionalFallbackHours" class="px-3 pb-1 text-xs text-muted-foreground" role="status">
+            备用记录最多显示最近 {{ optionalFallbackHours }} 小时
+          </p>
           <ChartViewport>
             <div v-if="optionalTelemetryActive && optionalTelemetryStatus === 'error'" class="h-full px-4 text-xs text-destructive flex items-center justify-center text-center">
               {{ optionalTelemetryError }}
@@ -1462,7 +1542,7 @@ onUnmounted(() => {
               v-else-if="optionalTelemetryActive && (optionalTelemetryStatus === 'empty' || optionalTelemetryStatus === 'unavailable')"
               description="该项历史采集未启用或暂无数据"
             />
-            <VChart v-else :key="extendedTelemetryTab" :option="extendedTelemetryOption" autoresize />
+            <VChart v-else :key="extendedTelemetryTab" class="lnl-extended-chart-stage" :option="extendedTelemetryOption" autoresize />
           </ChartViewport>
         </CardX>
       </div>
@@ -1480,6 +1560,35 @@ onUnmounted(() => {
   outline-offset: 1px;
 }
 
+.lnl-extended-chart-stage {
+  animation: lnl-telemetry-stage-in 210ms var(--lnl-ease-out) both;
+}
+
+@keyframes lnl-telemetry-stage-in {
+  from {
+    opacity: 0;
+    transform: translate3d(0, 4px, 0);
+  }
+  to {
+    opacity: 1;
+    transform: translate3d(0, 0, 0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .lnl-extended-chart-stage,
+  .lnl-live-gpu-badge {
+    animation: none;
+    transition: none;
+  }
+}
+
+.lnl-load-chart.is-motion-reduced .lnl-extended-chart-stage,
+.lnl-load-chart.is-motion-reduced .lnl-live-gpu-badge {
+  animation: none;
+  transition: none;
+}
+
 .lnl-live-gpu-badge {
   min-height: 28px;
   flex: none;
@@ -1490,6 +1599,14 @@ onUnmounted(() => {
   background: color-mix(in srgb, var(--lnl-green) 7%, transparent);
   font-size: 10px;
   font-variant-numeric: tabular-nums;
+  transition:
+    background-color 140ms ease,
+    border-color 140ms ease,
+    transform 120ms var(--lnl-ease-out);
+}
+
+.lnl-live-gpu-badge:active {
+  transform: scale(0.96);
 }
 
 .lnl-live-gpu-badge:focus-visible {

@@ -74,16 +74,37 @@ const themeModeOptions: Array<{ value: ThemeMode, label: string, icon: string }>
   { value: 'light', label: '浅色', icon: 'icon-park-outline:sun-one' },
   { value: 'dark', label: '深色', icon: 'icon-park-outline:moon' },
 ]
-const paletteOptions: Array<{ value: ColorPalette, label: string, color: string }> = [
-  { value: 'emerald', label: '观测翠绿', color: PALETTE_ACCENT_COLORS.emerald.light.primary },
-  { value: 'aurora', label: '极光青', color: PALETTE_ACCENT_COLORS.aurora.light.primary },
-  { value: 'cobalt', label: '深空蓝', color: PALETTE_ACCENT_COLORS.cobalt.light.primary },
-  { value: 'amber', label: '琥珀金', color: PALETTE_ACCENT_COLORS.amber.light.primary },
+const paletteDefs: Array<{ value: ColorPalette, label: string }> = [
+  { value: 'emerald', label: '观测翠绿' },
+  { value: 'aurora', label: '极光青' },
+  { value: 'cobalt', label: '深空蓝' },
+  { value: 'amber', label: '琥珀金' },
+  { value: 'violet', label: '星云紫' },
+  { value: 'crimson', label: '赤道绯' },
+  { value: 'glacier', label: '冰川青' },
+  { value: 'graphite', label: '曜石灰' },
 ]
+const paletteOptions = computed(() => {
+  const mode = appStore.isDark ? 'dark' : 'light'
+  return paletteDefs.map((item) => {
+    const accents = PALETTE_ACCENT_COLORS[item.value][mode]
+    return {
+      ...item,
+      color: accents.primary,
+      secondary: accents.secondary,
+    }
+  })
+})
 const cursorOptions: Array<{ value: CursorStyle, label: string }> = [
   { value: 'native', label: '系统指针' },
   { value: 'halo', label: '光环指针' },
 ]
+const selectedModeIndex = computed(() =>
+  Math.max(0, themeModeOptions.findIndex(option => option.value === selectedMode.value)),
+)
+const selectedCursorIndex = computed(() =>
+  Math.max(0, cursorOptions.findIndex(option => option.value === selectedCursor.value)),
+)
 
 const actionButtons = computed(() => {
   const buttons: HeaderAction[] = [{
@@ -303,7 +324,8 @@ function startThemeTransition(change: AppearanceChange, origin: ThemeOrigin) {
 }
 
 function requestAppearance(change: AppearanceChange) {
-  const intent: AppearanceChange = change.restore ? { restore: true } : { ...requestedAppearance.value, ...change }
+  const base = requestedAppearance.value?.restore ? {} : requestedAppearance.value
+  const intent: AppearanceChange = change.restore ? { restore: true } : { ...base, ...change }
   requestedAppearance.value = intent
   const origin = resolveThemeOrigin(appearanceButton.value)
   if (themeTransitionActive.value) {
@@ -332,19 +354,55 @@ async function toggleAppearancePanel(originElement?: Element | null) {
 }
 
 function selectCursor(style: CursorStyle) {
-  requestAppearance({ cursor: style })
+  if (requestedAppearance.value && !requestedAppearance.value.restore)
+    requestedAppearance.value = { ...requestedAppearance.value, cursor: style }
+  if (queuedAppearance && !queuedAppearance.restore)
+    queuedAppearance = { ...queuedAppearance, cursor: style }
+  if (pendingAppearance && !pendingAppearance.restore)
+    pendingAppearance = { ...pendingAppearance, cursor: style }
+  appStore.updateCursorStyle(style)
 }
 
 function restoreAppearance() {
   requestAppearance({ restore: true })
 }
 
+function isEventWithinElement(event: PointerEvent, element: HTMLElement | null): boolean {
+  if (!element)
+    return false
+  const path = typeof event.composedPath === 'function' ? event.composedPath() : []
+  if (path.includes(element))
+    return true
+  if (event.target instanceof Node && element.contains(event.target))
+    return true
+  if (Number.isFinite(event.clientX) && Number.isFinite(event.clientY) && (event.clientX !== 0 || event.clientY !== 0)) {
+    const rect = element.getBoundingClientRect()
+    if (
+      rect.width > 0
+      && rect.height > 0
+      && event.clientX >= rect.left - 2
+      && event.clientX <= rect.right + 2
+      && event.clientY >= rect.top - 2
+      && event.clientY <= rect.bottom + 2
+    ) {
+      return true
+    }
+  }
+  return false
+}
+
 function handleDocumentPointerDown(event: PointerEvent) {
   if (!appearancePanelOpen.value)
     return
   const target = event.target instanceof Element ? event.target : null
-  if (target?.closest('.lnl-appearance-panel') || target?.closest('[data-action="toggleAppearance"]'))
+  if (
+    target?.closest('.lnl-appearance-panel')
+    || target?.closest('[data-action="toggleAppearance"]')
+    || isEventWithinElement(event, appearancePanel.value)
+    || isEventWithinElement(event, appearanceButton.value)
+  ) {
     return
+  }
   closeAppearancePanel()
 }
 
@@ -439,7 +497,7 @@ function handleLogoError(event: Event) {
             :aria-controls="button.action === 'toggleAppearance' ? 'lnl-appearance-panel' : undefined"
             @click="handleButtonClick(button.action, $event)"
           >
-            <Transition name="lnl-action-icon" mode="out-in">
+            <Transition name="lnl-action-icon" mode="out-in" :css="!motionReduced">
               <Icon
                 :key="button.icon"
                 :icon="button.icon"
@@ -453,12 +511,13 @@ function handleLogoError(event: Event) {
     </div>
   </header>
   <Teleport to="body">
-    <Transition name="lnl-cache-panel">
+    <Transition name="lnl-cache-panel" :css="!motionReduced">
       <section
         v-if="appearancePanelOpen"
         id="lnl-appearance-panel"
         ref="appearancePanel"
         class="lnl-appearance-panel"
+        :class="{ 'is-motion-reduced': motionReduced }"
         role="dialog"
         aria-label="外观设置"
       >
@@ -470,7 +529,10 @@ function handleLogoError(event: Event) {
         </header>
         <fieldset>
           <legend>亮度</legend>
-          <div class="lnl-appearance-segments">
+          <div
+            class="lnl-appearance-segments"
+            :style="{ '--segment-index': selectedModeIndex, '--segment-count': themeModeOptions.length }"
+          >
             <button
               v-for="option in themeModeOptions"
               :key="option.value"
@@ -497,15 +559,25 @@ function handleLogoError(event: Event) {
               :aria-pressed="selectedPalette === option.value"
               @click="requestAppearance({ palette: option.value })"
             >
-              <i :style="{ '--swatch': option.color }" />
+              <i :style="{ '--swatch': option.color, '--swatch-secondary': option.secondary }" />
               <span>{{ option.label }}</span>
-              <Icon v-if="selectedPalette === option.value" icon="tabler:check" :width="14" :height="14" />
+              <Icon
+                icon="tabler:check"
+                :width="14"
+                :height="14"
+                class="lnl-palette-check"
+                :class="{ 'is-selected': selectedPalette === option.value }"
+                aria-hidden="true"
+              />
             </button>
           </div>
         </fieldset>
         <fieldset>
           <legend>鼠标</legend>
-          <div class="lnl-appearance-segments is-cursor">
+          <div
+            class="lnl-appearance-segments is-cursor"
+            :style="{ '--segment-index': selectedCursorIndex, '--segment-count': cursorOptions.length }"
+          >
             <button
               v-for="option in cursorOptions"
               :key="option.value"
@@ -650,6 +722,8 @@ function handleLogoError(event: Event) {
 }
 
 .lnl-appearance-segments {
+  position: relative;
+  isolation: isolate;
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 5px;
@@ -657,6 +731,22 @@ function handleLogoError(event: Event) {
   border: 1px solid var(--lnl-line);
   border-radius: var(--lnl-radius-control);
   background: var(--lnl-surface-inner);
+}
+
+.lnl-appearance-segments::before {
+  content: '';
+  position: absolute;
+  z-index: 0;
+  top: 4px;
+  bottom: 4px;
+  left: 4px;
+  width: calc((100% - 8px - (var(--segment-count, 3) - 1) * 5px) / var(--segment-count, 3));
+  border-radius: calc(var(--lnl-radius-control) - 3px);
+  background: var(--lnl-surface-raised);
+  box-shadow: 0 4px 13px color-mix(in srgb, #000 8%, transparent);
+  transform: translate3d(calc(var(--segment-index, 0) * 100% + var(--segment-index, 0) * 5px), 0, 0);
+  transition: transform 240ms var(--lnl-ease-emphasis);
+  pointer-events: none;
 }
 
 .lnl-appearance-segments.is-cursor {
@@ -667,6 +757,8 @@ function handleLogoError(event: Event) {
 .lnl-palette-grid button,
 .lnl-appearance-reset,
 .lnl-appearance-close {
+  position: relative;
+  z-index: 1;
   min-height: 44px;
   border: 0;
   border-radius: calc(var(--lnl-radius-control) - 3px);
@@ -676,6 +768,7 @@ function handleLogoError(event: Event) {
   cursor: pointer;
   transition:
     background-color 140ms ease,
+    border-color 140ms ease,
     color 140ms ease,
     box-shadow 140ms ease,
     transform 120ms var(--lnl-ease-out);
@@ -691,6 +784,10 @@ function handleLogoError(event: Event) {
   background-color: color-mix(in srgb, var(--lnl-green) 13%, var(--lnl-surface-inner));
 }
 
+.lnl-appearance-segments button:active {
+  background-color: transparent;
+}
+
 .lnl-appearance-panel button:focus-visible {
   outline: 2px solid var(--lnl-green);
   outline-offset: 2px;
@@ -701,15 +798,31 @@ function handleLogoError(event: Event) {
     color: var(--foreground);
     background-color: color-mix(in srgb, var(--lnl-green) 8%, var(--lnl-surface-inner));
   }
+
+  .lnl-appearance-segments button:hover {
+    background-color: transparent;
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .lnl-appearance-panel button {
+  .lnl-appearance-panel button,
+  .lnl-appearance-segments::before,
+  .lnl-palette-check {
     transition: none;
   }
   .lnl-appearance-panel button:active {
     transform: none;
   }
+}
+
+.lnl-appearance-panel.is-motion-reduced button,
+.lnl-appearance-panel.is-motion-reduced .lnl-appearance-segments::before,
+.lnl-appearance-panel.is-motion-reduced .lnl-palette-check {
+  transition: none;
+}
+
+.lnl-appearance-panel.is-motion-reduced button:active {
+  transform: none;
 }
 
 .lnl-appearance-segments button {
@@ -720,8 +833,6 @@ function handleLogoError(event: Event) {
 }
 
 .lnl-appearance-segments button.active {
-  background: var(--lnl-surface-raised);
-  box-shadow: 0 4px 13px color-mix(in srgb, #000 8%, transparent);
   color: var(--lnl-green);
 }
 
@@ -747,13 +858,35 @@ function handleLogoError(event: Event) {
   color: var(--foreground);
 }
 
+.lnl-palette-check {
+  opacity: 0;
+  transform: scale(0.72);
+  color: var(--lnl-green);
+  transition:
+    opacity 150ms ease,
+    transform 180ms var(--lnl-ease-emphasis);
+}
+
+.lnl-palette-check.is-selected {
+  opacity: 1;
+  transform: scale(1);
+}
+
 .lnl-palette-grid i {
-  width: 13px;
-  height: 13px;
-  border: 2px solid color-mix(in srgb, var(--swatch) 28%, white);
+  width: 14px;
+  height: 14px;
+  border: 1.5px solid color-mix(in srgb, var(--swatch) 28%, white);
   border-radius: 50%;
-  background: var(--swatch);
+  background: linear-gradient(135deg, var(--swatch) 54%, var(--swatch-secondary, var(--swatch)) 100%);
   box-shadow: 0 0 0 1px color-mix(in srgb, var(--swatch) 35%, transparent);
+  transition:
+    transform 160ms var(--lnl-ease-out),
+    box-shadow 160ms ease;
+}
+
+.lnl-palette-grid button.active i {
+  transform: scale(1.08);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--swatch) 55%, transparent);
 }
 
 .lnl-appearance-reset {

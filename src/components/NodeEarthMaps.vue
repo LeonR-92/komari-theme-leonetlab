@@ -5,7 +5,7 @@ import { computed, onMounted, ref } from 'vue'
 import VChart from 'vue-echarts'
 import { Empty } from '@/components/ui/empty'
 import { Spinner } from '@/components/ui/spinner'
-import { useAppStore } from '@/stores/app'
+import { PALETTE_ACCENT_COLORS, useAppStore } from '@/stores/app'
 import { useNodesStore } from '@/stores/nodes'
 import { ensureWorldMapRegistered } from '@/utils/echartsWorldMap'
 import { getCoordByCode, getCountryCodeFromRegion } from '@/utils/geoHelper'
@@ -75,15 +75,29 @@ const totalServers = computed(() => displayNodes.value.length)
 const onlineServers = computed(() => displayNodes.value.filter(node => node.online).length)
 const offlineServers = computed(() => totalServers.value - onlineServers.value)
 
-const chartThemeColors = computed(() => ({
-  areaColor: appStore.isDark ? 'rgba(255, 255, 255, 0.08)' : 'rgba(15, 23, 42, 0.06)',
-  borderColor: appStore.isDark ? 'rgba(255, 255, 255, 0.06)' : 'rgba(15, 23, 42, 0.06)',
-  hoverBorderColor: appStore.isDark ? 'rgba(16, 185, 129, 0.9)' : 'rgba(5, 150, 105, 0.85)',
-  activeAreaColor: appStore.isDark ? 'rgba(16, 185, 129, 0.52)' : 'rgba(16, 185, 129, 0.36)',
-  offlineAreaColor: appStore.isDark ? 'rgba(234, 179, 8, 0.32)' : 'rgba(202, 138, 4, 0.22)',
-  activeBorderColor: appStore.isDark ? 'rgba(16, 185, 129, 0.95)' : 'rgba(5, 150, 105, 0.92)',
-  offlineBorderColor: appStore.isDark ? 'rgba(234, 179, 8, 0.8)' : 'rgba(202, 138, 4, 0.88)',
-}))
+function hexToRgba(hex: string, alpha: number): string {
+  const normalized = hex.replace('#', '').trim()
+  const r = Number.parseInt(normalized.slice(0, 2), 16)
+  const g = Number.parseInt(normalized.slice(2, 4), 16)
+  const b = Number.parseInt(normalized.slice(4, 6), 16)
+  if (!Number.isFinite(r) || !Number.isFinite(g) || !Number.isFinite(b))
+    return `rgba(16, 185, 129, ${alpha})`
+  return `rgba(${r}, ${g}, ${b}, ${alpha})`
+}
+
+const chartThemeColors = computed(() => {
+  const mode = appStore.isDark ? 'dark' : 'light'
+  const accent = PALETTE_ACCENT_COLORS[appStore.colorPalette]?.[mode]?.primary ?? '#167a56'
+  return {
+    areaColor: appStore.isDark ? 'rgba(255, 255, 255, 0.08)' : 'rgba(15, 23, 42, 0.06)',
+    borderColor: appStore.isDark ? 'rgba(255, 255, 255, 0.06)' : 'rgba(15, 23, 42, 0.06)',
+    hoverBorderColor: hexToRgba(accent, appStore.isDark ? 0.9 : 0.85),
+    activeAreaColor: hexToRgba(accent, appStore.isDark ? 0.52 : 0.36),
+    offlineAreaColor: appStore.isDark ? 'rgba(234, 179, 8, 0.32)' : 'rgba(202, 138, 4, 0.22)',
+    activeBorderColor: hexToRgba(accent, appStore.isDark ? 0.95 : 0.92),
+    offlineBorderColor: appStore.isDark ? 'rgba(234, 179, 8, 0.8)' : 'rgba(202, 138, 4, 0.88)',
+  }
+})
 
 const mapSeriesData = computed(() => points.value.map(point => ({
   name: point.code,

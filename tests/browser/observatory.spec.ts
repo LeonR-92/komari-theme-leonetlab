@@ -1,7 +1,7 @@
 import type { Page } from '@playwright/test'
 import { expect, test } from '@playwright/test'
 
-const introSessionKey = 'komari-observatory:intro:1.6.0'
+const introSessionKey = 'komari-observatory:intro:1.6.1'
 const introEnabledCacheKey = 'komari-observatory:intro-enabled:v1'
 
 async function emulateStandaloneDisplayMode(page: Page) {
@@ -73,7 +73,7 @@ test('recovers once when the desktop entry asset is replaced by stale HTML', asy
   expect(entryRequests).toBeGreaterThanOrEqual(2)
   await expect(page.locator('#lnl-boot-fallback')).toHaveCount(0)
   await expect.poll(() => page.evaluate(() => ({
-    attempt: sessionStorage.getItem('komari-observatory:boot-recovery:1.6.0'),
+    attempt: sessionStorage.getItem('komari-observatory:boot-recovery:1.6.1'),
     cacheDeletes: Number(sessionStorage.getItem('__lnl_boot_cache_deletes') || 0),
     recoveryQuery: new URL(location.href).searchParams.has('__komari_boot_recovery'),
     unregisters: Number(sessionStorage.getItem('__lnl_boot_unregisters') || 0),
@@ -110,7 +110,7 @@ test('applies compact, standard and hidden managed homepage layouts', async ({ p
   await expect(hero.locator('.lnl-dashboard-status')).toBeVisible()
 })
 
-test('renders the Komari 1.6.0 fixture without viewport overflow', async ({ page }, testInfo) => {
+test('renders the Komari 1.6.1 fixture without viewport overflow', async ({ page }, testInfo) => {
   const pageErrors: string[] = []
   const iconifyRequests: string[] = []
   page.on('pageerror', error => pageErrors.push(error.message))
@@ -247,7 +247,7 @@ test('applies every palette in light and dark mode without semantic-state drift'
   await page.goto('/')
   await expect(page.getByText('Tokyo Fixture', { exact: true }).first()).toBeVisible()
   await page.locator('[data-action="toggleAppearance"]').click()
-  for (const palette of ['emerald', 'aurora', 'cobalt', 'amber']) {
+  for (const palette of ['emerald', 'aurora', 'cobalt', 'amber', 'violet', 'crimson', 'glacier', 'graphite']) {
     await page.locator(`[data-color-palette="${palette}"]`).click()
     for (const mode of ['light', 'dark']) {
       await page.locator(`[data-theme-mode="${mode}"]`).click()
@@ -575,8 +575,11 @@ test('honors backend-managed telemetry switches and lazily loads Komari 1.4.3 GP
 test('isolates GPU failures from connection and process telemetry', async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== 'chromium-desktop', 'One deterministic engine covers optional telemetry error isolation.')
   let gpuAttempts = 0
+  const publicGpuCalls: unknown[] = []
   await page.route('**/api/rpc2', async (route) => {
     const body = route.request().postDataJSON() as { id?: number, method?: string, params?: { metric_keys?: string[] } }
+    if (body.method === 'public:getRecordsByUUID')
+      publicGpuCalls.push(body.params)
     if (body.method !== 'public:queryMetrics' || !body.params?.metric_keys?.includes('gpu.device.usage')) {
       await route.continue()
       return
@@ -600,6 +603,7 @@ test('isolates GPU failures from connection and process telemetry', async ({ pag
   await gpuTab.click()
   await expect(workspace.getByRole('button', { name: /查看 1 个 GPU 的实时状态/ })).toBeVisible()
   await expect(workspace.getByText('该指标暂时无法加载，请稍后重试')).toBeVisible()
+  expect(publicGpuCalls).toHaveLength(0)
 
   await workspace.getByRole('tab', { name: '连接', exact: true }).click()
   await expect(workspace.getByText('该指标暂时无法加载，请稍后重试')).toHaveCount(0)
@@ -609,7 +613,8 @@ test('isolates GPU failures from connection and process telemetry', async ({ pag
 
   await gpuTab.click()
   await expect.poll(() => gpuAttempts).toBe(2)
-  await expect(workspace.getByText('该项历史采集未启用或暂无数据')).toBeVisible()
+  await expect.poll(() => publicGpuCalls).toEqual([{ uuid: 'fixture-node-a', hours: '1', load_type: 'all' }])
+  await expect(workspace.locator('canvas')).toBeVisible()
 })
 
 test('discards stale GPU responses and treats empty series as unavailable data', async ({ page }, testInfo) => {
@@ -617,6 +622,10 @@ test('discards stale GPU responses and treats empty series as unavailable data',
   let gpuAttempts = 0
   await page.route('**/api/rpc2', async (route) => {
     const body = route.request().postDataJSON() as { id?: number, method?: string, params?: { metric_keys?: string[] } }
+    if (body.method === 'public:getRecordsByUUID') {
+      await route.fulfill({ json: { jsonrpc: '2.0', id: body.id, result: { records: [], count: 0, has_gpu_data: false } } })
+      return
+    }
     if (body.method !== 'public:queryMetrics' || !body.params?.metric_keys?.includes('gpu.device.usage')) {
       await route.continue()
       return
