@@ -4,6 +4,7 @@
 
 - Aligned with Komari `1.6.1`, added live multi-GPU details and Ping percentile/protocol display, and show the server commit and theme build version in the footer.
 - Align multi-GPU history by timestamp and preserve missing samples. Use the official public records request format for the fallback, with a four-hour limit when the bounded metric query cannot supply data.
+- Update Vite to its patched 7.3.7 release and run the production dependency audit before browser validation.
 - Expanded light/dark color palettes from four to eight (`emerald`, `aurora`, `cobalt`, `amber`, `violet`, `crimson`, `glacier`, `graphite`) across CSS tokens, COBE WebGL markers, ECharts series, visitor card row icons, boot scripts, and managed theme settings.
 - Added `<TabsIndicator>` sliding active pills across all `<TabsList>` bars (eliminating double active-background stacking and keeping extended telemetry tabs single-row scrollable) and `--segment-index` sliding thumbs inside the appearance panel (`#lnl-appearance-panel`), plus custom halo cursor hover/click physics and tactile feedback on interactive controls.
 - Fixed rapid-click disappearance in `#lnl-appearance-panel` by disabling pointer interception on `::view-transition*` pseudo-elements, guarding outside pointer detection with `composedPath()` and bounding-box hit-testing, keeping `.lnl-palette-check` mounted, and committing cursor style updates immediately.

@@ -64,6 +64,10 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Audit production dependencies
+        # Fail early on lockfile advisories before spending time on browser checks.
+        run: npm audit --omit=dev --audit-level=high
+
       # Build includes Vue/TypeScript checks; reuse this exact output for all gates and publication.
       - name: Build and type-check release package
         run: npm run build
@@ -105,11 +109,6 @@ jobs:
         env:
           CHROME_PATH: /usr/bin/google-chrome
         run: npm run smoke:1.6.1
-
-      - name: Audit production dependencies
-        # 只审计随主题分发的生产依赖（--omit=dev）：构建/lint 工具链的漏洞
-        # 不进入安装包，且 dev 链的修复常要求 eslint 等大版本跳跃，不应阻塞发布。
-        run: npm audit --omit=dev --audit-level=high
 
       - name: Detect version release
         if: github.event_name == 'push'
