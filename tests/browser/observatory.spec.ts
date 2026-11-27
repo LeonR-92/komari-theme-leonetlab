@@ -577,8 +577,11 @@ test('honors backend-managed telemetry switches and lazily loads Komari 1.4.3 GP
 test('isolates GPU failures from connection and process telemetry', async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== 'chromium-desktop', 'One deterministic engine covers optional telemetry error isolation.')
   let gpuAttempts = 0
+  const publicGpuCalls: unknown[] = []
   await page.route('**/api/rpc2', async (route) => {
     const body = route.request().postDataJSON() as { id?: number, method?: string, params?: { metric_keys?: string[] } }
+    if (body.method === 'public:getRecordsByUUID')
+      publicGpuCalls.push(body.params)
     if (body.method !== 'public:queryMetrics' || !body.params?.metric_keys?.includes('gpu.device.usage')) {
       await route.continue()
       return
@@ -602,6 +605,7 @@ test('isolates GPU failures from connection and process telemetry', async ({ pag
   await gpuTab.click()
   await expect(workspace.getByRole('button', { name: /查看 1 个 GPU 的实时状态/ })).toBeVisible()
   await expect(workspace.getByText('该指标暂时无法加载，请稍后重试')).toBeVisible()
+  expect(publicGpuCalls).toHaveLength(0)
 
   await workspace.getByRole('tab', { name: '连接', exact: true }).click()
   await expect(workspace.getByText('该指标暂时无法加载，请稍后重试')).toHaveCount(0)
@@ -611,7 +615,8 @@ test('isolates GPU failures from connection and process telemetry', async ({ pag
 
   await gpuTab.click()
   await expect.poll(() => gpuAttempts).toBe(2)
-  await expect(workspace.getByText('该项历史采集未启用或暂无数据')).toBeVisible()
+  await expect.poll(() => publicGpuCalls).toEqual([{ uuid: 'fixture-node-a', hours: '1', load_type: 'all' }])
+  await expect(workspace.locator('canvas')).toBeVisible()
 })
 
 test('discards stale GPU responses and treats empty series as unavailable data', async ({ page }, testInfo) => {
@@ -619,6 +624,10 @@ test('discards stale GPU responses and treats empty series as unavailable data',
   let gpuAttempts = 0
   await page.route('**/api/rpc2', async (route) => {
     const body = route.request().postDataJSON() as { id?: number, method?: string, params?: { metric_keys?: string[] } }
+    if (body.method === 'public:getRecordsByUUID') {
+      await route.fulfill({ json: { jsonrpc: '2.0', id: body.id, result: { records: [], count: 0, has_gpu_data: false } } })
+      return
+    }
     if (body.method !== 'public:queryMetrics' || !body.params?.metric_keys?.includes('gpu.device.usage')) {
       await route.continue()
       return
