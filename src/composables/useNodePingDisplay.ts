@@ -44,10 +44,22 @@ export function useNodePingDisplay(
     enabled: pingStatsEnabled,
   })
 
+  const resolvedNode = computed(() => options.liveNode
+    ? toValue(options.liveNode)
+    : nodesStore.nodesByUuid.get(toValue(uuid)))
+
+  const isOffline = computed(() => Boolean(resolvedNode.value && !resolvedNode.value.online))
+
   const livePing = computed(() => {
-    const node = options.liveNode
-      ? toValue(options.liveNode)
-      : nodesStore.nodesByUuid.get(toValue(uuid))
+    const node = resolvedNode.value
+    // 节点离线时不向第 10 格注入陈旧实时值或 100% 丢包红色提示条
+    if (!node || !node.online) {
+      return {
+        time: node?.time ?? '',
+        latency: null,
+        loss: null,
+      }
+    }
     const samples = Object.values(node?.ping ?? {})
     const latency = samples
       .map(sample => sample.latest)
@@ -74,6 +86,11 @@ export function useNodePingDisplay(
 
     return points.map((point, index) => {
       const value = point[metric]
+      const startLabel = formatDateTime(point.time, 'HH:mm')
+      const endLabel = point.endTime ? formatDateTime(point.endTime, 'HH:mm') : ''
+      const timeRangeLabel = startLabel !== '-' && endLabel && endLabel !== '-' && startLabel !== endLabel
+        ? `${startLabel}–${endLabel}`
+        : formatDateTime(point.time, 'HH:mm:ss')
 
       return {
         key: `${point.time}-${index}`,
@@ -83,10 +100,10 @@ export function useNodePingDisplay(
             ? getLatencyToneClass(value)
             : getLossToneClass(value),
         tooltip: value === null
-          ? `${formatDateTime(point.time, 'HH:mm:ss')} N/A`
+          ? `${timeRangeLabel} N/A`
           : metric === 'latency'
-            ? `${formatDateTime(point.time, 'HH:mm:ss')}\n${Math.round(value)} ms`
-            : `${formatDateTime(point.time, 'HH:mm:ss')}\n${value.toFixed(1)}%`,
+            ? `${timeRangeLabel}\n${Math.round(value)} ms`
+            : `${timeRangeLabel}\n${value.toFixed(1)}%`,
       }
     })
   }
@@ -186,6 +203,7 @@ export function useNodePingDisplay(
     pingStats,
     pingStatsEnabled,
     pingRecordsQueryHours,
+    isOffline,
     latencyRenderBars,
     lossRenderBars,
     latencyDisplay,

@@ -5,6 +5,7 @@ import { getSharedRpc } from '@/utils/rpc'
 
 export interface NodePingHistoryPoint {
   time: string
+  endTime?: string
   latency: number | null
   loss: number | null
 }
@@ -183,7 +184,7 @@ function retainSharedPingRecordsEntry(hours: number): () => void {
   }
 }
 
-function buildPingHistory(records: PingRecord[]): NodePingHistoryPoint[] {
+function buildPingHistory(records: PingRecord[], hours = 1): NodePingHistoryPoint[] {
   const sortedRecords = records
     .map((record) => {
       const timestamp = Date.parse(record.time)
@@ -197,14 +198,24 @@ function buildPingHistory(records: PingRecord[]): NodePingHistoryPoint[] {
 
   const firstTime = sortedRecords[0]?.timestamp ?? 0
   const lastTime = sortedRecords.at(-1)?.timestamp ?? firstTime
+  const windowMs = Math.max(1, hours) * 3600_000
+  const now = Date.now()
+  // 当主控时钟活跃且节点已断报一段时间（< 窗口期），把第 10 格延伸至当前时间以暴露真实断档
+  const effectiveEnd = (now > lastTime && now - lastTime > 60_000 && now - lastTime < windowMs)
+    ? now
+    : lastTime
+  // 避免单样本或仅几分钟数据时把首尾跨度切出毫秒级伪桶（导致 endTime < startTime 或假 N/A）
+  const effectiveStart = (effectiveEnd - firstTime < windowMs)
+    ? effectiveEnd - windowMs
+    : firstTime
   // Emerald's card language is a stable ten-cell quality rail. Keep ten
   // buckets even for sparse intervals so the visual scale never collapses.
   const bucketCount = NODE_PING_BAR_COUNT
-  const bucketSize = Math.max(1, (lastTime - firstTime) / bucketCount)
+  const bucketSize = Math.max(1, (effectiveEnd - effectiveStart) / bucketCount)
 
   return Array.from({ length: bucketCount }, (_, index) => {
-    const startTime = firstTime + bucketSize * index
-    const endTime = index === bucketCount - 1 ? lastTime + 1 : startTime + bucketSize
+    const startTime = effectiveStart + bucketSize * index
+    const endTime = index === bucketCount - 1 ? effectiveEnd + 1 : startTime + bucketSize
     const bucketRecords = sortedRecords.filter(
       record => record.timestamp >= startTime && record.timestamp < endTime,
     )
@@ -212,6 +223,7 @@ function buildPingHistory(records: PingRecord[]): NodePingHistoryPoint[] {
 
     return {
       time: new Date(startTime).toISOString(),
+      endTime: new Date(index === bucketCount - 1 ? effectiveEnd : endTime).toISOString(),
       latency,
       loss,
     }
@@ -237,7 +249,7 @@ function getPercentile(values: number[], percentile: number): number | null {
   return lowerValue + (upperValue - lowerValue) * (position - lowerIndex)
 }
 
-function buildStats(records: PingRecord[]): NodePingStatsState {
+function buildStats(records: PingRecord[], hours = 1): NodePingStatsState {
   // 有记录即代表探针有效；整段全为 -1 是真实的 100% 丢包，不能排除。
   const includedTaskIds = getPingTaskIdsWithSamples(records)
 
@@ -245,7 +257,7 @@ function buildStats(records: PingRecord[]): NodePingStatsState {
     return createEmptyStats()
 
   const filteredRecords = records.filter(record => includedTaskIds.has(record.task_id))
-  const history = buildPingHistory(filteredRecords)
+  const history = buildPingHistory(filteredRecords, hours)
   const taskRecords = new Map<number, PingRecord[]>()
 
   for (const record of filteredRecords) {
@@ -352,7 +364,7 @@ export function useNodePingStats(
       return cachedStats
 
     const records = state.recordsByClient.get(nodeUuid) ?? []
-    const computedStats = records.length ? buildStats(records) : createEmptyStats()
+    const computedStats = records.length ? buildStats(records, hours) : createEmptyStats()
     state.statsByClient.set(nodeUuid, computedStats)
     return computedStats
   })

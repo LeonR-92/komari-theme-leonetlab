@@ -216,7 +216,7 @@ onUnmounted(() => {
         <div
           v-if="backgroundType === 'image'"
           class="background-image"
-          :style="{ backgroundImage: `url(${currentUrl})` }"
+          :style="{ backgroundImage: `url(&quot;${currentUrl.replace(/[&quot;\\]/g, '\\$&')}&quot;)` }"
         />
         <video
           v-else-if="backgroundType === 'video'"

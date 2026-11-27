@@ -674,6 +674,7 @@ function handleLogoError(event: Event) {
 
 .lnl-appearance-panel {
   transform-origin: top right;
+  will-change: transform, opacity;
   position: fixed;
   z-index: 135;
   top: calc(env(safe-area-inset-top, 0px) + 76px);
@@ -882,6 +883,13 @@ function handleLogoError(event: Event) {
   transition:
     transform 160ms var(--lnl-ease-out),
     box-shadow 160ms ease;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .lnl-palette-grid button:hover i {
+    transform: scale(1.12);
+    box-shadow: 0 0 0 2px color-mix(in srgb, var(--swatch) 46%, transparent);
+  }
 }
 
 .lnl-palette-grid button.active i {

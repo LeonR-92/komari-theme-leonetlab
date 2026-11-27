@@ -14,8 +14,10 @@ import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { useBackgroundSurface } from '@/composables/useBackgroundSurface'
 import { useMotionPreference } from '@/composables/useMotionPreference'
 import { useAppStore } from '@/stores/app'
+import { useNodesStore } from '@/stores/nodes'
 import { isMetricCapabilityUnavailable } from '@/utils/metricCompatibility'
-import { bridgeShortDisplayGaps, cutPeakValues } from '@/utils/recordHelper'
+import { normalizePingLossPercent, resolvePingMergeToleranceMs, resolvePingTimelineCadenceMs } from '@/utils/pingMetrics'
+import { bridgeShortDisplayGaps, cutPeakValues, getSparsePointSymbolSize, isCrossDayRange } from '@/utils/recordHelper'
 import { getSharedRpc, RpcError } from '@/utils/rpc'
 import '@/utils/echarts' // 共享 ECharts 配置
 
@@ -24,6 +26,15 @@ const props = defineProps<{
 }>()
 
 const appStore = useAppStore()
+const nodesStore = useNodesStore()
+const pingNodeInfo = computed(() => nodesStore.nodesByUuid.get(props.uuid))
+const isBackendClockLive = computed(() => {
+  const now = Date.now()
+  return nodesStore.nodes.some((node) => {
+    const t = node.time ? Date.parse(node.time) : Number.NaN
+    return Number.isFinite(t) && Math.abs(now - t) <= 10 * 60_000
+  })
+})
 const { pickSurfaceClass } = useBackgroundSurface()
 const { motionReduced } = useMotionPreference()
 const isDark = computed(() => appStore.isDark)
@@ -62,12 +73,15 @@ const chartColors = [
   '#FB923C', // 橙色
 ]
 
-// 从 publicSettings 获取记录保留时间
+// 从 publicSettings 获取记录保留时间（优先旧字段以严格尊重 0 禁用边界，缺失时回退新版 metric_retention_days）
 const maxPingRecordPreserveTime = computed(() => {
-  const value = appStore.publicSettings?.ping_record_preserve_time
-  return typeof value === 'number' && Number.isFinite(value)
-    ? Math.max(0, value)
-    : 168
+  const legacy = appStore.publicSettings?.ping_record_preserve_time
+  if (typeof legacy === 'number' && Number.isFinite(legacy))
+    return Math.max(0, legacy)
+  const unifiedDays = appStore.publicSettings?.metric_retention_days
+  if (typeof unifiedDays === 'number' && Number.isFinite(unifiedDays))
+    return Math.max(0, Math.round(unifiedDays * 24))
+  return 168
 })
 const pingHistoryEnabled = computed(() => maxPingRecordPreserveTime.value > 0)
 
@@ -215,6 +229,7 @@ interface PingChartData {
   records: PingRecord[]
   lossPoints: PingLossPoint[]
   tasks: TaskInfo[]
+  intervalSeconds: number | null
 }
 
 interface PublicPingTask {
@@ -232,6 +247,7 @@ const backgroundRefreshing = ref(false)
 const error = ref<string | null>(null)
 const refreshError = ref(false)
 const lastUpdatedAt = ref<number | null>(null)
+const metricIntervalSeconds = ref<number | null>(null)
 let fetchRequestId = 0
 let metricRpcSupported: boolean | null = null
 let metricRpcRetryAt = 0
@@ -267,21 +283,20 @@ const showDelay = ref(true)
 const showLoss = ref(true)
 const probeDetailsOpen = ref(false)
 const chartMargin = computed(() => narrowViewport.value
-  ? { top: 22, right: 10, bottom: 42, left: 40 }
-  : { top: 30, right: 24, bottom: 52, left: 56 })
+  ? { top: 22, right: 10, bottom: 26, left: 40 }
+  : { top: 28, right: 24, bottom: 28, left: 56 })
 const chartAxisFontSize = computed(() => narrowViewport.value ? 9 : 11)
 
-const mergeToleranceMs = computed(() => {
-  const taskIntervals = tasks.value
-    .map(t => t.interval)
-    .filter((v): v is number => typeof v === 'number' && v > 0)
+const effectiveCadenceMs = computed(() => resolvePingTimelineCadenceMs(remoteData.value, {
+  hours: selectedHours.value,
+  serverIntervalSec: metricIntervalSeconds.value,
+  taskIntervalsSec: tasks.value.map(t => t.interval),
+}))
 
-  const fallbackIntervalSec = taskIntervals.length ? Math.min(...taskIntervals) : 60
-  return Math.min(
-    6000,
-    Math.max(800, Math.floor(fallbackIntervalSec * 1000 * 0.25)),
-  )
-})
+const mergeToleranceMs = computed(() => resolvePingMergeToleranceMs(
+  effectiveCadenceMs.value,
+  tasks.value.map(t => t.interval),
+))
 
 // ==================== 数据获取 ====================
 
@@ -431,7 +446,13 @@ async function fetchMetricRecords(uuid: string, hours: number): Promise<PingChar
     type: task.type,
   })).filter(task => Number.isInteger(task.id)).sort(compareTasks)
 
-  return { records, lossPoints, tasks: metricTasks }
+  const serverSeriesInterval = metricSeries.find(s => typeof s?.interval_seconds === 'number' && Number.isFinite(s.interval_seconds) && s.interval_seconds > 0)?.interval_seconds
+  const rawServerInterval = statsResult?.interval_seconds ?? metricResult?.interval_seconds ?? serverSeriesInterval
+  const intervalSeconds = typeof rawServerInterval === 'number' && Number.isFinite(rawServerInterval) && rawServerInterval > 0
+    ? rawServerInterval
+    : null
+
+  return { records, lossPoints, tasks: metricTasks, intervalSeconds }
 }
 
 async function fetchLegacyRecords(uuid: string, hours: number): Promise<PingChartData> {
@@ -456,6 +477,7 @@ async function fetchLegacyRecords(uuid: string, hours: number): Promise<PingChar
       .filter(task => task && typeof task === 'object' && Number.isInteger(task.id))
       .map(task => normalizeTaskStatistics({ ...task, weight: task.weight ?? taskWeights.get(task.id) }))
       .sort(compareTasks),
+    intervalSeconds: null,
   }
 }
 
@@ -540,6 +562,7 @@ async function fetchRecords(options: { background?: boolean } = {}) {
     lossPoints.sort((a, b) => Date.parse(a.time) - Date.parse(b.time))
 
     interactiveChartUpdate.value = !background
+    metricIntervalSeconds.value = result.intervalSeconds
     remoteData.value = records
     remoteLossData.value = lossPoints
     tasks.value = result.tasks
@@ -592,8 +615,11 @@ const mergedData = computed(() => {
     for (let i = anchors.length - 1; i >= 0; i--) {
       const a = anchors[i]!
       if (Math.abs(a - ts) <= toleranceMs) {
-        anchor = a
-        break
+        if (!(rec.task_id in grouped.get(a)!)) {
+          anchor = a
+          break
+        }
+        continue
       }
       if (ts - a > toleranceMs)
         break
@@ -661,8 +687,49 @@ const mergedData = computed(() => {
   return sortedEntries.slice(startIdx).map(entry => entry[1])
 })
 
+// 为长断档期和节点离线尾部补充均匀时间空槽，基于服务端降采样粒度与实际采样周期避免多天视图误插空洞
+const timelineData = computed(() => {
+  const rows = mergedData.value
+  if (!rows.length)
+    return []
+
+  const hours = selectedHours.value
+  const windowMs = Math.max(1, hours) * 3600_000
+  const stepMs = Math.max(30_000, effectiveCadenceMs.value)
+  const gapThresholdMs = stepMs * 2.2
+  const maxTotalSlots = Math.max(600, rows.length + 240)
+
+  const normalized: Array<Record<string, unknown>> = []
+  let prevTs = Number.NaN
+  for (const row of rows) {
+    const ts = Date.parse(row.time as string)
+    if (!Number.isFinite(ts))
+      continue
+    if (Number.isFinite(prevTs) && ts - prevTs > gapThresholdMs && normalized.length < maxTotalSlots) {
+      for (let t = prevTs + stepMs; t < ts - stepMs * 0.45 && normalized.length < maxTotalSlots; t += stepMs)
+        normalized.push({ time: new Date(t).toISOString() })
+    }
+    normalized.push(row)
+    prevTs = ts
+  }
+
+  const now = Date.now()
+  if (
+    Number.isFinite(prevTs)
+    && (pingNodeInfo.value?.online === false || isBackendClockLive.value)
+    && now > prevTs
+    && now - prevTs > gapThresholdMs
+    && now - prevTs < windowMs
+  ) {
+    for (let t = prevTs + stepMs; t <= now && normalized.length < maxTotalSlots; t += stepMs)
+      normalized.push({ time: new Date(t).toISOString() })
+  }
+
+  return normalized
+})
+
 const chartData = computed(() => {
-  let data = mergedData.value
+  let data = timelineData.value
   const selectedKeys = selectedTaskIds.value.map(String)
 
   if (selectedKeys.length === 0)
@@ -693,7 +760,8 @@ function formatTimeForTooltip(time: string, hours: number): string {
   return date.format('MM/DD HH:mm')
 }
 
-const showDateInAxis = computed(() => selectedHours.value >= 24)
+const showDateInAxis = computed(() => selectedHours.value >= 24
+  || isCrossDayRange(timelineData.value.map(d => Date.parse(d.time as string))))
 
 // ==================== 任务选择 ====================
 
@@ -759,32 +827,31 @@ function findNearestTimeIndex(sortedTimes: number[], target: number, tolerance: 
     : -1
 }
 
-const packetLossMarkers = computed(() => {
-  const data = mergedData.value
-  const markers = new Map<number, number[]>()
+const lossBySlotAndTask = computed(() => {
+  const data = timelineData.value
+  const slots = new Map<number, Map<number, number>>()
 
   if (!data.length || !selectedTasks.value.length)
-    return markers
+    return slots
 
   const chartTimes = data.map(item => Date.parse(item.time as string))
-  const toleranceMs = mergeToleranceMs.value
+  const toleranceMs = Math.max(mergeToleranceMs.value, effectiveCadenceMs.value * 0.5)
 
-  const markerSets = new Map<number, Set<number>>()
   for (const record of remoteLossData.value) {
-    if (record.loss <= 0 || !selectedTaskIdSet.value.has(record.task_id))
+    const lossPct = normalizePingLossPercent(record.loss)
+    if (lossPct <= 0 || !selectedTaskIdSet.value.has(record.task_id))
       continue
     const matchedIndex = findNearestTimeIndex(chartTimes, Date.parse(record.time), toleranceMs)
     if (matchedIndex < 0)
       continue
-    const points = markerSets.get(record.task_id) ?? new Set<number>()
-    points.add(matchedIndex)
-    markerSets.set(record.task_id, points)
+    const taskMap = slots.get(matchedIndex) ?? new Map<number, number>()
+    const prev = taskMap.get(record.task_id) ?? 0
+    if (lossPct > prev)
+      taskMap.set(record.task_id, lossPct)
+    slots.set(matchedIndex, taskMap)
   }
 
-  for (const task of selectedTasks.value)
-    markers.set(task.id, Array.from(markerSets.get(task.id) ?? []).sort((a, b) => a - b))
-
-  return markers
+  return slots
 })
 
 function formatProbeLatency(task: TaskInfo & { latestValue: number | null }): string {
@@ -866,11 +933,11 @@ const pingChartOption = computed(() => {
   const taskList = tasks.value
   const data = chartData.value
   const hours = selectedHours.value
+  const showSingleArea = showDelay.value && selectedTasks.value.length <= 2
 
-  // 构建 series，确保颜色与卡片一致
-  const series = taskList.map((task) => {
+  // 构建延迟折线 series，确保颜色与探针卡片一致
+  const lineSeries: Array<Record<string, unknown>> = taskList.map((task) => {
     const color = getTaskColor(task.id)
-    const lossMarkerIndexes = packetLossMarkers.value.get(task.id) || []
     const rawValues = data.map(d => d[task.id] as number | null ?? null)
     const displayValues = bridgeShortDisplayGaps(rawValues, 2)
     return {
@@ -882,29 +949,62 @@ const pingChartOption = computed(() => {
       data: displayValues,
       smooth: showDelay.value ? (cutPeak.value ? 0.32 : 0.22) : 0,
       smoothMonotone: 'x' as const,
-      showSymbol: false,
+      showSymbol: showDelay.value,
+      symbolSize: (_value: unknown, params: { dataIndex: number }) =>
+        showDelay.value ? getSparsePointSymbolSize(displayValues, params.dataIndex, 5) : 0,
       connectNulls: false,
       lineStyle: { width: showDelay.value ? 1.8 : 0, color, cap: 'round' as const, join: 'round' as const },
       itemStyle: { color, opacity: showDelay.value ? 1 : 0 },
-      markLine: showLoss.value && lossMarkerIndexes.length
+      areaStyle: showSingleArea
         ? {
-            silent: true,
-            symbol: ['none', 'none'],
-            animation: false,
-            label: { show: false },
-            lineStyle: {
-              color,
-              width: 1,
-              type: 'solid' as const,
-              opacity: 0.55,
+            color: {
+              type: 'linear',
+              x: 0,
+              y: 0,
+              x2: 0,
+              y2: 1,
+              colorStops: [
+                { offset: 0, color: isDark.value ? `${color}28` : `${color}1F` },
+                { offset: 1, color: `${color}00` },
+              ],
             },
-            data: lossMarkerIndexes.map(index => ({
-              xAxis: index,
-            })),
           }
         : undefined,
     }
   })
+
+  // 底部贴底丢包刻度柱（不切割主延迟曲线，最大仅占底部约 26% 高度）
+  const lossBarData = data.map((_, slotIndex) => {
+    const slotMap = lossBySlotAndTask.value.get(slotIndex)
+    if (!slotMap)
+      return null
+    let maxLoss = 0
+    for (const [taskId, lossPct] of slotMap.entries()) {
+      if (selectedTaskIdSet.value.has(taskId) && lossPct > maxLoss)
+        maxLoss = lossPct
+    }
+    return maxLoss > 0 ? Math.max(12, Math.min(100, maxLoss)) : null
+  })
+
+  const series: Array<Record<string, unknown>> = [
+    ...lineSeries,
+    ...(showLoss.value && lossBarData.some(value => value !== null)
+      ? [{
+          id: 'ping-loss-bars',
+          name: '__ping_loss__',
+          type: 'bar' as const,
+          yAxisIndex: 1,
+          data: lossBarData,
+          barMaxWidth: 6,
+          silent: true,
+          z: 1,
+          itemStyle: {
+            color: isDark.value ? 'rgba(248, 113, 113, 0.56)' : 'rgba(220, 38, 38, 0.44)',
+            borderRadius: [2, 2, 0, 0],
+          },
+        }]
+      : []),
+  ]
 
   // 颜色映射表（用于 Tooltip）
   const colorMap = new Map<number, string>()
@@ -927,7 +1027,9 @@ const pingChartOption = computed(() => {
     tooltip: {
       ...baseTooltipConfig.value,
       formatter: (params: unknown) => {
-        const p = params as Array<{ seriesId: string, value: number | null, dataIndex: number }>
+        const p = (Array.isArray(params) ? params : [])
+          .filter((item): item is { seriesId: string, value: number | null, dataIndex: number } =>
+            Boolean(item && typeof item === 'object' && typeof (item as { seriesId?: unknown }).seriesId === 'string' && (item as { seriesId: string }).seriesId.startsWith('ping-task-')))
         if (!p.length)
           return ''
         const firstParam = p[0]
@@ -937,43 +1039,50 @@ const pingChartOption = computed(() => {
         if (!rowData)
           return ''
 
+        const slotLossMap = lossBySlotAndTask.value.get(firstParam.dataIndex)
         const time = rowData.time as string
         const timeStr = formatTimeForTooltip(time, hours)
-        let html = `<div style="font-weight:600;margin-bottom:6px;color:${chartThemeColors.value.textSecondary}">${timeStr}</div>`
-        html += '<div style="display:flex;flex-direction:column;gap:4px">'
 
         // Tooltip 始终读取原始行，绝不展示绘制副本中的插值值。
         const rawItems = p
           .map((item) => {
             const task = taskById.value.get(Number(item.seriesId.replace('ping-task-', '')))
             const rawValue = task ? rowData[task.id] : null
+            const lossPct = task && showLoss.value ? (slotLossMap?.get(task.id) ?? 0) : 0
             return {
               ...item,
               task,
               rawValue: typeof rawValue === 'number' && Number.isFinite(rawValue) ? rawValue : null,
+              lossPct,
             }
           })
+          .filter(item => item.rawValue !== null || item.lossPct > 0)
           .sort((a, b) => (a.rawValue ?? Number.POSITIVE_INFINITY) - (b.rawValue ?? Number.POSITIVE_INFINITY))
 
+        if (!rawItems.length)
+          return ''
+
+        const lossTextColor = isDark.value ? '#fca5a5' : '#dc2626'
+        const lossBgColor = isDark.value ? 'rgba(248, 113, 113, 0.16)' : 'rgba(220, 38, 38, 0.10)'
+
+        let html = `<div style="font-weight:600;margin-bottom:6px;color:${chartThemeColors.value.textSecondary}">${timeStr}</div>`
+        html += '<div style="display:flex;flex-direction:column;gap:4px">'
+
         for (const item of rawItems) {
-          if (item.rawValue !== null) {
-            const color = item.task ? colorMap.get(item.task.id) || chartColors[0] : chartColors[0]
-            const colorDot = `<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${color};margin-right:8px;flex-shrink:0"></span>`
-            html += `<div style="display:flex;align-items:center">${colorDot}<span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escapeTooltipText(item.task?.name ?? '')}</span><span style="margin-left:16px;font-weight:600;font-variant-numeric:tabular-nums">${Math.round(item.rawValue)} ms</span></div>`
-          }
+          const color = item.task ? colorMap.get(item.task.id) || chartColors[0] : chartColors[0]
+          const colorDot = `<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${color};margin-right:8px;flex-shrink:0"></span>`
+          const lossBadge = item.lossPct > 0
+            ? `<span style="margin-left:8px;padding:0 5px;border-radius:4px;font-size:10px;font-weight:600;color:${lossTextColor};background:${lossBgColor};font-variant-numeric:tabular-nums">丢包 ${item.lossPct.toFixed(1)}%</span>`
+            : ''
+          const latencyText = item.rawValue !== null ? `${Math.round(item.rawValue)} ms` : '—'
+          html += `<div style="display:flex;align-items:center">${colorDot}<span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escapeTooltipText(item.task?.name ?? '')}</span>${lossBadge}<span style="margin-left:12px;font-weight:600;font-variant-numeric:tabular-nums">${latencyText}</span></div>`
         }
         html += '</div>'
         return html
       },
     },
     legend: {
-      type: 'scroll',
-      bottom: 0,
-      itemWidth: 12,
-      itemHeight: 12,
-      itemGap: 16,
-      icon: 'roundRect',
-      textStyle: { fontSize: chartAxisFontSize.value, color: chartThemeColors.value.textSecondary },
+      show: false,
       data: taskList.map(t => String(t.id)),
       selected: Object.fromEntries(taskList.map(task => [String(task.id), selectedTaskIdSet.value.has(task.id)])),
       formatter: (name: string) => taskById.value.get(Number(name))?.name ?? name,
@@ -986,6 +1095,7 @@ const pingChartOption = computed(() => {
         fontSize: chartAxisFontSize.value,
         color: chartThemeColors.value.textSecondary,
         margin: 12,
+        hideOverlap: true,
       },
       axisLine: {
         show: true,
@@ -994,29 +1104,42 @@ const pingChartOption = computed(() => {
       axisTick: { show: false },
       boundaryGap: false,
     },
-    yAxis: {
-      type: 'value',
-      name: '延迟 (ms)',
-      scale: true,
-      min: (range: { min: number, max: number }) => {
-        const padding = Math.max(8, (range.max - range.min) * 0.18)
-        return Math.max(0, Math.floor((range.min - padding) / 10) * 10)
-      },
-      max: (range: { min: number, max: number }) => {
-        const padding = Math.max(8, (range.max - range.min) * 0.18)
-        return Math.ceil((range.max + padding) / 10) * 10
-      },
-      nameTextStyle: { color: chartThemeColors.value.textSecondary },
-      axisLabel: { fontSize: chartAxisFontSize.value, color: chartThemeColors.value.textSecondary, formatter: '{value}' },
-      axisLine: { show: false },
-      axisTick: { show: false },
-      splitLine: {
-        lineStyle: {
-          color: chartThemeColors.value.splitLineColor,
-          type: 'dashed' as const,
+    yAxis: [
+      {
+        type: 'value' as const,
+        name: '延迟 (ms)',
+        scale: true,
+        min: (range: { min: number, max: number }) => {
+          if (!Number.isFinite(range.min) || !Number.isFinite(range.max))
+            return 0
+          const padding = Math.max(8, (range.max - range.min) * 0.18)
+          return Math.max(0, Math.floor((range.min - padding) / 10) * 10)
+        },
+        max: (range: { min: number, max: number }) => {
+          if (!Number.isFinite(range.min) || !Number.isFinite(range.max))
+            return 100
+          const padding = Math.max(8, (range.max - range.min) * 0.18)
+          return Math.ceil((range.max + padding) / 10) * 10
+        },
+        nameTextStyle: { color: chartThemeColors.value.textSecondary },
+        axisLabel: { fontSize: chartAxisFontSize.value, color: chartThemeColors.value.textSecondary, formatter: '{value}' },
+        axisLine: { show: false },
+        axisTick: { show: false },
+        splitLine: {
+          lineStyle: {
+            color: chartThemeColors.value.splitLineColor,
+            type: 'dashed' as const,
+          },
         },
       },
-    },
+      {
+        type: 'value' as const,
+        min: 0,
+        max: 380,
+        show: false,
+        splitLine: { show: false },
+      },
+    ],
     series,
   }
 })
@@ -1198,7 +1321,7 @@ onUnmounted(() => {
                 type="button"
                 class="lnl-ping-probe"
                 :class="{ 'is-disabled': !selectedTaskIdSet.has(task.id) }"
-                :style="{ '--lnl-probe-index': Math.min(taskIndex, 5) }"
+                :style="{ '--lnl-probe-index': Math.min(taskIndex, 5), '--lnl-probe-color': task.color }"
                 :aria-pressed="selectedTaskIdSet.has(task.id)"
                 :data-ping-task-id="task.id"
                 :aria-label="`${task.name}，延迟 ${formatProbeLatency(task)} 毫秒，丢包 ${formatProbeLoss(task)}`"
@@ -1233,6 +1356,7 @@ onUnmounted(() => {
           </div>
 
           <section class="lnl-ping-plot" aria-label="延迟时间线">
+            <div v-if="fetching && !loading && !backgroundRefreshing" class="lnl-ping-plot-progress" aria-hidden="true" />
             <div class="lnl-ping-plot-head">
               <div>
                 <span>LATENCY TIMELINE</span>
@@ -1266,7 +1390,12 @@ onUnmounted(() => {
               </div>
             </div>
             <div class="lnl-ping-chart">
-              <ChartViewport class="!h-full !min-h-full">
+              <Empty
+                v-if="!loading && !error && selectedTasks.length > 0 && timelineData.length === 0"
+                description="当前时间窗口暂无延迟样本"
+                class="h-full"
+              />
+              <ChartViewport v-else class="!h-full !min-h-full">
                 <VChart ref="chartRef" :option="pingChartOption" :update-options="{ notMerge: false, replaceMerge: ['series'] }" autoresize @legendselectchanged="handleLegendSelection" />
               </ChartViewport>
             </div>
@@ -1567,6 +1696,18 @@ onUnmounted(() => {
   border-color: var(--lnl-line);
   background: transparent;
 }
+.lnl-ping-probe:not(.is-disabled)::before {
+  position: absolute;
+  top: 9px;
+  bottom: 9px;
+  left: 0;
+  width: 2.5px;
+  border-radius: 0 999px 999px 0;
+  background: var(--lnl-probe-color, var(--lnl-green));
+  opacity: 0.85;
+  content: '';
+  pointer-events: none;
+}
 .lnl-ping-probe-copy {
   grid-column: 1 / -1;
   align-self: start;
@@ -1655,6 +1796,7 @@ onUnmounted(() => {
   letter-spacing: 0.04em;
 }
 .lnl-ping-plot {
+  position: relative;
   min-width: 0;
   display: flex;
   min-height: 0;
@@ -1664,6 +1806,24 @@ onUnmounted(() => {
   border: 1px solid var(--lnl-line);
   border-radius: var(--lnl-radius-inner);
   background: color-mix(in srgb, var(--lnl-surface-base, var(--background)) 94%, transparent);
+}
+.lnl-ping-plot-progress {
+  position: absolute;
+  z-index: 4;
+  top: 0;
+  right: 0;
+  left: 0;
+  height: 2px;
+  background: linear-gradient(90deg, transparent, var(--lnl-green), transparent);
+  background-size: 50% 100%;
+  background-repeat: no-repeat;
+  animation: ping-progress-slide 1.1s ease-in-out infinite;
+  pointer-events: none;
+}
+.lnl-ping-panel:not(.is-motion-enabled) .lnl-ping-plot-progress {
+  animation: none;
+  background-size: 100% 100%;
+  opacity: 0.5;
 }
 .lnl-ping-plot-head {
   display: flex;
@@ -1926,6 +2086,14 @@ onUnmounted(() => {
   to {
     opacity: 0.32;
     transform: scale(0.72);
+  }
+}
+@keyframes ping-progress-slide {
+  from {
+    background-position: -60% 0;
+  }
+  to {
+    background-position: 160% 0;
   }
 }
 </style>

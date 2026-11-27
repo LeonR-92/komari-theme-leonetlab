@@ -1,20 +1,24 @@
 <script setup lang="ts">
 import { DataTooltip } from '@/components/ui/data-tooltip'
 import { useNodePingDisplay } from '@/composables/useNodePingDisplay'
+import { useNodesStore } from '@/stores/nodes'
 
 const props = defineProps<{
   uuid: string
   online: boolean
 }>()
 
+const nodesStore = useNodesStore()
 const {
   latencyRenderBars,
   lossRenderBars,
-} = useNodePingDisplay(() => props.uuid)
+} = useNodePingDisplay(() => props.uuid, {
+  liveNode: () => nodesStore.nodesByUuid.get(props.uuid),
+})
 </script>
 
 <template>
-  <div class="group flex flex-col gap-[1px] pr-4">
+  <div class="group flex flex-col gap-[1px] pr-4" :class="!props.online && 'opacity-45 grayscale'">
     <div data-node-ping-panel="latency" class="group/panel relative items-center gap-1 opacity-90 hover:opacity-100">
       <div
         class="grid h-[6px] cursor-auto items-stretch gap-[1px] transition-transform"

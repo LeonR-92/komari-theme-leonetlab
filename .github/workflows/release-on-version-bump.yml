@@ -105,10 +105,10 @@ jobs:
           CHROME_PATH: /usr/bin/google-chrome
         run: npm run smoke:1.4.3
 
-      - name: Smoke test Komari 1.6.1 response rendering
+      - name: Smoke test Komari 1.6.2 response rendering
         env:
           CHROME_PATH: /usr/bin/google-chrome
-        run: npm run smoke:1.6.1
+        run: npm run smoke:1.6.2
 
       - name: Detect version release
         if: github.event_name == 'push'

@@ -5,6 +5,7 @@ import { computed, onMounted, ref } from 'vue'
 import VChart from 'vue-echarts'
 import { Empty } from '@/components/ui/empty'
 import { Spinner } from '@/components/ui/spinner'
+import { useMotionPreference } from '@/composables/useMotionPreference'
 import { PALETTE_ACCENT_COLORS, useAppStore } from '@/stores/app'
 import { useNodesStore } from '@/stores/nodes'
 import { ensureWorldMapRegistered } from '@/utils/echartsWorldMap'
@@ -26,6 +27,7 @@ const props = defineProps<{
 }>()
 
 const appStore = useAppStore()
+const { motionReduced } = useMotionPreference()
 const nodesStore = useNodesStore()
 const displayNodes = computed(() => props.nodes ?? nodesStore.earthNodes)
 const mapName = ref<string>()
@@ -124,8 +126,8 @@ const mapSeriesData = computed(() => points.value.map(point => ({
 })))
 
 const chartOption = computed<EChartsOption>(() => ({
-  // 移动端关闭地图动画，减少持续 GPU/CPU 负载
-  animation: !isMobileLike,
+  // 移动端与简化动效模式关闭地图动画，减少持续 GPU/CPU 负载
+  animation: !isMobileLike && !motionReduced.value,
   animationDurationUpdate: 300,
   animationEasingUpdate: 'cubicOut',
   series: [
@@ -183,11 +185,17 @@ onMounted(async () => {
         class="absolute top-0 right-0 z-2 text-[10px] text-muted-foreground pointer-events-none flex gap-2 items-center backdrop-blur-lg bg-background/60 rounded px-2 py-0.5"
       >
         <div v-if="onlineServers > 0" class="flex items-center gap-1">
-          <span class="inline-block size-1.5 rounded-full bg-green-600 animate-pulse motion-reduce:animate-none" />
+          <span
+            class="inline-block size-1.5 rounded-full bg-green-600"
+            :class="!motionReduced && 'animate-pulse motion-reduce:animate-none'"
+          />
           <span class="text-green-600">{{ onlineServers }}</span>
         </div>
         <div v-if="offlineServers > 0" class="flex items-center gap-1">
-          <span class="inline-block size-1.5 rounded-full bg-yellow-600 animate-pulse motion-reduce:animate-none" />
+          <span
+            class="inline-block size-1.5 rounded-full bg-yellow-600"
+            :class="!motionReduced && 'animate-pulse motion-reduce:animate-none'"
+          />
           <span class="text-yellow-600">{{ offlineServers }}</span>
         </div>
       </div>

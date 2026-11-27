@@ -14,7 +14,14 @@ import { useFinanceRates } from '@/composables/useFinanceRates'
 import { useAppStore } from '@/stores/app'
 import { useNodesStore } from '@/stores/nodes'
 import * as financeHelper from '@/utils/financeHelper'
-import { formatBytesPerSecondWithConfig, formatBytesWithConfig, formatDateTime, formatUptimeWithFormat } from '@/utils/helper'
+import {
+  formatBytesPerSecondWithConfig,
+  formatBytesWithConfig,
+  formatDateTime,
+  formatTrafficCycleLabel,
+  formatTrafficCycleShortBadge,
+  formatUptimeWithFormat,
+} from '@/utils/helper'
 import { getOSImage, getOSName } from '@/utils/osImageHelper'
 import { getRegionDisplayName, getRegionFlagUrl } from '@/utils/regionHelper'
 import { getBillingCycleText, getExpireText, getExpireTextClass } from '@/utils/tagHelper'
@@ -210,12 +217,15 @@ const hardwareInfo = computed<InfoItem[]>(() => [
   { label: 'GPU', value: data.value?.gpu_name || '-', icon: 'icon-park-outline:video-one' },
 ])
 
-const systemInfo = computed<InfoItem[]>(() => [
-  { label: '操作系统', value: data.value?.os ?? '-', icon: 'icon-park-outline:computer' },
-  { label: '内核版本', value: data.value?.kernel_version ?? '-', icon: 'icon-park-outline:code' },
-  { label: '运行时间', value: formatUptime(data.value?.uptime ?? 0), icon: 'icon-park-outline:timer' },
-  { label: '最后上报', value: formatDateTime(data.value?.time), icon: 'icon-park-outline:time' },
-])
+const systemInfo = computed<InfoItem[]>(() => {
+  const reportTime = formatDateTime(data.value?.time)
+  return [
+    { label: '操作系统', value: data.value?.os ?? '-', icon: 'icon-park-outline:computer' },
+    { label: '内核版本', value: data.value?.kernel_version ?? '-', icon: 'icon-park-outline:code' },
+    { label: '运行时间', value: formatUptime(data.value?.uptime ?? 0), icon: 'icon-park-outline:timer' },
+    { label: '最后上报', value: reportTime === '-' ? '暂无上报记录' : reportTime, icon: 'icon-park-outline:time' },
+  ]
+})
 
 const storageInfo = computed<InfoItem[]>(() => [
   { label: '内存', value: formatBytes(data.value?.mem_total ?? 0), icon: 'icon-park-outline:memory' },
@@ -264,6 +274,14 @@ const trafficUsageText = computed(() => {
 const trafficProgressStyle = computed(() => ({
   width: `${trafficUsedPercentage.value}%`,
 }))
+
+const trafficCycleLabel = computed(() =>
+  formatTrafficCycleLabel(data.value?.traffic_cycle_mode, data.value?.traffic_reset_day),
+)
+
+const trafficCycleBadge = computed(() =>
+  formatTrafficCycleShortBadge(data.value?.traffic_cycle_mode),
+)
 </script>
 
 <template>
@@ -291,8 +309,8 @@ const trafficProgressStyle = computed(() => ({
 
     <template v-else>
       <div class="lnl-detail-hero px-4 flex gap-3 items-center">
-        <Button variant="ghost" size="icon-sm" class="bg-background/50 hover:bg-background" @click="router.push('/')">
-          <Icon icon="tabler:arrow-left" :width="16" :height="16" />
+        <Button variant="ghost" size="icon-sm" class="group/back bg-background/50 hover:bg-background" @click="router.push('/')">
+          <Icon icon="tabler:arrow-left" :width="16" :height="16" class="lnl-detail-back-icon" />
         </Button>
         <div class="lnl-detail-title flex min-w-0 gap-2 items-center">
           <img
@@ -301,17 +319,23 @@ const trafficProgressStyle = computed(() => ({
           >
           <span class="truncate">{{ data.name }}</span>
         </div>
-        <Badge :variant="data.online ? 'default' : 'destructive'" class="lnl-detail-status shrink-0 !rounded-sm">
+        <Badge :variant="data.online ? 'default' : 'destructive'" class="lnl-detail-status shrink-0 !rounded-sm gap-1.5">
+          <span
+            class="size-1.5 rounded-full bg-current"
+            :class="data.online && !appStore.disablePageAnimation ? 'animate-pulse' : ''"
+            aria-hidden="true"
+          />
           {{ data.online ? '在线' : '离线' }}
         </Badge>
       </div>
 
       <div class="lnl-detail-metrics px-4 grid grid-cols-2 gap-4 lg:grid-cols-4">
         <CardX
-          v-for="item in metricCards" :key="item.label" hoverable size="small"
+          v-for="(item, index) in metricCards" :key="item.label" hoverable size="small"
           class="lnl-detail-metric lnl-panel-motion group h-full border-none rounded-md"
           :class="pickSurfaceClass('bg-background/60 hover:bg-background', 'bg-background/50 hover:bg-background backdrop-blur-xs')"
           content-class="h-full !p-3"
+          :style="{ '--lnl-stagger-delay': `${index * 45}ms` }"
         >
           <div class="flex h-full min-h-10 md:min-h-18 flex-col justify-between gap-3">
             <div class="flex items-center justify-between gap-2">
@@ -440,12 +464,25 @@ const trafficProgressStyle = computed(() => ({
                 <div class="flex gap-1 items-center text-muted-foreground">
                   <Icon icon="icon-park-outline:transfer-data" :width="14" :height="14" />
                   <span class="text-xs sm:text-sm">总流量</span>
+                  <span
+                    v-if="trafficCycleBadge"
+                    :title="trafficCycleLabel || undefined"
+                    class="px-1.5 py-0.5 rounded-sm bg-background/70 border border-border/60 text-[10px] font-medium text-foreground/80"
+                  >
+                    {{ trafficCycleBadge }}
+                  </span>
                   <div class="flex-1" />
-                  <span class="hidden sm:block text-[11px] font-medium text-foreground/70">{{
+                  <span
+                    class="hidden sm:block text-[11px] font-medium text-foreground/70"
+                    :title="trafficCycleLabel || undefined"
+                  >{{
                     formatBytes(data?.net_total_up ?? 0) }} / {{ formatBytes(data?.net_total_down ?? 0) }}</span>
                 </div>
                 <span class="text-xs sm:text-sm break-all">
                   {{ trafficUsageText }}
+                </span>
+                <span v-if="trafficCycleLabel" class="text-[10px] text-muted-foreground truncate">
+                  {{ trafficCycleLabel }}
                 </span>
               </div>
             </div>
@@ -495,6 +532,36 @@ const trafficProgressStyle = computed(() => ({
 </template>
 
 <style scoped>
+.lnl-detail-back-icon {
+  transition: transform 150ms var(--lnl-ease-out);
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .group\/back:hover .lnl-detail-back-icon {
+    transform: translateX(-2px);
+  }
+}
+
+.lnl-detail-metric {
+  transition-delay: var(--lnl-stagger-delay, 0ms);
+}
+
+.lnl-detail.is-motion-reduced .lnl-detail-back-icon,
+.lnl-detail.is-motion-reduced .lnl-detail-metric {
+  transition: none;
+  transition-delay: 0ms;
+  transform: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .lnl-detail-back-icon,
+  .lnl-detail-metric {
+    transition: none;
+    transition-delay: 0ms;
+    transform: none;
+  }
+}
+
 .lnl-detail-gpu-badge {
   min-height: 20px;
   flex: none;

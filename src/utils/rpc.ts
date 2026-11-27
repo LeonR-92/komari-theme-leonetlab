@@ -139,6 +139,10 @@ export interface Client {
   hidden: boolean
   traffic_limit: number
   traffic_limit_type: string
+  /** Komari 1.6.2+ traffic ledger cycle fields (optional additive fields). */
+  traffic_cycle_mode?: string
+  traffic_reset_day?: number
+  traffic_timezone?: string
   created_at: string
   updated_at: string
 }
@@ -159,6 +163,10 @@ export interface PublicInfo {
   sitename: string
   theme: string
   theme_settings: Record<string, unknown>
+  /** 新版统一指标保留天数（天），作旧版 record_preserve_time/ping_record_preserve_time 缺失时的前瞻兜底 */
+  metric_retention_days?: number
+  /** Komari 1.6.2+ global default traffic ledger timezone. */
+  traffic_default_timezone?: string
 }
 
 export interface GpuHistoryRecord {

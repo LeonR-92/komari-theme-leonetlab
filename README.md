@@ -6,18 +6,18 @@
   </a>
 </p>
 
-A responsive observatory theme for [Komari](https://github.com/komari-monitor/komari), derived from [Komari Emerald](https://github.com/Tokinx/komari-theme-emerald). It combines live node telemetry, a draggable COBE globe, Ping analytics, adaptive card and list views, light/dark modes, and browser-managed PWA installation.
+A responsive observatory theme for [Komari](https://github.com/komari-monitor/komari), derived from [Komari Emerald](https://github.com/Tokinx/komari-theme-emerald). It combines live node and Traffic Ledger telemetry, a draggable COBE globe, adaptive multi-day Ping and multi-GPU analytics, card/list views, eight light/dark palettes, and browser-managed PWA installation.
 
-Version: `1.6.1` · Primary target: Komari `1.6.1`
+Version: `1.6.2` · Primary target: Komari `1.6.2`
 
 ## Features
 
-- Responsive node cards and lists with resources, traffic, uptime, billing, expiry, and Ping quality
-- Draggable COBE globe, regional telemetry, detailed charts, compact Ping probe controls, and optional GPU/process/network metrics
-- First-visit globe handoff, visitor scan, search reordering, and circular appearance transitions
-- Eight light/dark color palettes, selectable native/halo cursor, and persistent monthly/quarterly/yearly billing display
-- Managed branding and display settings, keyboard/touch support, reduced motion, and conflict-free PWA manifest/icon integration
-- Legacy `Client[]` and modern UUID-keyed node response compatibility
+- Responsive node cards and lists covering CPU, memory, swap, disk, Traffic Ledger reset cycles, uptime, billing, expiry, and Ping quality bars
+- Draggable COBE globe with regional telemetry overlays, optional multi-GPU/process/connection charts, and compact Ping probe cards with bottom packet-loss bars and `丢包` tooltip badges
+- Adaptive long-window (`3 天` / `7 天` / `30 天` or custom retention) Ping and resource timeline cadence resolution that preserves real outages without blank rollup gaps
+- First-visit globe handoff, visitor identity scan, search reordering, circular appearance transitions, and full reduced-motion support (`disablePageAnimation` / `prefers-reduced-motion`)
+- Eight light/dark color palettes (`emerald`, `aurora`, `cobalt`, `amber`, `violet`, `crimson`, `glacier`, `graphite`), selectable native/halo cursor, and persistent monthly/quarterly/yearly billing display
+- Managed branding and display settings, Go zero-time guarding, safe URL sanitization, legacy `Client[]` and modern UUID-keyed node response compatibility, and conflict-free PWA manifest/icon integration
 
 ## Installation
 
@@ -27,7 +27,7 @@ In **Komari → Settings → Theme management**, add this repository:
 https://github.com/LeonR-92/komari-theme-leonetlab
 ```
 
-Komari resolves the latest public GitHub Release automatically. Alternatively, upload `komari-theme-leonetlab-build-v1.6.1.zip` directly, then select **Komari Observatory**.
+Komari resolves the latest public GitHub Release automatically. Alternatively, upload `komari-theme-leonetlab-build-v1.6.2.zip` directly, then select **Komari Observatory**.
 
 ## Configuration and privacy
 
@@ -37,25 +37,35 @@ Theme settings are public. Never place passwords, API keys, node tokens, private
 
 ## Compatibility
 
-- Primary: Komari `1.6.1`
-- Regression coverage: `1.2.5-fix1`, `1.2.5-fix2`, `1.2.6`, `1.2.7`, `1.3.2`, `1.4.2`, `1.4.3`, `1.5.0/fix1`, `1.5.1`, and `1.6.0`
+- Primary: Komari `1.6.2`
+- Regression coverage: `1.2.5-fix1`, `1.2.5-fix2`, `1.2.6`, `1.2.7`, `1.3.2`, `1.4.2`, `1.4.3`, `1.5.0/fix1`, `1.5.1`, `1.6.0`, and `1.6.1`
 - `src/utils/nodeResponse.ts` normalizes legacy arrays and UUID-keyed objects
 - Modern Ping methods use a controlled `common:getRecords` fallback only for documented compatibility failures
-- Optional per-device GPU charts align samples by timestamp. When the metric API cannot supply data, supported servers can provide up to four hours of GPU records via `public:getRecordsByUUID`.
+- Komari `1.5+` live GPU averages, `1.6.1` `public:getRecordsByUUID` per-device GPU history snapshots, and `1.6.2` optional Traffic Ledger cycle metadata (`traffic_cycle_mode`, `traffic_reset_day`, `traffic_timezone`) are consumed without changing older-server behavior
 
 Future upgrades follow the public read-only API and capability responses. Test builds use `target-version-beta.N`; optional metrics stay capability-gated, while Agent credentials, notification administration and removed visitor-audit methods are outside the theme.
 
 ## Development
 
 ```powershell
-npm ci
+npm install
 npm run lint
 npm run build
 npm run validate
+npm run smoke:1.2.5
+npm run smoke:1.3.2
+npm run smoke:1.4.2
+npm run smoke:1.4.3
+npm run smoke:1.5.0
+npm run smoke:1.6.0
 npm run smoke:1.6.1
+npm run smoke:1.6.2
+npm run test:browsers
+npm audit --audit-level=high
+npm audit --omit=dev --audit-level=high
 ```
 
-The production build creates `komari-theme-leonetlab-build-v1.6.1.zip` with only the root manifest, root preview, and compiled `dist/` tree. During maintenance, use focused tests for affected behavior rather than repeating every fixture and browser after each edit.
+The production build creates `komari-theme-leonetlab-build-v1.6.2.zip` with only the root manifest, root preview, and compiled `dist/` tree. During maintenance, use focused tests for affected behavior rather than repeating every fixture and browser after each edit.
 
 ## Theme Market
 

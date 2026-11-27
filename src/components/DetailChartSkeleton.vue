@@ -42,13 +42,13 @@
 
 .lnl-detail-chart-skeleton-grid span {
   min-height: 11.75rem;
-  border: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
+  border: 1px solid color-mix(in srgb, var(--lnl-green) 12%, color-mix(in srgb, var(--border) 72%, transparent));
   border-radius: var(--radius-md);
   background:
     linear-gradient(
       100deg,
       transparent 20%,
-      color-mix(in srgb, var(--foreground) 3%, transparent) 50%,
+      color-mix(in srgb, var(--lnl-green) 5%, color-mix(in srgb, var(--foreground) 2.5%, transparent)) 50%,
       transparent 80%
     ),
     color-mix(in srgb, var(--card) 76%, transparent);
@@ -99,5 +99,9 @@
   .lnl-detail-chart-skeleton-grid span {
     animation: none;
   }
+}
+
+:global(.is-motion-reduced) .lnl-detail-chart-skeleton-grid span {
+  animation: none;
 }
 </style>

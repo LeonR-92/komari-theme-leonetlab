@@ -550,8 +550,7 @@ onBeforeUnmount(() => {
 .metric-switch-leave-active {
   transition:
     opacity 160ms ease,
-    transform 180ms cubic-bezier(0.22, 1, 0.36, 1),
-    filter 180ms ease;
+    transform 180ms cubic-bezier(0.22, 1, 0.36, 1);
 }
 
 .metric-switch-enter-active {
@@ -560,14 +559,12 @@ onBeforeUnmount(() => {
 
 .metric-switch-enter-from {
   opacity: 0;
-  transform: translateY(6px);
-  filter: blur(3px);
+  transform: translate3d(0, 6px, 0) scale(0.992);
 }
 
 .metric-switch-leave-to {
   opacity: 0;
-  transform: translateY(-4px);
-  filter: blur(2px);
+  transform: translate3d(0, -4px, 0) scale(0.996);
 }
 
 @media (max-width: 760px) {

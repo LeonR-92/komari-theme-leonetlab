@@ -170,7 +170,7 @@ export function getDaysUntilExpired(expiredAt: string | number | null | undefine
   const expiredDate = dayjs(expiredAt)
   const now = dayjs()
 
-  if (!expiredDate.isValid())
+  if (!expiredDate.isValid() || expiredDate.year() <= 1970)
     return null
 
   return Math.round(expiredDate.diff(now, 'day', true))

@@ -39,6 +39,10 @@ export interface PublicSettings {
   sitename: string
   theme: string
   theme_settings?: Record<string, unknown> | null
+  /** 过期字段兼容：统一指标保留天数（天）；优先于旧字段缺失场景 */
+  metric_retention_days?: number
+  /** Komari 1.6.2+ 默认流量周期结算时区 */
+  traffic_default_timezone?: string
   /** 数据更新间隔（秒），主题配置项 */
   dataUpdateInterval?: number
 }
@@ -76,6 +80,10 @@ export interface NodeInfo {
   hidden: boolean
   traffic_limit: number
   traffic_limit_type: string
+  /** Komari 1.6.2+ 流量账本周期字段 */
+  traffic_cycle_mode?: string
+  traffic_reset_day?: number
+  traffic_timezone?: string
   created_at: string
   updated_at: string
 }

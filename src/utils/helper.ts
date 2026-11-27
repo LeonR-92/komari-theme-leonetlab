@@ -284,7 +284,7 @@ export function getStatus(percentage: number): 'success' | 'warning' | 'error' {
 }
 
 /**
- * 格式化时间戳为可读日期时间
+ * 格式化时间戳为可读日期时间（过滤 Go 零值时间 `0001-01-01`）
  * @param timestamp 时间戳字符串或 Date 对象
  * @returns 格式化后的字符串，如 "2024-01-15 14:30:00"
  */
@@ -294,8 +294,41 @@ export function formatDateTime(timestamp: string | Date | null | undefined, form
 
   const date = dayjs(timestamp)
 
-  if (!date.isValid())
+  if (!date.isValid() || date.year() <= 1970)
     return '-'
 
   return date.format(format)
+}
+
+/**
+ * 格式化 Komari 1.6.2+ 流量周期标签（服务端账本配置）
+ */
+export function formatTrafficCycleLabel(mode?: string, resetDay?: number): string | null {
+  if (!mode || mode === 'agent')
+    return null
+  if (mode === 'monthly') {
+    if (typeof resetDay === 'number' && Number.isInteger(resetDay) && resetDay >= 1 && resetDay <= 31)
+      return `月度周期 · 每月 ${resetDay} 日重置`
+    return '月度周期'
+  }
+  if (mode === 'fixed_days')
+    return '固定天数周期'
+  if (mode === 'manual')
+    return '手动结算周期'
+  return null
+}
+
+/**
+ * 格式化 Komari 1.6.2+ 流量周期短徽章文案
+ */
+export function formatTrafficCycleShortBadge(mode?: string): string | null {
+  if (!mode || mode === 'agent')
+    return null
+  if (mode === 'monthly')
+    return '月周期'
+  if (mode === 'fixed_days')
+    return '固定周期'
+  if (mode === 'manual')
+    return '手动周期'
+  return null
 }

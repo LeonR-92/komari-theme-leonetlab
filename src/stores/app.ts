@@ -133,6 +133,28 @@ function getBeijingHour(timestamp = Date.now()): number {
   return Number.isFinite(hour) ? hour : 12
 }
 
+function sanitizeSafeUrl(value: string, fallback = ''): string {
+  const trimmed = value.trim()
+  if (!trimmed)
+    return fallback
+  for (let i = 0; i < trimmed.length; i++) {
+    const code = trimmed.charCodeAt(i)
+    if (code <= 31 || code === 127)
+      return fallback
+  }
+  if (trimmed.startsWith('/') && !trimmed.startsWith('//'))
+    return trimmed
+  try {
+    const parsed = new URL(trimmed)
+    return parsed.protocol === 'http:' || parsed.protocol === 'https:'
+      ? trimmed
+      : fallback
+  }
+  catch {
+    return fallback
+  }
+}
+
 function isValidEarthViewMode(value: unknown): value is EarthViewMode {
   return value === 'earth' || value === 'earth-stop' || value === 'maps' || value === 'cards' || value === 'hide'
 }
@@ -156,13 +178,24 @@ const useAppStore = defineStore('app', () => {
     const value = publicSettings.value?.theme_settings?.[key]
     return typeof value === 'string' && value.trim() ? value.trim() : fallback
   }
+  const readThemeNumber = (key: string, fallback: number): number => {
+    const value = publicSettings.value?.theme_settings?.[key]
+    if (typeof value === 'number' && Number.isFinite(value))
+      return value
+    if (typeof value === 'string' && value.trim() !== '') {
+      const parsed = Number(value.trim())
+      if (Number.isFinite(parsed))
+        return parsed
+    }
+    return fallback
+  }
 
   // Branding is intentionally sourced from Komari's public site settings/theme settings.
   // /favicon.ico is Komari's official favicon route and automatically prefers the
   // administrator-uploaded icon over the icon bundled with this theme.
   const brandName = computed(() => readThemeString('brandName', publicSettings.value?.sitename?.trim() || 'Komari Monitor'))
   const brandShortName = computed(() => readThemeString('brandShortName', brandName.value))
-  const brandLogoUrl = computed(() => readThemeString('brandLogoUrl', '/favicon.ico'))
+  const brandLogoUrl = computed(() => sanitizeSafeUrl(readThemeString('brandLogoUrl', '/favicon.ico'), '/favicon.ico'))
   const brandHeaderSubtitle = computed(() => readThemeString('brandHeaderSubtitle', 'NETWORK OBSERVATORY'))
   const brandStatusLabel = computed(() => readThemeString('brandStatusLabel', 'LIVE TELEMETRY'))
   const brandHeroKicker = computed(() => readThemeString('brandHeroKicker', 'GLOBAL NETWORK / LIVE OBSERVATION'))
@@ -227,6 +260,12 @@ const useAppStore = defineStore('app', () => {
       }
     }
     return 'websocket'
+  })
+
+  const dataUpdateIntervalMs = computed(() => {
+    const raw = readThemeNumber('dataUpdateInterval', 5)
+    const clampedSec = raw >= 1 ? Math.min(60, Math.max(5, raw)) : 5
+    return Math.round(clampedSec * 1000)
   })
 
   // 字节格式化精度（固定配置）
@@ -344,13 +383,7 @@ const useAppStore = defineStore('app', () => {
     return ''
   })
 
-  const icpUrl = computed<string>(() => {
-    const settings = publicSettings.value?.theme_settings
-    if (settings && typeof settings.icpUrl === 'string' && settings.icpUrl.trim()) {
-      return settings.icpUrl.trim()
-    }
-    return 'https://beian.miit.gov.cn/'
-  })
+  const icpUrl = computed<string>(() => sanitizeSafeUrl(readThemeString('icpUrl', 'https://beian.miit.gov.cn/'), 'https://beian.miit.gov.cn/'))
 
   // 计算属性：公安备案配置
   const policeEnabled = computed<boolean>(() => {
@@ -369,13 +402,7 @@ const useAppStore = defineStore('app', () => {
     return ''
   })
 
-  const policeUrl = computed<string>(() => {
-    const settings = publicSettings.value?.theme_settings
-    if (settings && typeof settings.policeUrl === 'string' && settings.policeUrl.trim()) {
-      return settings.policeUrl.trim()
-    }
-    return ''
-  })
+  const policeUrl = computed<string>(() => sanitizeSafeUrl(readThemeString('policeUrl', ''), ''))
 
   // 计算属性：自定义背景配置
   const backgroundEnabled = computed<boolean>(() => {
@@ -397,36 +424,18 @@ const useAppStore = defineStore('app', () => {
     return 'image'
   })
 
-  const lightBackgroundUrl = computed<string>(() => {
-    const settings = publicSettings.value?.theme_settings
-    if (settings && typeof settings.lightBackgroundUrl === 'string') {
-      return settings.lightBackgroundUrl.trim()
-    }
-    return ''
-  })
+  const lightBackgroundUrl = computed<string>(() => sanitizeSafeUrl(readThemeString('lightBackgroundUrl', ''), ''))
 
-  const darkBackgroundUrl = computed<string>(() => {
-    const settings = publicSettings.value?.theme_settings
-    if (settings && typeof settings.darkBackgroundUrl === 'string') {
-      return settings.darkBackgroundUrl.trim()
-    }
-    return ''
-  })
+  const darkBackgroundUrl = computed<string>(() => sanitizeSafeUrl(readThemeString('darkBackgroundUrl', ''), ''))
 
   const backgroundBlur = computed<number>(() => {
-    const settings = publicSettings.value?.theme_settings
-    if (settings && typeof settings.backgroundBlur === 'number' && settings.backgroundBlur >= 0) {
-      return settings.backgroundBlur
-    }
-    return 0
+    const raw = readThemeNumber('backgroundBlur', 0)
+    return raw >= 0 ? raw : 0
   })
 
   const backgroundOverlay = computed<number>(() => {
-    const settings = publicSettings.value?.theme_settings
-    if (settings && typeof settings.backgroundOverlay === 'number' && settings.backgroundOverlay >= -100 && settings.backgroundOverlay <= 100) {
-      return settings.backgroundOverlay
-    }
-    return 0
+    const raw = readThemeNumber('backgroundOverlay', 0)
+    return raw >= -100 && raw <= 100 ? raw : 0
   })
 
   // 当 publicSettings 加载后，如果 localStorage 没有保存过视图模式或值为非法值，使用默认值
@@ -592,6 +601,7 @@ const useAppStore = defineStore('app', () => {
     nodeViewMode,
     defaultViewMode,
     rpcTransportMode,
+    dataUpdateIntervalMs,
     byteDecimals,
     alertEnabled,
     alertTitle,

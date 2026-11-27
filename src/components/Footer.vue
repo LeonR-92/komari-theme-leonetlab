@@ -11,7 +11,7 @@ defineProps<{
 }>()
 
 const appStore = useAppStore()
-const themeVersion = __BUILD_VERSION__
+const buildVersion = __BUILD_VERSION__
 const serverVersion = ref<VersionInfo | null>(null)
 const shortServerHash = computed(() => {
   const hash = serverVersion.value?.hash?.trim()
@@ -54,7 +54,7 @@ onMounted(async () => {
       </p>
       <p>
         <a href="https://github.com/LeonR-92/komari-theme-leonetlab" target="_blank" rel="noopener noreferrer">Komari Observatory</a>
-        <span>v{{ themeVersion }}</span>
+        <span>v{{ buildVersion }}</span>
         · based on
         <a href="https://github.com/Tokinx/komari-theme-emerald" target="_blank" rel="noopener noreferrer">Komari Emerald</a>
       </p>

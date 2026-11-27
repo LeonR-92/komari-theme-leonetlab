@@ -11,7 +11,8 @@ import {
   formatNodeRecurringCost,
   formatRecurringCostTooltip,
 } from '../src/utils/financeHelper.ts'
-import { alignGpuHistorySeries, publicGpuHistoryParams } from '../src/utils/gpuHistory.ts'
+import { alignGpuHistorySeries } from '../src/utils/gpuHistory.ts'
+import { formatDateTime, formatTrafficCycleLabel, formatTrafficCycleShortBadge } from '../src/utils/helper.ts'
 import { isMetricCapabilityUnavailable } from '../src/utils/metricCompatibility.ts'
 import { normalizeUuidCollection } from '../src/utils/nodeResponse.ts'
 import { normalizeNodeGpuSnapshot } from '../src/utils/nodeStatus.ts'
@@ -19,6 +20,9 @@ import {
   getLatencyToneClass,
   getLossToneClass,
   getPingTaskIdsWithSamples,
+  normalizePingLossPercent,
+  resolvePingMergeToleranceMs,
+  resolvePingTimelineCadenceMs,
   summarizePingSamples,
 } from '../src/utils/pingMetrics.ts'
 import {
@@ -30,6 +34,7 @@ import {
   getSparsePointSymbolSize,
 } from '../src/utils/recordHelper.ts'
 import { normalizeRecordCollection, normalizeTimedRecordCollection } from '../src/utils/recordResponse.ts'
+import { getDaysUntilExpired } from '../src/utils/tagHelper.ts'
 
 const nodeA = { uuid: 'node-a', name: 'Tokyo' }
 const nodeB = { uuid: 'node-b', name: 'Frankfurt' }
@@ -53,9 +58,10 @@ assert.deepEqual(normalizeUuidCollection({ legacy_index: nodeA }), {
 
 assert.deepEqual(normalizeUuidCollection(undefined), {})
 
-// These versions share the tested node-map shape, not necessarily the same RPC sources.
+// Official 1.5.0-fix1, 1.5.1, 1.6.0, 1.6.1 and 1.6.2 share the node/status/record RPC sources,
+// with 1.6.2 adding optional Traffic Ledger metadata fields on Client and PublicInfo.
 // Additional server keys must remain optional at the normalization boundary.
-for (const version of ['1.2.6', '1.3.2', '1.4.2', '1.4.3', '1.5.0', '1.5.0-fix1', '1.5.1', '1.6.0', '1.6.1']) {
+for (const version of ['1.2.6', '1.3.2', '1.4.2', '1.4.3', '1.5.0', '1.5.0-fix1', '1.5.1', '1.6.0', '1.6.1', '1.6.2']) {
   assert.deepEqual(normalizeUuidCollection({ legacy_index: nodeA }), { 'node-a': nodeA }, version)
   assert.equal(normalizeNodeGpuSnapshot({ gpu: 18, gpu_average_usage: 0, gpu_count: 1 }).gpu, 0, `${version}: valid zero GPU average`)
 }
@@ -318,18 +324,74 @@ assert.match(formatRecurringCostTooltip(oneTime, 'yearly'), /^一次性 499\.00 
 // when a task has no records in the requested time window.
 assert.deepEqual(summarizePingSamples([]), { latency: null, loss: null })
 
-assert.deepEqual(publicGpuHistoryParams('node-a', 720), { uuid: 'node-a', hours: '4', load_type: 'all' })
-assert.deepEqual(publicGpuHistoryParams('node-a', 1), { uuid: 'node-a', hours: '1', load_type: 'all' })
-assert.deepEqual(publicGpuHistoryParams('node-a', Number.NaN), { uuid: 'node-a', hours: '1', load_type: 'all' })
-const gpuTimeA = '2026-11-11T00:00:00Z'
-const gpuTimeB = '2026-11-11T00:05:00Z'
-const gpuTimeC = '2026-11-11T00:10:00Z'
-assert.deepEqual(alignGpuHistorySeries([
-  { points: [{ time: gpuTimeB, value: 20 }, { time: gpuTimeA, value: 0 }] },
-  { points: [{ time: gpuTimeC, value: 45 }, { time: '2026-11-11T08:05:00+08:00', value: 35 }, { time: 'invalid', value: 99 }] },
-]), {
-  timestamps: [gpuTimeA, gpuTimeB, gpuTimeC].map(time => Date.parse(time)),
-  valuesBySeries: [[0, 20, null], [null, 35, 45]],
+// Multi-GPU timestamps separated by ~1s must align onto shared timeline buckets,
+// and missing spans must stay null rather than bridging across offline outages.
+const gpuAligned = alignGpuHistorySeries([
+  {
+    points: [
+      { time: '2026-07-20T08:00:00Z', value: 30 },
+      { time: '2026-07-20T08:02:00Z', value: 50 },
+    ],
+  },
+  {
+    points: [
+      { time: '2026-07-20T08:00:01Z', value: 40 },
+      { time: '2026-07-20T08:02:01Z', value: 60 },
+    ],
+  },
+], {
+  toleranceMs: 5000,
+  intervalSec: 60,
+  totalSeconds: 180,
+  endTimeMs: Date.parse('2026-07-20T08:03:00Z'),
 })
+assert.equal(gpuAligned.timestamps.length, 4)
+assert.deepEqual(gpuAligned.valuesBySeries[0], [30, null, 50, null])
+assert.deepEqual(gpuAligned.valuesBySeries[1], [40, null, 60, null])
 
-console.log('Komari 1.2.5-fix1 through 1.6.1 node, GPU, record, and Ping metric compatibility passed.')
+// Passing endTimeMs extends trailing outage nulls to the live/current window end without altering 4-arg behavior.
+const trailingRows = fillMissingTimePoints([
+  { time: '2026-07-20T08:00:00Z', cpu: 25 },
+], 60, 180, 90, Date.parse('2026-07-20T08:03:00Z'))
+assert.equal(trailingRows.length, 4)
+assert.equal(trailingRows[0].cpu, 25)
+assert.equal(trailingRows[3].cpu, null)
+
+// Go zero-time and invalid report timestamps must collapse gracefully instead of rendering year 0001.
+assert.equal(formatDateTime('0001-01-01T00:00:00Z'), '-')
+assert.equal(getDaysUntilExpired('0001-01-01T00:00:00Z'), null)
+
+// Komari 1.6.2 Traffic Ledger cycle labels & short badges
+assert.equal(formatTrafficCycleLabel('monthly', 15), '月度周期 · 每月 15 日重置')
+assert.equal(formatTrafficCycleLabel('agent'), null)
+assert.equal(formatTrafficCycleShortBadge('fixed_days'), '固定周期')
+
+// 72h (3 days) custom Ping retention with 3 probes staggered by 15s and 20-minute rollups:
+// cadence & merge tolerance must align all 3 probes onto shared buckets without collapsing to blanks.
+const base72hMs = Date.parse('2026-11-23T17:00:00Z')
+const ping72hRecords = []
+for (let step = 0; step < 8; step++) {
+  const bucketMs = base72hMs + step * 20 * 60_000
+  ping72hRecords.push(
+    { task_id: 1, time: new Date(bucketMs).toISOString() },
+    { task_id: 2, time: new Date(bucketMs + 15_000).toISOString() },
+    { task_id: 3, time: new Date(bucketMs + 30_000).toISOString() },
+  )
+}
+const ping72hCadence = resolvePingTimelineCadenceMs(ping72hRecords, { hours: 72, taskIntervalsSec: [60, 60, 60] })
+assert.equal(ping72hCadence, 20 * 60_000)
+const ping72hTolerance = resolvePingMergeToleranceMs(ping72hCadence, [60, 60, 60])
+assert.ok(ping72hTolerance >= 30_000 && ping72hTolerance < ping72hCadence, `expected multi-day merge tolerance >= 30s, got ${ping72hTolerance}`)
+assert.equal(Math.round(normalizePingLossPercent(0.0417) * 100) / 100, 4.17)
+assert.equal(normalizePingLossPercent(8.47), 8.47)
+
+// Multi-GPU 7d adaptive intervals must be resolved per series rather than mixing 1s staggered timestamps across devices.
+const gpu0Timestamps = Array.from({ length: 10 }, (_, idx) => ({ time: new Date(base72hMs + idx * 30 * 60_000).toISOString() }))
+const gpu1Timestamps = Array.from({ length: 10 }, (_, idx) => ({ time: new Date(base72hMs + idx * 30 * 60_000 + 1_000).toISOString() }))
+const perSeriesInterval = Math.min(
+  getAdaptiveHistoryDisplayIntervalSeconds(gpu0Timestamps, getHistoryDisplayIntervalSeconds(168)),
+  getAdaptiveHistoryDisplayIntervalSeconds(gpu1Timestamps, getHistoryDisplayIntervalSeconds(168)),
+)
+assert.equal(perSeriesInterval, 30 * 60)
+
+console.log('Komari 1.2.5-fix1 through 1.6.2 node, GPU, record, and Ping metric compatibility passed.')

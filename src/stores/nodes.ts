@@ -41,6 +41,9 @@ export interface NodeData {
   hidden: boolean
   traffic_limit: number
   traffic_limit_type: TrafficLimitType
+  traffic_cycle_mode?: string
+  traffic_reset_day?: number
+  traffic_timezone?: string
   created_at: string
   updated_at: string
   // Status 信息
@@ -180,6 +183,9 @@ const useNodesStore = defineStore('nodes', () => {
       hidden: client.hidden,
       traffic_limit: client.traffic_limit,
       traffic_limit_type: client.traffic_limit_type as TrafficLimitType,
+      traffic_cycle_mode: client.traffic_cycle_mode,
+      traffic_reset_day: client.traffic_reset_day,
+      traffic_timezone: client.traffic_timezone,
       created_at: client.created_at,
       updated_at: client.updated_at,
       // Status 默认值

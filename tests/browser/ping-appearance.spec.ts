@@ -2,16 +2,13 @@ import { expect, test } from '@playwright/test'
 
 test.beforeEach(async ({ page }) => {
   await page.addInitScript(() => {
-    sessionStorage.setItem('komari-observatory:intro:1.6.1', 'seen')
+    sessionStorage.setItem('komari-observatory:intro:1.6.2', 'seen')
     localStorage.setItem('appearance', 'light')
     localStorage.setItem('leonetlab:appearance:user-override', '1')
   })
 })
 
 test('keeps two-line Ping probes readable across compact and desktop layouts', async ({ page }, testInfo) => {
-  // Desktop covers five full navigations, dialog interactions and two screenshots.
-  if (testInfo.project.name === 'chromium-desktop')
-    test.setTimeout(60_000)
   const viewports = testInfo.project.name === 'chromium-desktop'
     ? [{ width: 320, height: 720 }, { width: 390, height: 844 }, { width: 820, height: 768 }, { width: 1440, height: 900 }, { width: 844, height: 390 }]
     : [testInfo.project.use.viewport!]

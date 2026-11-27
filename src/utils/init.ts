@@ -28,7 +28,6 @@ const DEFAULT_CONFIG: Required<InitConfig> = {
   postFailureThreshold: 3,
 }
 
-const POLL_INTERVAL_FLOOR_MS = 5000
 const CLIENT_METADATA_REFRESH_INTERVAL_MS = 60_000
 
 /** 初始化状态管理 */
@@ -63,13 +62,7 @@ class InitManager {
    * 所有设备统一设置 5 秒下限，避免过密轮询放大服务端与客户端负载。
    */
   private getPollInterval(): number {
-    const settings = this.appStore.publicSettings?.theme_settings
-    const interval = settings?.dataUpdateInterval
-    // 确保值在合理范围内（1-60秒）
-    const base = typeof interval === 'number' && interval >= 1 && interval <= 60
-      ? interval * 1000 // 转换为毫秒
-      : POLL_INTERVAL_FLOOR_MS
-    return Math.max(base, POLL_INTERVAL_FLOOR_MS)
+    return this.appStore.dataUpdateIntervalMs
   }
 
   /**

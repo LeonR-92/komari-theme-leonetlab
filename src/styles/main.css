@@ -85,6 +85,7 @@ html.lnl-theme-transitioning body *::after {
   --lnl-green: #167a56;
   --lnl-cyan: #4a9eaa;
   --lnl-line: rgba(43, 74, 63, 0.2);
+  --lnl-offline-border: rgba(180, 74, 74, 0.24);
   --lnl-surface: rgba(245, 248, 247, 0.82);
   --lnl-surface-base: rgba(250, 252, 251, 0.9);
   --lnl-surface-inner: rgba(238, 244, 241, 0.72);
@@ -140,6 +141,7 @@ html.lnl-theme-transitioning body *::after {
   --lnl-cyan: #75c9d4;
   --lnl-line: rgba(169, 204, 189, 0.22);
   --lnl-line-strong: rgba(169, 220, 197, 0.36);
+  --lnl-offline-border: rgba(218, 108, 108, 0.28);
   --lnl-surface: rgba(12, 19, 16, 0.94);
   --lnl-surface-base: rgba(8, 14, 11, 0.97);
   --lnl-surface-inner: rgba(16, 25, 21, 0.9);
@@ -1003,6 +1005,9 @@ a {
   border-radius: var(--lnl-radius-card) !important;
   background: color-mix(in srgb, var(--background) 95%, var(--lnl-surface)) !important;
   box-shadow: var(--lnl-shadow-card) !important;
+}
+.node-card.is-offline {
+  border-color: var(--lnl-offline-border) !important;
 }
 .node-card {
   isolation: isolate;

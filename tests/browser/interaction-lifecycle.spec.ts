@@ -2,7 +2,7 @@ import { expect, test } from '@playwright/test'
 
 test.beforeEach(async ({ page }) => {
   await page.addInitScript(() => {
-    sessionStorage.setItem('komari-observatory:intro:1.6.1', 'seen')
+    sessionStorage.setItem('komari-observatory:intro:1.6.2', 'seen')
     localStorage.setItem('nodeViewMode', 'card')
   })
 })

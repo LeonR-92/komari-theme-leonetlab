@@ -11,7 +11,7 @@ import { useFinanceRates } from '@/composables/useFinanceRates'
 import { useNodePingDisplay } from '@/composables/useNodePingDisplay'
 import { useAppStore } from '@/stores/app'
 import { formatNodeRecurringCost, formatRecurringCostTooltip, resolveCurrency } from '@/utils/financeHelper'
-import { formatBytesPerSecondWithConfig, formatBytesWithConfig, formatDateTime, formatUptimeWithFormat, getStatus } from '@/utils/helper'
+import { formatBytesPerSecondWithConfig, formatBytesWithConfig, formatDateTime, formatTrafficCycleLabel, formatUptimeWithFormat, getStatus } from '@/utils/helper'
 import { getOSImage, getOSName } from '@/utils/osImageHelper'
 import { getRegionDisplayName, getRegionFlagUrl } from '@/utils/regionHelper'
 import { parseTags } from '@/utils/tagHelper'
@@ -32,8 +32,12 @@ const compactMetric = (value: string) => value.replace(METRIC_WHITESPACE_PATTERN
 const formatBytes = (bytes: number) => compactMetric(formatBytesWithConfig(bytes, appStore.byteDecimals))
 const formatBytesPerSecond = (bytes: number) => compactMetric(formatBytesPerSecondWithConfig(bytes, appStore.byteDecimals))
 const formatMetricPair = (used: number, total: number) => `${formatBytes(used)}/${formatBytes(total)}`
-const offlineTime = computed(() => formatDateTime(props.node.time))
+const offlineTime = computed(() => {
+  const formatted = formatDateTime(props.node.time)
+  return formatted === '-' ? '暂无上报记录' : formatted
+})
 const expiredDate = computed(() => formatDateTime(props.node.expired_at, 'YYYY-MM-DD'))
+const trafficCycleLabel = computed(() => formatTrafficCycleLabel(props.node.traffic_cycle_mode, props.node.traffic_reset_day))
 const liveStateLabel = computed(() => {
   if (!props.node.online)
     return '离线'
@@ -109,7 +113,14 @@ function normalizedPercentage(value: number): number {
 }
 
 function gaugeStyle(value: number): Record<string, string | number> {
-  return { strokeDashoffset: 100 - normalizedPercentage(value) }
+  const normalized = normalizedPercentage(value)
+  if (!props.node.online || normalized <= 0.05) {
+    return {
+      strokeDashoffset: 100,
+      strokeOpacity: 0,
+    }
+  }
+  return { strokeDashoffset: 100 - normalized }
 }
 
 function gaugeClass(status: GaugeStatus): string {
@@ -295,6 +306,7 @@ function openPingDialog() {
                     <div class="grid gap-1 whitespace-nowrap">
                       <span class="flex items-center gap-1"><Icon icon="tabler:chevron-up" :width="12" />{{ formatBytes(props.node.net_total_up ?? 0) }}</span>
                       <span class="flex items-center gap-1"><Icon icon="tabler:chevron-down" :width="12" />{{ formatBytes(props.node.net_total_down ?? 0) }}</span>
+                      <span v-if="trafficCycleLabel" class="border-t border-border/60 pt-1 text-[10px] text-muted-foreground">{{ trafficCycleLabel }}</span>
                     </div>
                   </template>
                 </DataTooltip>
@@ -306,11 +318,14 @@ function openPingDialog() {
         <section class="lnl-node-network-frame" aria-label="网络与生命周期">
           <div class="lnl-node-section-head">
             <span>网络与生命周期</span>
-            <small>LIVE</small>
+            <small>{{ props.node.online ? 'LIVE' : 'OFFLINE' }}</small>
           </div>
           <div class="lnl-node-network-body" :class="{ 'is-offline': !props.node.online }">
             <div v-if="!props.node.online" class="lnl-node-offline-mask">
-              <strong>离线</strong>
+              <div class="lnl-node-offline-pill">
+                <i aria-hidden="true" />
+                <strong>节点离线</strong>
+              </div>
               <span>{{ offlineTime }}</span>
             </div>
 
@@ -419,15 +434,22 @@ function openPingDialog() {
 }
 
 .node-card.is-offline {
-  border-color: color-mix(in srgb, var(--destructive) 26%, var(--lnl-line));
+  border-color: var(--lnl-offline-border, color-mix(in srgb, var(--destructive) 22%, var(--border)));
 }
 
 @media (hover: hover) and (pointer: fine) {
   .node-card:hover {
     z-index: 2;
     border-color: color-mix(in srgb, var(--lnl-green) 38%, var(--lnl-line));
-    box-shadow: var(--lnl-shadow-card-hover);
+    box-shadow:
+      var(--lnl-shadow-card-hover),
+      inset 0 1px 0 color-mix(in srgb, white 5%, transparent);
     transform: translate3d(0, -4px, 0);
+  }
+
+  .node-card:not(.is-offline) .lnl-node-resource-cell:hover,
+  .node-card:not(.is-offline) .lnl-node-lifecycle-item:hover {
+    border-color: color-mix(in srgb, var(--lnl-green) 30%, var(--lnl-line));
   }
 }
 
@@ -477,6 +499,11 @@ function openPingDialog() {
   border-radius: 50%;
   background: var(--success);
   box-shadow: 0 0 10px color-mix(in srgb, var(--success) 48%, transparent);
+  animation: lnl-node-dot-breathe 2.8s ease-in-out infinite;
+}
+
+.node-card.is-motion-reduced .lnl-node-status i {
+  animation: none;
 }
 
 .lnl-node-status.is-offline {
@@ -486,6 +513,14 @@ function openPingDialog() {
 .lnl-node-status.is-offline i {
   background: var(--destructive);
   box-shadow: none;
+  animation: none;
+}
+
+@keyframes lnl-node-dot-breathe {
+  50% {
+    opacity: 0.62;
+    box-shadow: 0 0 0 4px color-mix(in srgb, var(--success) 14%, transparent);
+  }
 }
 
 .lnl-node-title {
@@ -653,11 +688,27 @@ function openPingDialog() {
 }
 
 .lnl-node-gauge.is-unbounded {
-  background: repeating-conic-gradient(from -90deg, var(--lnl-gauge-color) 0 11deg, var(--lnl-gauge-track) 11deg 19deg);
+  background: repeating-conic-gradient(from -90deg, var(--lnl-gauge-color) 0 10deg, var(--lnl-gauge-track) 10deg 18deg);
 }
 
 .lnl-node-gauge.is-unbounded > svg {
   opacity: 0;
+}
+
+.node-card.is-offline .lnl-node-resource-frame {
+  opacity: 0.72;
+}
+
+.node-card.is-offline .lnl-node-gauge {
+  --lnl-gauge-color: color-mix(in srgb, var(--muted-foreground) 65%, transparent);
+}
+
+.node-card.is-offline .lnl-node-gauge.is-unbounded {
+  background: repeating-conic-gradient(
+    from -90deg,
+    color-mix(in srgb, var(--muted-foreground) 34%, transparent) 0 10deg,
+    var(--lnl-gauge-track) 10deg 18deg
+  );
 }
 
 .lnl-node-resource-copy {
@@ -699,9 +750,10 @@ function openPingDialog() {
 }
 
 .lnl-node-network-body.is-offline > :not(.lnl-node-offline-mask) {
-  opacity: 0.28;
-  filter: blur(1px);
+  opacity: 0.14;
+  filter: grayscale(1) blur(1.5px);
   pointer-events: none;
+  user-select: none;
 }
 
 .lnl-node-offline-mask {
@@ -710,18 +762,45 @@ function openPingDialog() {
   inset: 0;
   display: grid;
   place-content: center;
-  gap: 2px;
+  justify-items: center;
+  gap: 5px;
+  padding: 8px;
+  background: radial-gradient(
+    ellipse at center,
+    color-mix(in srgb, var(--card) 86%, transparent) 0%,
+    color-mix(in srgb, var(--card) 52%, transparent) 100%
+  );
+  backdrop-filter: blur(2px);
   text-align: center;
 }
 
-.lnl-node-offline-mask strong {
+.lnl-node-offline-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border: 1px solid color-mix(in srgb, var(--destructive) 28%, transparent);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--destructive) 10%, var(--card));
+}
+
+.lnl-node-offline-pill i {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--destructive);
+}
+
+.lnl-node-offline-pill strong {
   color: var(--destructive);
-  font-size: 14px;
+  font-size: 12px;
+  font-weight: 650;
+  letter-spacing: 0.02em;
 }
 
 .lnl-node-offline-mask span {
   color: var(--muted-foreground);
-  font: 10px var(--font-mono);
+  font: 10px/1.3 var(--font-mono);
 }
 
 .lnl-node-lifecycle-rail {
@@ -932,6 +1011,7 @@ function openPingDialog() {
 .node-card.is-motion-reduced,
 .node-card.is-motion-reduced * {
   transition: none !important;
+  animation: none !important;
 }
 
 .node-card.is-motion-reduced:hover,
@@ -967,6 +1047,7 @@ function openPingDialog() {
   .node-card,
   .node-card * {
     transition: none !important;
+    animation: none !important;
   }
 
   .node-card:hover,

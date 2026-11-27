@@ -20,7 +20,7 @@ import { alignGpuHistorySeries, GPU_HISTORY_FALLBACK_MAX_HOURS } from '@/utils/g
 import { formatBytes, formatBytesSplit } from '@/utils/helper'
 import { isMetricCapabilityUnavailable, listAvailableMetricDefinitions } from '@/utils/metricCapabilities'
 import { isMobileLike } from '@/utils/mobilePerf'
-import { fillMissingTimePoints, getAdaptiveHistoryDisplayIntervalSeconds, getHistoryDisplayIntervalSeconds, getSparsePointSymbolSize } from '@/utils/recordHelper'
+import { fillMissingTimePoints, getAdaptiveHistoryDisplayIntervalSeconds, getHistoryDisplayIntervalSeconds, getSparsePointSymbolSize, isCrossDayRange } from '@/utils/recordHelper'
 import { getSharedRpc, synthesizeGpuMetricSeriesFromDevices } from '@/utils/rpc'
 import '@/utils/echarts' // 共享 ECharts 配置
 
@@ -35,36 +35,36 @@ const nodesStore = useNodesStore()
 const documentVisibility = useDocumentVisibility()
 const compactCharts = useMediaQuery('(max-width: 640px)')
 
-// 未加载设置时沿用内置保留期；后台明确关闭或设为 0 时必须原样保留。
+// 未加载设置时沿用内置保留期；优先兼容新版 metric_retention_days，后台明确关闭或设为 0 时必须原样保留。
 const maxRecordPreserveTime = computed(() => {
-  const value = appStore.publicSettings?.record_preserve_time
-  return typeof value === 'number' && Number.isFinite(value)
-    ? Math.max(0, value)
-    : 720
+  const legacy = appStore.publicSettings?.record_preserve_time
+  if (typeof legacy === 'number' && Number.isFinite(legacy))
+    return Math.max(0, legacy)
+  const unifiedDays = appStore.publicSettings?.metric_retention_days
+  if (typeof unifiedDays === 'number' && Number.isFinite(unifiedDays))
+    return Math.max(0, Math.round(unifiedDays * 24))
+  return 720
 })
 const historyRecordsEnabled = computed(() => appStore.publicSettings?.record_enabled !== false
   && maxRecordPreserveTime.value > 0)
 
-// 与主题清单及全局节点轮询共用 5 秒下限，避免详情页额外放大 RPC 压力。
-const dataUpdateInterval = computed(() => {
-  const settings = appStore.publicSettings?.theme_settings
-  const interval = settings?.dataUpdateInterval
-  if (typeof interval === 'number' && Number.isFinite(interval))
-    return Math.min(60, Math.max(5, interval)) * 1000
-  return 5000
-})
+// 与主题清单及全局节点轮询共用统一解析，保持前后台一致
+const dataUpdateInterval = computed(() => appStore.dataUpdateIntervalMs)
 
 // 使用 store 中的 isDark computed
 const isDark = computed(() => appStore.isDark)
 
-// 恢复正式版的指标辨识色；主题色继续用于页签、焦点和交互状态。
+// 恢复正式版的指标辨识色；网络上传与进程改用绿/蓝语义，避免零值与紫色线干扰。
 const chartColors = {
   primary: '#FF6B6B',
   primaryAreaStrong: 'rgba(255, 107, 107, 0.25)',
   primaryAreaFaint: 'rgba(255, 107, 107, 0.02)',
   secondary: '#FFB347',
   tertiary: '#4ECDC4',
-  quaternary: '#A78BFA',
+  networkUp: '#34D399',
+  quaternary: '#60A5FA',
+  quaternaryAreaStrong: 'rgba(96, 165, 250, 0.22)',
+  quaternaryAreaFaint: 'rgba(96, 165, 250, 0.02)',
   quinary: '#60A5FA',
 }
 
@@ -167,6 +167,7 @@ const isRealtime = computed(() => selectedView.value === '实时')
 
 // 数据状态
 const remoteData = shallowRef<StatusRecord[]>([])
+const historyWindowToMs = ref<number | null>(null)
 const loading = ref(false)
 const isInitialLoad = ref(true) // 是否为首次加载（用于控制实时模式下的 NSpin 显示）
 const error = ref<string | null>(null)
@@ -176,15 +177,25 @@ let fetchRequestId = 0
 interface HistoryCacheEntry {
   fetchedAt: number
   records: StatusRecord[]
+  windowToMs: number | null
 }
 
 const HISTORY_CACHE_TTL_MS = 60_000
 const HISTORY_CACHE_MAX_ENTRIES = 8
 const historyCache = new Map<string, HistoryCacheEntry>()
-const historyRequests = new Map<string, Promise<StatusRecord[]>>()
+const historyRequests = new Map<string, Promise<{ records: StatusRecord[], windowToMs: number | null }>>()
 
 // 节点信息
 const nodeInfo = computed(() => nodesStore.nodesByUuid.get(props.uuid))
+
+// 判断主控上报时钟是否与本地时间基本同步（避免静态测试夹具被当前时间拉空）
+const isBackendClockLive = computed(() => {
+  const now = Date.now()
+  return nodesStore.nodes.some((node) => {
+    const t = node.time ? Date.parse(node.time) : Number.NaN
+    return Number.isFinite(t) && Math.abs(now - t) <= 10 * 60_000
+  })
+})
 
 // RPC 客户端
 const rpc = getSharedRpc()
@@ -193,9 +204,9 @@ function historyCacheKey(uuid: string, hours: number): string {
   return `${uuid}|${hours}`
 }
 
-function rememberHistory(key: string, records: StatusRecord[]): void {
+function rememberHistory(key: string, records: StatusRecord[], windowToMs: number | null): void {
   historyCache.delete(key)
-  historyCache.set(key, { fetchedAt: Date.now(), records })
+  historyCache.set(key, { fetchedAt: Date.now(), records, windowToMs })
   while (historyCache.size > HISTORY_CACHE_MAX_ENTRIES) {
     const oldestKey = historyCache.keys().next().value
     if (typeof oldestKey !== 'string')
@@ -204,20 +215,22 @@ function rememberHistory(key: string, records: StatusRecord[]): void {
   }
 }
 
-async function loadHistoryRecords(uuid: string, hours: number): Promise<StatusRecord[]> {
+async function loadHistoryRecords(uuid: string, hours: number): Promise<{ records: StatusRecord[], windowToMs: number | null }> {
   const key = historyCacheKey(uuid, hours)
   const cached = historyCache.get(key)
   if (cached && Date.now() - cached.fetchedAt <= HISTORY_CACHE_TTL_MS)
-    return cached.records
+    return { records: cached.records, windowToMs: cached.windowToMs }
 
   const pending = historyRequests.get(key)
   if (pending)
     return pending
 
   const request = rpc.getLoadRecords(uuid, hours, 'all', 4000)
-    .then(({ records }) => {
-      rememberHistory(key, records)
-      return records
+    .then(({ records, to }) => {
+      const parsedTo = to ? Date.parse(to) : Number.NaN
+      const windowToMs = Number.isFinite(parsedTo) ? parsedTo : null
+      rememberHistory(key, records, windowToMs)
+      return { records, windowToMs }
     })
     .finally(() => historyRequests.delete(key))
   historyRequests.set(key, request)
@@ -227,29 +240,63 @@ async function loadHistoryRecords(uuid: string, hours: number): Promise<StatusRe
 // ==================== 数据获取 ====================
 
 function statusToRecordFormat(records: StatusRecord[]): RecordFormat[] {
-  return records.map(r => ({
-    client: r.client,
-    time: r.time,
-    cpu: r.cpu ?? null,
-    gpu: r.gpu ?? null,
-    gpu_usage: null,
-    gpu_memory: null,
-    ram: r.ram ?? null,
-    ram_total: r.ram_total ?? null,
-    swap: r.swap ?? null,
-    swap_total: r.swap_total ?? null,
-    load: r.load ?? null,
-    temp: r.temp ?? null,
-    disk: r.disk ?? null,
-    disk_total: r.disk_total ?? null,
-    net_in: r.net_in ?? null,
-    net_out: r.net_out ?? null,
-    net_total_up: r.net_total_up ?? null,
-    net_total_down: r.net_total_down ?? null,
-    process: r.process ?? null,
-    connections: r.connections ?? null,
-    connections_udp: r.connections_udp ?? null,
-  }))
+  return records.map((r) => {
+    // 识别并过滤节点离线时的全零合成占位采样，防止绘制出贴底伪曲线
+    const isSyntheticZero = r.cpu === 0
+      && r.ram === 0
+      && r.disk === 0
+      && r.process === 0
+      && r.net_in === 0
+      && r.net_out === 0
+    if (isSyntheticZero) {
+      return {
+        client: r.client,
+        time: r.time,
+        cpu: null,
+        gpu: null,
+        gpu_usage: null,
+        gpu_memory: null,
+        ram: null,
+        ram_total: r.ram_total ?? null,
+        swap: null,
+        swap_total: r.swap_total ?? null,
+        load: null,
+        temp: null,
+        disk: null,
+        disk_total: r.disk_total ?? null,
+        net_in: null,
+        net_out: null,
+        net_total_up: r.net_total_up ?? null,
+        net_total_down: r.net_total_down ?? null,
+        process: null,
+        connections: null,
+        connections_udp: null,
+      }
+    }
+    return {
+      client: r.client,
+      time: r.time,
+      cpu: r.cpu ?? null,
+      gpu: r.gpu ?? null,
+      gpu_usage: null,
+      gpu_memory: null,
+      ram: r.ram ?? null,
+      ram_total: r.ram_total ?? null,
+      swap: r.swap ?? null,
+      swap_total: r.swap_total ?? null,
+      load: r.load ?? null,
+      temp: r.temp ?? null,
+      disk: r.disk ?? null,
+      disk_total: r.disk_total ?? null,
+      net_in: r.net_in ?? null,
+      net_out: r.net_out ?? null,
+      net_total_up: r.net_total_up ?? null,
+      net_total_down: r.net_total_down ?? null,
+      process: r.process ?? null,
+      connections: r.connections ?? null,
+      connections_udp: r.connections_udp ?? null,
+    }
+  })
 }
 
 async function fetchRecentData() {
@@ -271,6 +318,7 @@ async function fetchRecentData() {
     const records = result?.records || []
     records.sort((a, b) => Date.parse(a.time) - Date.parse(b.time))
     const maxLength = 150
+    historyWindowToMs.value = null
     remoteData.value = records.slice(-maxLength)
   }
   catch (err) {
@@ -298,15 +346,17 @@ async function fetchHistoryData() {
   error.value = null
 
   try {
-    const records = await loadHistoryRecords(props.uuid, hours)
+    const { records, windowToMs } = await loadHistoryRecords(props.uuid, hours)
     if (requestId !== fetchRequestId)
       return
+    historyWindowToMs.value = windowToMs
     remoteData.value = records
   }
   catch (err) {
     if (requestId !== fetchRequestId)
       return
     error.value = err instanceof Error ? err.message : '获取数据失败'
+    historyWindowToMs.value = null
     remoteData.value = []
   }
   finally {
@@ -337,21 +387,88 @@ const historyDisplayIntervalSeconds = computed(() => {
   return getAdaptiveHistoryDisplayIntervalSeconds(formattedRemoteData.value, minimumIntervalSec)
 })
 
+function resolveTimelineEndMs(lastRecordMs: number, windowHours: number, minGapMs: number): number {
+  const windowMs = Math.max(1, windowHours) * 3600_000
+  let effectiveEnd = lastRecordMs
+  const toMs = historyWindowToMs.value
+  if (toMs !== null && Number.isFinite(toMs) && toMs > effectiveEnd && toMs - effectiveEnd < windowMs)
+    effectiveEnd = toMs
+
+  const now = Date.now()
+  if ((nodeInfo.value?.online === false || isBackendClockLive.value) && now > effectiveEnd && now - effectiveEnd > minGapMs && now - effectiveEnd < windowMs)
+    effectiveEnd = now
+
+  return effectiveEnd
+}
+
+function padRealtimeOfflineTail(data: RecordFormat[]): RecordFormat[] {
+  if (!data.length || nodeInfo.value?.online !== false || !isBackendClockLive.value)
+    return data
+  const lastRecord = data.at(-1)
+  const lastMs = lastRecord ? Date.parse(lastRecord.time) : Number.NaN
+  const now = Date.now()
+  const gapMs = now - lastMs
+  if (!lastRecord || !Number.isFinite(lastMs) || gapMs <= 30_000 || gapMs > 2 * 3600_000)
+    return data
+
+  const deltas: number[] = []
+  for (let i = 1; i < data.length; i++) {
+    const prev = Date.parse(data[i - 1]!.time)
+    const curr = Date.parse(data[i]!.time)
+    if (Number.isFinite(prev) && Number.isFinite(curr) && curr > prev)
+      deltas.push(curr - prev)
+  }
+  deltas.sort((a, b) => a - b)
+  const medianDelta = deltas.length ? deltas[Math.floor(deltas.length / 2)]! : 10_000
+  const stepMs = Math.max(5_000, Math.min(60_000, medianDelta), Math.ceil(gapMs / 48))
+  const template: RecordFormat = {
+    client: lastRecord.client,
+    time: lastRecord.time,
+    cpu: null,
+    gpu: null,
+    gpu_usage: null,
+    gpu_memory: null,
+    ram: null,
+    ram_total: lastRecord.ram_total,
+    swap: null,
+    swap_total: lastRecord.swap_total,
+    load: null,
+    temp: null,
+    disk: null,
+    disk_total: lastRecord.disk_total,
+    net_in: null,
+    net_out: null,
+    net_total_up: lastRecord.net_total_up,
+    net_total_down: lastRecord.net_total_down,
+    process: null,
+    connections: null,
+    connections_udp: null,
+  }
+  const padded = [...data]
+  for (let t = lastMs + stepMs; t <= now; t += stepMs)
+    padded.push({ ...template, time: new Date(t).toISOString() })
+  return padded.slice(-180)
+}
+
 const chartData = computed(() => {
   const data = formattedRemoteData.value
   if (!data.length)
     return []
 
   if (isRealtime.value) {
-    return data
+    return padRealtimeOfflineTail(data)
   }
 
   const hours = selectedHours.value || 4
   const intervalSec = historyDisplayIntervalSeconds.value
+  const lastMs = Date.parse(data.at(-1)!.time)
+  const effectiveEndMs = Number.isFinite(lastMs)
+    ? resolveTimelineEndMs(lastMs, hours, intervalSec * 2000)
+    : undefined
 
   // 圆整到最近时间格时，任意合法采样与格点的距离最多为半个间隔。
   // 稍加余量可容纳服务端聚合时间的秒级偏移，但不会复制同一采样。
-  return fillMissingTimePoints(data, intervalSec, hours * 3600, intervalSec * 0.6)
+  return fillMissingTimePoints(data, intervalSec, hours * 3600, intervalSec * 0.6, effectiveEndMs)
 })
 
 function isFiniteValue(value: unknown): value is number {
@@ -414,7 +531,8 @@ function formatTimeForTooltip(time: string, hours: number): string {
   return date.format('MM/DD HH:mm')
 }
 
-const showDateInAxis = computed(() => (selectedHours.value || 1) >= 24)
+const showDateInAxis = computed(() => (selectedHours.value || 1) >= 24
+  || isCrossDayRange(chartData.value.map(r => Date.parse(r.time))))
 
 // 通用 X 轴配置
 const baseXAxisConfig = computed(() => ({
@@ -424,6 +542,7 @@ const baseXAxisConfig = computed(() => ({
     fontSize: 11,
     color: chartThemeColors.value.textSecondary,
     margin: 12,
+    hideOverlap: true,
   },
   axisLine: {
     show: true,
@@ -724,7 +843,7 @@ const diskChartOption = computed(() => ({
 // 网络图表
 const networkChartOption = computed(() => ({
   ...chartAnimationConfig.value,
-  color: [chartColors.quinary, chartColors.quaternary],
+  color: [chartColors.quinary, chartColors.networkUp],
   tooltip: {
     ...baseTooltipConfig.value,
     formatter: (params: unknown) => {
@@ -792,7 +911,7 @@ const networkChartOption = computed(() => ({
       connectNulls: false,
       showSymbol: true,
       symbolSize: (_value: unknown, params: { dataIndex: number }) => getSparsePointSymbolSize(networkOutValues.value, params.dataIndex),
-      lineStyle: { width: 1.5, color: chartColors.quaternary, cap: 'round' as const },
+      lineStyle: { width: 1.5, color: chartColors.networkUp, cap: 'round' as const },
     },
   ],
 }))
@@ -843,6 +962,7 @@ const connectionsChartOption = computed(() => ({
     name: '连接数',
     nameTextStyle: { color: chartThemeColors.value.textSecondary, padding: [0, 40, 0, 0] },
     min: 0,
+    minInterval: 1,
     axisLabel: {
       ...baseYAxisConfig.value.axisLabel,
       formatter: (val: number) => Math.round(val).toString(),
@@ -909,6 +1029,7 @@ const processChartOption = computed(() => ({
     name: '进程',
     nameTextStyle: { color: chartThemeColors.value.textSecondary, padding: [0, 40, 0, 0] },
     min: 0,
+    minInterval: 1,
     axisLabel: {
       ...baseYAxisConfig.value.axisLabel,
       formatter: (val: number) => Math.round(val).toString(),
@@ -933,8 +1054,8 @@ const processChartOption = computed(() => ({
           x2: 0,
           y2: 1,
           colorStops: [
-            { offset: 0, color: 'rgba(167, 139, 250, 0.25)' },
-            { offset: 1, color: 'rgba(167, 139, 250, 0.02)' },
+            { offset: 0, color: chartColors.quaternaryAreaStrong },
+            { offset: 1, color: chartColors.quaternaryAreaFaint },
           ],
         },
       },
@@ -1015,7 +1136,61 @@ const optionalTelemetryActive = computed(() => extendedTelemetryTab.value === 'g
   || extendedTelemetryTab.value === 'gpu-memory'
   || extendedTelemetryTab.value === 'gpu-temperature')
 const liveGpuDetails = computed(() => nodeInfo.value?.gpu_detailed_info ?? [])
-const alignedOptionalMetricData = computed(() => alignGpuHistorySeries(optionalMetricSeries.value))
+
+const optionalWindowHours = computed(() => {
+  if (optionalFallbackHours.value !== null)
+    return optionalFallbackHours.value
+  return selectedHours.value || 1
+})
+
+const optionalDisplayIntervalSeconds = computed(() => {
+  const hours = optionalWindowHours.value
+  const minimumIntervalSec = getHistoryDisplayIntervalSeconds(hours)
+  const explicitIntervals = optionalMetricSeries.value
+    .map(series => series.interval_seconds)
+    .filter((sec): sec is number => typeof sec === 'number' && Number.isFinite(sec) && sec > 0)
+  if (explicitIntervals.length)
+    return Math.max(minimumIntervalSec, Math.min(...explicitIntervals))
+
+  // 逐条序列单独测算间隔，避免多 GPU / 显存双序列 1s 偏移把中位数压成 1s
+  const perSeriesIntervals = optionalMetricSeries.value.flatMap((series) => {
+    const validPoints = series.points.filter(point => typeof point.value === 'number' && Number.isFinite(point.value))
+    if (validPoints.length < 3)
+      return []
+    return [getAdaptiveHistoryDisplayIntervalSeconds(validPoints, minimumIntervalSec)]
+  })
+  return perSeriesIntervals.length ? Math.min(...perSeriesIntervals) : minimumIntervalSec
+})
+
+const alignedOptionalMetricData = computed(() => {
+  const seriesList = optionalMetricSeries.value
+  if (!seriesList.length)
+    return { timestamps: [] as number[], valuesBySeries: [] as Array<Array<number | null>> }
+
+  let latestPointMs = Number.NEGATIVE_INFINITY
+  for (const s of seriesList) {
+    for (const p of s.points) {
+      const t = Date.parse(p.time)
+      if (Number.isFinite(t) && t > latestPointMs)
+        latestPointMs = t
+    }
+  }
+  const intervalSec = optionalDisplayIntervalSeconds.value
+  const hours = optionalWindowHours.value
+  const endTimeMs = Number.isFinite(latestPointMs)
+    ? resolveTimelineEndMs(latestPointMs, hours, intervalSec * 2000)
+    : undefined
+
+  return alignGpuHistorySeries(seriesList, {
+    toleranceMs: 5_000,
+    intervalSec,
+    totalSeconds: hours * 3600,
+    endTimeMs,
+  })
+})
+
+const showDateInOptionalAxis = computed(() => optionalWindowHours.value >= 24
+  || isCrossDayRange(alignedOptionalMetricData.value.timestamps))
 
 function metricSeriesLabel(series: MetricSeries, index: number): string {
   const device = series.tags?.device_name || series.tags?.device || series.tags?.name || series.tags?.device_index
@@ -1039,7 +1214,7 @@ function formatOptionalMetricValue(value: number): string {
 
 const optionalMetricChartOption = computed(() => ({
   ...chartAnimationConfig.value,
-  color: [chartColors.tertiary, chartColors.quinary, chartColors.quaternary, chartColors.secondary],
+  color: [chartColors.tertiary, chartColors.quinary, chartColors.networkUp, chartColors.secondary],
   tooltip: {
     ...baseTooltipConfig.value,
     valueFormatter: (value: number) => formatOptionalMetricValue(value),
@@ -1053,7 +1228,7 @@ const optionalMetricChartOption = computed(() => ({
   grid: chartMarginWithLegend.value,
   xAxis: {
     ...baseXAxisConfig.value,
-    data: alignedOptionalMetricData.value.timestamps.map(time => formatTime(new Date(time).toISOString(), showDateInAxis.value)),
+    data: alignedOptionalMetricData.value.timestamps.map(time => formatTime(new Date(time).toISOString(), showDateInOptionalAxis.value)),
   },
   yAxis: {
     ...baseYAxisConfig.value,
@@ -1104,7 +1279,7 @@ function optionalMetricKeys(tab: ExtendedTelemetryTab = extendedTelemetryTab.val
 }
 
 function optionalMetricCacheKey(metricKeys: string[]): string {
-  return `${props.uuid}|${selectedHours.value || 1}|${extendedTelemetryTab.value}|${metricKeys.join(',')}`
+  return `${props.uuid}|${isRealtime.value ? 'realtime' : (selectedHours.value || 1)}|${extendedTelemetryTab.value}|${metricKeys.join(',')}`
 }
 
 function resetOptionalTelemetry(status: OptionalTelemetryStatus = 'idle'): void {
@@ -1174,33 +1349,41 @@ async function detectOptionalMetricCapabilities(): Promise<void> {
   }
 }
 
-async function fetchOptionalMetrics(): Promise<void> {
+let lastRealtimeOptionalRefreshAt = 0
+
+async function fetchOptionalMetrics(options: { background?: boolean } = {}): Promise<void> {
   if (!optionalTelemetryActive.value)
     return
 
+  const background = options.background === true
   const activeTab = extendedTelemetryTab.value as 'gpu' | 'gpu-memory' | 'gpu-temperature'
   const metricKeys = optionalMetricKeys(activeTab)
   if (metricKeys.length === 0) {
-    resetOptionalTelemetry('unavailable')
+    if (!background)
+      resetOptionalTelemetry('unavailable')
     return
   }
   const requestId = ++optionalTelemetryRequestId
   const cacheKey = optionalMetricCacheKey(metricKeys)
-  const cached = optionalTelemetryCache.get(cacheKey)
-  if (cached && Date.now() - cached.fetchedAt <= OPTIONAL_TELEMETRY_CACHE_TTL_MS) {
-    optionalMetricSeries.value = cached.series
-    optionalFallbackHours.value = cached.fallbackHours
-    optionalTelemetryError.value = null
-    optionalTelemetryStatus.value = cached.status
-    return
+  if (!background) {
+    const cached = optionalTelemetryCache.get(cacheKey)
+    if (cached && Date.now() - cached.fetchedAt <= OPTIONAL_TELEMETRY_CACHE_TTL_MS) {
+      optionalMetricSeries.value = cached.series
+      optionalFallbackHours.value = cached.fallbackHours
+      optionalTelemetryError.value = null
+      optionalTelemetryStatus.value = cached.status
+      return
+    }
   }
 
   const uuid = props.uuid
   const hours = selectedHours.value || 1
-  optionalMetricSeries.value = []
-  optionalFallbackHours.value = null
-  optionalTelemetryError.value = null
-  optionalTelemetryStatus.value = 'loading'
+  if (!background) {
+    optionalMetricSeries.value = []
+    optionalFallbackHours.value = null
+    optionalTelemetryError.value = null
+    optionalTelemetryStatus.value = 'loading'
+  }
   try {
     let series: MetricSeries[] = []
     let fallbackHours: number | null = null
@@ -1212,7 +1395,7 @@ async function fetchOptionalMetrics(): Promise<void> {
           hours,
           max_points: 400,
           aggregation_by_metric: Object.fromEntries(metricKeys.map(metricKey => [metricKey, 'avg'])),
-          fill_empty: false,
+          fill_empty: true,
         })
         series = normalizeOptionalMetricSeries(result?.series)
       }
@@ -1245,22 +1428,30 @@ async function fetchOptionalMetrics(): Promise<void> {
     if (requestId !== optionalTelemetryRequestId)
       return
     const status = series.length > 0 ? 'ready' : 'empty'
+    lastRealtimeOptionalRefreshAt = Date.now()
     rememberOptionalTelemetry(cacheKey, status, series, fallbackHours)
     optionalMetricSeries.value = series
     optionalFallbackHours.value = fallbackHours
+    optionalTelemetryError.value = null
     optionalTelemetryStatus.value = status
   }
   catch {
     if (requestId !== optionalTelemetryRequestId)
       return
-    optionalMetricSeries.value = []
-    optionalTelemetryError.value = '该指标暂时无法加载，请稍后重试'
-    optionalTelemetryStatus.value = 'error'
+    if (!background) {
+      optionalMetricSeries.value = []
+      optionalTelemetryError.value = '该指标暂时无法加载，请稍后重试'
+      optionalTelemetryStatus.value = 'error'
+    }
   }
 }
 
 const { pause: pauseRealtimeUpdate, resume: resumeRealtimeUpdate } = useIntervalFn(
-  () => fetchData(),
+  async () => {
+    await fetchData()
+    if (isRealtime.value && optionalTelemetryActive.value && Date.now() - lastRealtimeOptionalRefreshAt >= 15_000)
+      void fetchOptionalMetrics({ background: true })
+  },
   dataUpdateInterval,
   { immediate: false },
 )
@@ -1377,7 +1568,10 @@ onUnmounted(() => {
         >
           <template #header>
             <div class="flex items-center justify-between">
-              <span class="text-base font-bold">CPU</span>
+              <span class="flex items-center gap-2 text-base font-bold">
+                <i class="lnl-chart-title-dot" :style="{ background: chartColors.primary }" aria-hidden="true" />
+                CPU
+              </span>
               <div v-if="latestStatus?.cpu != null" class="text-xs flex gap-0.5 items-baseline">
                 <span>{{ latestStatus.cpu.toFixed(1) }}</span>
                 <span>%</span>
@@ -1398,7 +1592,10 @@ onUnmounted(() => {
         >
           <template #header>
             <div class="flex items-center justify-between">
-              <span class="text-base font-bold">内存</span>
+              <span class="flex items-center gap-2 text-base font-bold">
+                <i class="lnl-chart-title-dot" :style="{ background: chartColors.primary }" aria-hidden="true" />
+                内存
+              </span>
               <div class="min-w-28 justify-end text-xs flex gap-1 items-baseline">
                 <template v-if="latestStatus?.ram != null">
                   <span>{{ formatBytesSplit(latestStatus.ram).value }}</span>
@@ -1428,7 +1625,10 @@ onUnmounted(() => {
         >
           <template #header>
             <div class="flex items-center justify-between">
-              <span class="text-base font-bold">磁盘</span>
+              <span class="flex items-center gap-2 text-base font-bold">
+                <i class="lnl-chart-title-dot" :style="{ background: chartColors.tertiary }" aria-hidden="true" />
+                磁盘
+              </span>
               <div class="min-w-28 justify-end text-xs flex gap-1 items-baseline">
                 <template v-if="latestStatus?.disk != null">
                   <span>{{ formatBytesSplit(latestStatus.disk).value }}</span>
@@ -1457,7 +1657,10 @@ onUnmounted(() => {
         >
           <template #header>
             <div class="flex items-center justify-between">
-              <span class="text-base font-bold">网络</span>
+              <span class="flex items-center gap-2 text-base font-bold">
+                <i class="lnl-chart-title-dot" :style="{ background: chartColors.quinary }" aria-hidden="true" />
+                网络
+              </span>
               <div class="text-xs flex gap-2 items-baseline">
                 <span class="flex flex-row items-center justify-center gap-0.5">
                   <Icon icon="tabler:chevron-up" width="12" height="12" />
@@ -1528,8 +1731,9 @@ onUnmounted(() => {
               </div>
             </div>
           </template>
-          <p v-if="optionalTelemetryActive && optionalFallbackHours" class="px-3 pb-1 text-xs text-muted-foreground" role="status">
-            备用记录最多显示最近 {{ optionalFallbackHours }} 小时
+          <p v-if="optionalTelemetryActive && optionalFallbackHours" class="lnl-fallback-note" role="status">
+            <Icon icon="tabler:clock-hour-4" width="12" height="12" aria-hidden="true" />
+            <span>备用记录最多显示最近 {{ optionalFallbackHours }} 小时</span>
           </p>
           <ChartViewport>
             <div v-if="optionalTelemetryActive && optionalTelemetryStatus === 'error'" class="h-full px-4 text-xs text-destructive flex items-center justify-center text-center">
@@ -1629,5 +1833,26 @@ onUnmounted(() => {
 .lnl-live-gpu-detail span {
   color: var(--muted-foreground);
   font-variant-numeric: tabular-nums;
+}
+
+.lnl-chart-title-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex: none;
+}
+
+.lnl-fallback-note {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  width: fit-content;
+  margin: 0 0 6px;
+  padding: 2px 8px;
+  border: 1px solid var(--lnl-line);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--lnl-surface-inner) 75%, transparent);
+  color: var(--muted-foreground);
+  font: 500 10px/1.4 var(--font-sans);
 }
 </style>

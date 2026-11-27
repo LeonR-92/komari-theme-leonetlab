@@ -12,7 +12,7 @@ import { useBackgroundSurface } from '@/composables/useBackgroundSurface'
 import { useFinanceRates } from '@/composables/useFinanceRates'
 import { useAppStore } from '@/stores/app'
 import { formatNodeRecurringCost, formatRecurringCostTooltip, resolveCurrency } from '@/utils/financeHelper'
-import { formatBytesPerSecondWithConfig, formatBytesWithConfig, formatDateTime, formatUptimeWithFormat, getStatus } from '@/utils/helper'
+import { formatBytesPerSecondWithConfig, formatBytesWithConfig, formatDateTime, formatTrafficCycleLabel, formatUptimeWithFormat, getStatus } from '@/utils/helper'
 import { isMobileLike, MOBILE_NO_MOVE_CLASS } from '@/utils/mobilePerf'
 import { getOSImage, getOSName } from '@/utils/osImageHelper'
 import { getRegionDisplayName, getRegionFlagUrl } from '@/utils/regionHelper'
@@ -131,7 +131,7 @@ const offlineOverlayContentStyle = computed(() => {
   const regionIndex = keys.indexOf('region')
   const nameIndex = keys.indexOf('name')
   const startColumn = nameIndex !== -1
-    ? nameIndex + 1
+    ? nameIndex + 2
     : regionIndex !== -1
       ? regionIndex + 2
       : statusIndex === -1 ? 1 : statusIndex + 2
@@ -325,14 +325,14 @@ function getCustomTags(node: NodeData): Array<string> {
               <div v-if="col.key === 'status'" class="flex justify-center">
                 <div class="size-2 rounded-full relative" :class="[node.online ? 'bg-emerald-600' : 'bg-red-600']">
                   <div
-                    class="animate-ping motion-reduce:animate-none absolute inset-0 rounded-full opacity-50"
-                    :class="[node.online ? 'bg-emerald-600' : 'bg-red-600']"
+                    v-if="node.online && !appStore.disablePageAnimation"
+                    class="animate-ping motion-reduce:animate-none absolute inset-0 rounded-full opacity-50 bg-emerald-600"
                   />
                 </div>
               </div>
 
               <!-- 节点名称 -->
-              <div v-else-if="col.key === 'name'" class="min-w-0 space-y-1" :class="[!node.online && 'opacity-45']">
+              <div v-else-if="col.key === 'name'" class="min-w-0 space-y-1">
                 <div class="flex min-w-0 items-center gap-2 text-[13px] font-semibold">
                   <img :src="getOSImage(node.os)" :alt="getOSName(node.os)" class="size-4 shrink-0">
                   <img
@@ -368,6 +368,7 @@ function getCustomTags(node: NodeData): Array<string> {
               <div
                 v-else-if="col.key === 'finance'"
                 class="lnl-node-list-finance"
+                :class="!node.online && 'opacity-15 grayscale blur-[1px] pointer-events-none select-none'"
               >
                 <BillingPeriodPicker
                   variant="list"
@@ -378,7 +379,7 @@ function getCustomTags(node: NodeData): Array<string> {
               </div>
 
               <!-- 运行时间 -->
-              <div v-else-if="col.key === 'uptime'" class="flex flex-col gap-0.5">
+              <div v-else-if="col.key === 'uptime'" class="flex flex-col gap-0.5" :class="!node.online && 'opacity-15 grayscale blur-[1px] pointer-events-none select-none'">
                 <span class="text-[10px] text-muted-foreground truncate">
                   {{ formatUptime(node.uptime ?? 0) }}
                 </span>
@@ -396,7 +397,7 @@ function getCustomTags(node: NodeData): Array<string> {
               </div>
 
               <!-- CPU -->
-              <div v-else-if="col.key === 'cpu'" class="group">
+              <div v-else-if="col.key === 'cpu'" class="group" :class="!node.online && 'opacity-15 grayscale blur-[1px] pointer-events-none select-none'">
                 <div class="space-y-1">
                   <div class="text-[10px] text-muted-foreground truncate">
                     <span class="inline group-hover:hidden">
@@ -412,7 +413,7 @@ function getCustomTags(node: NodeData): Array<string> {
               </div>
 
               <!-- 内存 -->
-              <div v-else-if="col.key === 'mem'" class="group">
+              <div v-else-if="col.key === 'mem'" class="group" :class="!node.online && 'opacity-15 grayscale blur-[1px] pointer-events-none select-none'">
                 <DataTooltip placement="top" class="block" :content-class="[!node.swap && '!hidden']">
                   <div class="space-y-1">
                     <div class="text-[10px] text-muted-foreground truncate">
@@ -438,7 +439,7 @@ function getCustomTags(node: NodeData): Array<string> {
               </div>
 
               <!-- 硬盘 -->
-              <div v-else-if="col.key === 'disk'" class="group">
+              <div v-else-if="col.key === 'disk'" class="group" :class="!node.online && 'opacity-15 grayscale blur-[1px] pointer-events-none select-none'">
                 <div class="space-y-1">
                   <div class="text-[10px] text-muted-foreground truncate">
                     <span class="inline group-hover:hidden">
@@ -456,7 +457,7 @@ function getCustomTags(node: NodeData): Array<string> {
               </div>
 
               <!-- 流量 -->
-              <div v-else-if="col.key === 'traffic'" class="group">
+              <div v-else-if="col.key === 'traffic'" class="group" :class="!node.online && 'opacity-15 grayscale blur-[1px] pointer-events-none select-none'">
                 <DataTooltip placement="top" class="flex items-center gap-2" content-class="mb-1.5">
                   <div class="space-y-1 w-full">
                     <div class="text-[10px] text-muted-foreground truncate">
@@ -482,12 +483,18 @@ function getCustomTags(node: NodeData): Array<string> {
                       <Icon icon="tabler:chevron-down" width="12" height="12" />
                       {{ formatBytes(node.net_total_down ?? 0) }}
                     </span>
+                    <span
+                      v-if="formatTrafficCycleLabel(node.traffic_cycle_mode, node.traffic_reset_day)"
+                      class="text-[10px] text-muted-foreground whitespace-nowrap border-t border-border/60 pt-0.5 mt-0.5"
+                    >
+                      {{ formatTrafficCycleLabel(node.traffic_cycle_mode, node.traffic_reset_day) }}
+                    </span>
                   </template>
                 </DataTooltip>
               </div>
 
               <!-- 速率 -->
-              <div v-else-if="col.key === 'rate'">
+              <div v-else-if="col.key === 'rate'" :class="!node.online && 'opacity-15 grayscale blur-[1px] pointer-events-none select-none'">
                 <div class="text-[10px] flex flex-col ">
                   <span class="text-[var(--lnl-green)] flex flex-row gap-1 items-center">
                     <Icon icon="tabler:chevron-up" width="12" height="12" />
@@ -503,17 +510,19 @@ function getCustomTags(node: NodeData): Array<string> {
           </div>
 
           <div
-            v-if="!node.online" class="absolute inset-0 z-2 flex items-center rounded-[var(--lnl-radius-inner)] bg-background/24 p-2"
+            v-if="!node.online"
+            class="absolute inset-0 z-2 flex items-center rounded-[var(--lnl-radius-inner)] bg-background/12 p-2 pointer-events-none"
             aria-hidden="true"
           >
-            <div class="grid gap-2 items-center justify-center" :style="gridStyle">
-              <div class="h-full space-y-1" :style="offlineOverlayContentStyle">
-                <div class="text-sm font-semibold truncate">
-                  <span class="text-red-500">离线</span> {{ node.name }}
-                </div>
-                <div class="text-xs text-muted-foreground">
-                  {{ formatOfflineTime(node) }}
-                </div>
+            <div class="grid gap-2 items-center w-full" :style="gridStyle">
+              <div class="flex items-center gap-2 min-w-0" :style="offlineOverlayContentStyle">
+                <span class="inline-flex items-center gap-1.5 shrink-0 px-2 py-0.5 rounded-full bg-background/92 border border-border/80 shadow-xs text-[11px] font-medium text-foreground">
+                  <span class="size-1.5 rounded-full bg-red-500" />
+                  节点离线
+                </span>
+                <span class="text-xs text-muted-foreground truncate">
+                  {{ formatOfflineTime(node) === '-' ? '暂无上报记录' : `最后上报 ${formatOfflineTime(node)}` }}
+                </span>
               </div>
             </div>
           </div>
@@ -603,7 +612,7 @@ function getCustomTags(node: NodeData): Array<string> {
 }
 
 .lnl-node-row.is-offline {
-  border-color: color-mix(in srgb, var(--destructive) 28%, var(--lnl-line));
+  border-color: var(--lnl-offline-border);
 }
 
 .lnl-node-list-finance {
@@ -643,8 +652,7 @@ function getCustomTags(node: NodeData): Array<string> {
 .node-row-switch-leave-active {
   transition:
     opacity 170ms ease,
-    transform 210ms cubic-bezier(0.22, 1, 0.36, 1),
-    filter 170ms ease;
+    transform 210ms cubic-bezier(0.22, 1, 0.36, 1);
 }
 
 .node-row-switch-enter-active {
@@ -657,14 +665,12 @@ function getCustomTags(node: NodeData): Array<string> {
 
 .node-row-switch-enter-from {
   opacity: 0;
-  transform: translateY(8px);
-  filter: blur(3px);
+  transform: translate3d(0, 8px, 0) scale(0.992);
 }
 
 .node-row-switch-leave-to {
   opacity: 0;
-  transform: translateY(-5px);
-  filter: blur(2px);
+  transform: translate3d(0, -5px, 0) scale(0.996);
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -679,7 +685,6 @@ function getCustomTags(node: NodeData): Array<string> {
   .node-row-switch-leave-to {
     opacity: 1;
     transform: none;
-    filter: none;
   }
 }
 </style>

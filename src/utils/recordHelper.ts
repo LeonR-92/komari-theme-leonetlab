@@ -216,6 +216,7 @@ export function fillMissingTimePoints<T extends { time?: string, updated_at?: st
   intervalSec: number = 10,
   totalSeconds: number | null = 180,
   matchToleranceSec?: number,
+  endTimeMs?: number,
 ): T[] {
   if (!data.length)
     return []
@@ -237,7 +238,9 @@ export function fillMissingTimePoints<T extends { time?: string, updated_at?: st
   if (!firstItem || !lastItem)
     return []
 
-  const end = lastItem.timeMs
+  const end = typeof endTimeMs === 'number' && Number.isFinite(endTimeMs) && endTimeMs > lastItem.timeMs
+    ? endTimeMs
+    : lastItem.timeMs
   const interval = intervalSec * 1000
 
   // 确定起始时间
@@ -294,6 +297,29 @@ export function fillMissingTimePoints<T extends { time?: string, updated_at?: st
   })
 
   return filled
+}
+
+/**
+ * 判断时间序列是否跨越本地自然日（例如 4 小时/6 小时视图跨越午夜 00:00）。
+ */
+export function isCrossDayRange(timestampsMs: ReadonlyArray<number>): boolean {
+  let min = Number.POSITIVE_INFINITY
+  let max = Number.NEGATIVE_INFINITY
+  for (const ts of timestampsMs) {
+    if (!Number.isFinite(ts))
+      continue
+    if (ts < min)
+      min = ts
+    if (ts > max)
+      max = ts
+  }
+  if (!Number.isFinite(min) || !Number.isFinite(max) || max <= min)
+    return false
+  const start = new Date(min)
+  const end = new Date(max)
+  return start.getFullYear() !== end.getFullYear()
+    || start.getMonth() !== end.getMonth()
+    || start.getDate() !== end.getDate()
 }
 
 /**
